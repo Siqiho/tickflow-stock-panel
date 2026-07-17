@@ -1,3 +1,4 @@
+from app.services.free_sources.quote_fallback import fetch_watchlist_quotes
 """全局实时行情服务。
 
 集中管理全市场行情拉取 + enriched 缓存，供盘中选股、自选股等所有模块复用。
@@ -478,7 +479,7 @@ class QuoteService:
         self._evaluate_monitors(daily_df, quote_extra)
 
     def _fetch_watchlist_quotes(self) -> None:
-        """Free 档自选股实时: 只拉取最多 5 个 symbols。"""
+        """Watchlist realtime: TickFlow paid/free key when available, else public fallback."""
         from app.services import preferences
         from app.tickflow.client import get_paid_realtime_client
 
@@ -487,18 +488,46 @@ class QuoteService:
             logger.info("自选实时未配置标的, 跳过行情拉取")
             return
 
-        tf = get_paid_realtime_client()
-        if tf is None:
-            logger.warning("自选实时拉取失败:未配置付费服务器 API Key")
-            return
-
         t0 = time.perf_counter()
         now_ts = time.perf_counter()
-        try:
-            resp = tf.quotes.get(symbols=symbols) or []
-        except Exception as e:  # noqa: BLE001
-            logger.warning("自选实时拉取失败: %s", e)
-            return
+        resp: list = []
+
+        tf = get_paid_realtime_client()
+        if tf is not None:
+            try:
+                resp = tf.quotes.get(symbols=symbols) or []
+            except Exception as e:  # noqa: BLE001
+                logger.warning("TickFlow watchlist quotes failed: %s", e)
+                resp = []
+
+        if not resp:
+            try:
+                free_rows = fetch_watchlist_quotes(list(symbols))
+            except Exception as e:  # noqa: BLE001
+                logger.warning("free quote fallback failed: %s", e)
+                free_rows = []
+            resp = []
+            for r in free_rows:
+                resp.append(
+                    {
+                        "symbol": r.get("symbol"),
+                        "name": r.get("name"),
+                        "last_price": r.get("last"),
+                        "prev_close": r.get("prev_close"),
+                        "open": r.get("open"),
+                        "high": r.get("high"),
+                        "low": r.get("low"),
+                        "volume": r.get("volume"),
+                        "amount": r.get("amount"),
+                        "ext": {
+                            "change_pct": r.get("change_pct"),
+                            "name": r.get("name"),
+                        },
+                        "source": r.get("source"),
+                    }
+                )
+            if resp:
+                logger.info("watchlist quotes via free fallback: %d", len(resp))
 
         if not resp:
             logger.warning("自选实时行情数据为空")

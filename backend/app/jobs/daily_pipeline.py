@@ -20,6 +20,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.indicators.pipeline import run_pipeline
 from app.config import settings
+from app.services.daily_quality import run_daily_quality_check
 from app.services import index_sync, instrument_sync, kline_sync, preferences as _prefs
 from app.tickflow.capabilities import Cap, CapabilitySet
 from app.tickflow.pools import DEMO_SYMBOLS, get_pool
@@ -439,6 +440,20 @@ def run_now(
     emit("done", 100, "完成")
     _invalidate(None)  # 兜底:全清
 
+    # Free-api quality gate (non-fatal)
+    quality_report = None
+    try:
+        emit("quality", 97, "运行日线质量门禁…")
+        quality_report = run_daily_quality_check(repo.store.data_dir)
+        emit(
+            "quality",
+            98,
+            f"质量门禁 ok={quality_report.get('ok')} issues={len(quality_report.get('issues') or [])}",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("quality gate failed: %s", e)
+        emit("quality", 98, f"质量门禁失败: {e}")
+
     return {
         "universe_size": len(universe),
         "daily_days": new_daily_days,
@@ -451,6 +466,7 @@ def run_now(
         "etf_adj_factor_symbols": etf_adj_symbols,
         "minute_rows": written_minute,
         "skipped_stages": skipped,
+        "quality": quality_report,
     }
 
 
