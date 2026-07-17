@@ -404,11 +404,25 @@ def run_now(
     else:
         skipped.append("sync_index")
 
-    # Step 2.5: 分钟 K 同步(可选) — 未启用或无 capability 时静默跳过(不 emit)
+    # Step 2.5: 分钟 K 同步(可选) — 无能力/用户关闭时明确记录原因（可观测，不造假数据）
     from app.services import preferences
+    from app.tickflow.capabilities import minute_availability
+
     minute_on = preferences.get_minute_sync_enabled()
     minute_days = preferences.get_minute_sync_days()
     written_minute = 0
+    minute_info = minute_availability(capset, user_enabled=minute_on)
+    minute_sync_result: dict = {
+        "status": minute_info["status"],
+        "reason": minute_info.get("reason"),
+        "reason_code": minute_info.get("reason_code"),
+        "user_enabled": minute_on,
+        "days_requested": minute_days,
+        "rows": 0,
+        "full_market_sync_allowed": minute_info.get("full_market_sync_allowed"),
+        "fallback_hint": minute_info.get("fallback_hint"),
+    }
+
     if minute_on and capset.has(Cap.KLINE_MINUTE_BATCH):
         minute_start = today - _td(days=minute_days)
         emit("sync_minute", 90, f"获取分钟K [{minute_start} ~ {today}]…")
@@ -426,12 +440,33 @@ def run_now(
         emit("sync_minute", 93, f"分钟K完成,覆盖 {minute_cover_days} 天")
         logger.info("sync_minute: [%s ~ %s] done, %d days", minute_start, today, minute_cover_days)
         _invalidate("minute")
+        minute_sync_result.update({
+            "status": "synced",
+            "reason": None,
+            "reason_code": "ok",
+            "rows": written_minute,
+            "cover_days": minute_cover_days,
+        })
     else:
         skipped.append("sync_minute")
-        if minute_on:
-            logger.info("sync_minute skipped: no KLINE_MINUTE_BATCH capability")
-        else:
+        # Do not create fake kline_minute success state; only log + structured result.
+        if not minute_info.get("available"):
+            msg = minute_info.get("reason") or "无分钟K权限"
+            emit("sync_minute", 90, f"分钟K不可用: {msg}")
+            logger.info("sync_minute skipped: %s", minute_info.get("reason_code"))
+        elif not minute_on:
+            emit("sync_minute", 90, "分钟K已关闭（用户未启用自动同步）")
             logger.info("sync_minute skipped: user disabled")
+            minute_sync_result["status"] = "disabled_by_user"
+            minute_sync_result["reason_code"] = "user_disabled"
+            minute_sync_result["reason"] = "用户关闭了分钟自动同步"
+        else:
+            # has by_symbol only, no batch — refuse full-market sync
+            emit("sync_minute", 90, "分钟K仅有按标的能力，全市场同步未启用")
+            logger.info("sync_minute skipped: no batch capability")
+            minute_sync_result["status"] = "unavailable"
+            minute_sync_result["reason_code"] = "no_batch_capability"
+            minute_sync_result["reason"] = "仅有 kline.minute.by_symbol，无 batch，跳过全市场同步"
 
     # Step 3: 刷新视图
     emit("refresh_views", 95, "刷新 DuckDB 视图…")
@@ -465,6 +500,7 @@ def run_now(
         "etf_daily_rows": written_etf_daily,
         "etf_adj_factor_symbols": etf_adj_symbols,
         "minute_rows": written_minute,
+        "minute_sync": minute_sync_result,
         "skipped_stages": skipped,
         "quality": quality_report,
     }

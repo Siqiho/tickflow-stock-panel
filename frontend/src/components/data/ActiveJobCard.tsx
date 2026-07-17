@@ -121,7 +121,19 @@ export function ActiveJobCard({ job }: { job: PipelineJob }) {
             <Pill label="日 K" value={cell(null, `${job.result.daily_days ?? 0} 天`)} />
             <Pill label="除权因子" value={cell('sync_adj', `${job.result.adj_factor_symbols ?? 0} 只`)} />
             <Pill label="enriched" value={cell(null, `${job.result.enriched_days ?? 0} 行`)} />
-            <Pill label="分钟K" value={cell('sync_minute', `${job.result.minute_rows ?? 0} 行`)} />
+            <Pill
+              label="分钟K"
+              value={cell(
+                'sync_minute',
+                job.result.minute_sync?.status === 'synced'
+                  ? `${job.result.minute_rows ?? 0} 行`
+                  : job.result.minute_sync?.reason
+                    ? `跳过：${job.result.minute_sync.reason}`
+                    : (job.result.skipped_stages ?? []).includes('sync_minute')
+                      ? '已跳过'
+                      : `${job.result.minute_rows ?? 0} 行`,
+              )}
+            />
           </div>
         )
       })()}

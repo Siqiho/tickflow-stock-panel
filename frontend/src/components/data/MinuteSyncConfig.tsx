@@ -5,7 +5,20 @@ import { api } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { isExpertOrAbove } from '@/lib/capability-labels'
 
-export function MinuteSyncConfig({ caps, isRunning, onStart }: { caps: { label: string; capabilities: Record<string, { rpm: number | null; batch: number | null; subscribe: number | null }> } | undefined; isRunning: boolean; onStart: () => void }) {
+type CapsLike = {
+  label?: string
+  capabilities?: Record<string, { rpm: number | null; batch: number | null; subscribe: number | null }>
+  minute?: {
+    available?: boolean
+    status?: string
+    reason?: string | null
+    reason_code?: string
+    fallback_hint?: string | null
+  }
+  features?: { minute?: CapsLike['minute'] }
+}
+
+export function MinuteSyncConfig({ caps, isRunning, onStart }: { caps: CapsLike | undefined; isRunning: boolean; onStart: () => void }) {
   const qc = useQueryClient()
   const prefs = useQuery({
     queryKey: QK.preferences,
@@ -18,6 +31,16 @@ export function MinuteSyncConfig({ caps, isRunning, onStart }: { caps: { label: 
   })
 
   const hasMinuteCap = !!caps?.capabilities?.['kline.minute.batch']
+  const minuteFeature = caps?.minute ?? caps?.features?.minute
+  const minuteReason =
+    minuteFeature?.reason ||
+    (!hasMinuteCap
+      ? '当前数据源无分钟K权限（需 TickFlow Pro+ 或自定义分钟源）'
+      : null)
+  const minuteStatus = minuteFeature?.status || (hasMinuteCap ? 'available' : 'unavailable')
+  const fallbackHint =
+    minuteFeature?.fallback_hint ||
+    (!hasMinuteCap ? '无全市场分钟库时，仍可用单票公开分时接口查看分时（不落库）' : null)
   const enabled = prefs.data?.minute_sync_enabled ?? false
   const days = prefs.data?.minute_sync_days ?? 5
   const [localDays, setLocalDays] = useState(days)
@@ -52,10 +75,26 @@ export function MinuteSyncConfig({ caps, isRunning, onStart }: { caps: { label: 
         </div>
         {!hasMinuteCap && (
           <span className="text-[10px] text-warning/80 bg-warning/8 rounded px-1.5 py-px font-medium">
-            需 Pro+
+            不可用
+          </span>
+        )}
+        {hasMinuteCap && !enabled && (
+          <span className="text-[10px] text-secondary bg-elevated rounded px-1.5 py-px font-medium">
+            已关闭
           </span>
         )}
       </div>
+
+      {!hasMinuteCap && (
+        <div className="rounded-btn border border-warning/20 bg-warning/5 px-2.5 py-2 space-y-1">
+          <div className="text-[11px] text-warning/90 font-medium">分钟K：不可用</div>
+          <div className="text-[10px] text-secondary leading-relaxed">{minuteReason}</div>
+          {fallbackHint && (
+            <div className="text-[10px] text-muted leading-relaxed">{fallbackHint}</div>
+          )}
+          <div className="text-[10px] text-muted">状态码：{minuteStatus}</div>
+        </div>
+      )}
 
       <div className="flex items-center justify-between">
         <span className="text-[10px] text-secondary">同步天数</span>

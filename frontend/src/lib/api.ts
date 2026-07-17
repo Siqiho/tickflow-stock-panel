@@ -30,9 +30,29 @@ export interface CapabilityLimits {
   subscribe: number | null
 }
 
-export interface CapabilitiesResponse {
+export type FeatureAvailability = {
+  available: boolean
+  status: string
+  reason?: string | null
+  reason_code?: string
+  capability?: Record<string, boolean>
+  user_enabled?: boolean | null
+  full_market_sync_allowed?: boolean
+  single_symbol_fallback?: string | null
+  fallback_hint?: string | null
+}
+
+export type CapabilitiesResponse = {
   label: string
   capabilities: Record<string, CapabilityLimits>
+  features?: {
+    daily?: FeatureAvailability
+    minute?: FeatureAvailability
+    adj_factor?: FeatureAvailability
+    financial?: FeatureAvailability
+  }
+  daily?: FeatureAvailability
+  minute?: FeatureAvailability
 }
 
 // ===== Financials =====
@@ -1700,6 +1720,14 @@ export interface PipelineJob {
     index_count?: number
     index_daily_rows?: number
     minute_rows: number
+    minute_sync?: {
+      status?: string
+      reason?: string | null
+      reason_code?: string
+      user_enabled?: boolean
+      rows?: number
+      fallback_hint?: string | null
+    }
     skipped_stages?: string[]
   } | null
   error: string | null
