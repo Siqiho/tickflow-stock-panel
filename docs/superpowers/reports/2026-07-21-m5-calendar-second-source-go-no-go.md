@@ -105,3 +105,12 @@ This is intentionally **not** claimed as “official SSE calendar API succeeded�
 - **Second-source Lab cross-check implemented and run:** yes
 - **Official SSE calendar API integrated:** no
 - **Production calendar published:** no
+
+
+## Live re-verify addendum (2026-07-21 evening)
+
+SZSE live recovered later the same day. Full live dual-source re-verify is recorded in:
+
+- `docs/superpowers/reports/2026-07-21-m5-calendar-live-reverify-go-no-go.md`
+
+Key upgrade: windows including 2025 and 2025–2026 YTD now pass live SZSE↔Tencent equality. Production publish remains NO_GO.

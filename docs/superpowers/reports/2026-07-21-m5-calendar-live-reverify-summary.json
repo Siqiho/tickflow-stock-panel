@@ -1,0 +1,540 @@
+{
+  "lab_root": "/tmp/one-trading-m5-cal-live-reverify-upD8Xz",
+  "as_of": "2026-07-21",
+  "szse_live_pull": {
+    "months": [
+      "2025-01",
+      "2025-02",
+      "2025-03",
+      "2025-04",
+      "2025-05",
+      "2025-06",
+      "2025-07",
+      "2025-08",
+      "2025-09",
+      "2025-10",
+      "2025-11",
+      "2025-12",
+      "2026-01",
+      "2026-02",
+      "2026-03",
+      "2026-04",
+      "2026-05",
+      "2026-06",
+      "2026-07"
+    ],
+    "raw_rows": 577,
+    "unique_days": 577,
+    "open_days": 382,
+    "range": [
+      "2025-01-01",
+      "2026-07-31"
+    ],
+    "missing_months": []
+  },
+  "cache_vs_live": {
+    "cache_span": [
+      "2026-06-01",
+      "2026-07-31"
+    ],
+    "live_open": 44,
+    "cache_open": 44,
+    "equal": true,
+    "only_live": [],
+    "only_cache": []
+  },
+  "window_reports": {
+    "w_2025": {
+      "ok": true,
+      "network": {
+        "szse_live": "ok",
+        "tencent_sh": "ok",
+        "tencent_sz": "ok"
+      },
+      "admission": {
+        "trading_calendar": {
+          "status": "LAB_PASS_CANDIDATE_SECOND_SOURCE_OK",
+          "discuss_standalone_production_publish": "DISCUSS_ONLY",
+          "reason": "SZSE calendar open days match Tencent SH open-day series on the compared span; Tencent SH/SZ series also match. Official SSE API still unavailable; production publish remains gated on rights + operator approval.",
+          "blockers_for_production": [
+            "exchange_data_redistribution_rights_not_formally_signed_off",
+            "official_sse_machine_readable_calendar_still_missing",
+            "bj_special_session_identity_not_independently_proven",
+            "operator_explicit_approval_required_before_writing_production_data"
+          ]
+        }
+      },
+      "production_publish": {
+        "status": "NO_GO",
+        "dataset": "trading_calendar",
+        "may_discuss_standalone_publish": true,
+        "reason": "Even with second-source agreement, formal production write is blocked until rights sign-off and explicit user approval. Listing/status datasets remain out of scope."
+      },
+      "comparisons": {
+        "tencent_sh_vs_tencent_sz": {
+          "left": "tencent_sh",
+          "right": "tencent_sz",
+          "span": [
+            "2025-01-01",
+            "2025-12-31"
+          ],
+          "left_count": 243,
+          "right_count": 243,
+          "intersection": 243,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_sh_vs_tencent_sh": {
+          "left": "szse_sh_open",
+          "right": "tencent_sh",
+          "span": [
+            "2025-01-02",
+            "2025-12-31"
+          ],
+          "left_count": 243,
+          "right_count": 243,
+          "intersection": 243,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_weekend_open_rows": 0
+      },
+      "szse": {
+        "producer": "szse_month_list",
+        "mode": "live",
+        "attempt": 0,
+        "months": [
+          "2025-01",
+          "2025-02",
+          "2025-03",
+          "2025-04",
+          "2025-05",
+          "2025-06",
+          "2025-07",
+          "2025-08",
+          "2025-09",
+          "2025-10",
+          "2025-11",
+          "2025-12"
+        ],
+        "raw_days": 365,
+        "open_days": 243
+      },
+      "tencent_sh": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sh000001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2025-01-01",
+          "2025-12-31"
+        ],
+        "open_day_count": 243,
+        "first": "2025-01-02",
+        "last": "2025-12-31",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T22:08:21.292188+08:00"
+      },
+      "tencent_sz": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sz399001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2025-01-01",
+          "2025-12-31"
+        ],
+        "open_day_count": 243,
+        "first": "2025-01-02",
+        "last": "2025-12-31",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T22:08:21.483516+08:00"
+      },
+      "errors": {},
+      "report_path": "/tmp/one-trading-m5-cal-live-reverify-upD8Xz/w_2025/lab_reports/calendar_second_source_crosscheck.json"
+    },
+    "w_2026_ytd": {
+      "ok": true,
+      "network": {
+        "szse_live": "ok",
+        "tencent_sh": "ok",
+        "tencent_sz": "ok"
+      },
+      "admission": {
+        "trading_calendar": {
+          "status": "LAB_PASS_CANDIDATE_SECOND_SOURCE_OK",
+          "discuss_standalone_production_publish": "DISCUSS_ONLY",
+          "reason": "SZSE calendar open days match Tencent SH open-day series on the compared span; Tencent SH/SZ series also match. Official SSE API still unavailable; production publish remains gated on rights + operator approval.",
+          "blockers_for_production": [
+            "exchange_data_redistribution_rights_not_formally_signed_off",
+            "official_sse_machine_readable_calendar_still_missing",
+            "bj_special_session_identity_not_independently_proven",
+            "operator_explicit_approval_required_before_writing_production_data"
+          ]
+        }
+      },
+      "production_publish": {
+        "status": "NO_GO",
+        "dataset": "trading_calendar",
+        "may_discuss_standalone_publish": true,
+        "reason": "Even with second-source agreement, formal production write is blocked until rights sign-off and explicit user approval. Listing/status datasets remain out of scope."
+      },
+      "comparisons": {
+        "tencent_sh_vs_tencent_sz": {
+          "left": "tencent_sh",
+          "right": "tencent_sz",
+          "span": [
+            "2026-01-01",
+            "2026-07-21"
+          ],
+          "left_count": 131,
+          "right_count": 131,
+          "intersection": 131,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_sh_vs_tencent_sh": {
+          "left": "szse_sh_open",
+          "right": "tencent_sh",
+          "span": [
+            "2026-01-05",
+            "2026-07-21"
+          ],
+          "left_count": 131,
+          "right_count": 131,
+          "intersection": 131,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_weekend_open_rows": 0
+      },
+      "szse": {
+        "producer": "szse_month_list",
+        "mode": "live",
+        "attempt": 0,
+        "months": [
+          "2026-01",
+          "2026-02",
+          "2026-03",
+          "2026-04",
+          "2026-05",
+          "2026-06",
+          "2026-07"
+        ],
+        "raw_days": 212,
+        "open_days": 139
+      },
+      "tencent_sh": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sh000001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2026-01-01",
+          "2026-07-21"
+        ],
+        "open_day_count": 131,
+        "first": "2026-01-05",
+        "last": "2026-07-21",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T22:08:22.011204+08:00"
+      },
+      "tencent_sz": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sz399001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2026-01-01",
+          "2026-07-21"
+        ],
+        "open_day_count": 131,
+        "first": "2026-01-05",
+        "last": "2026-07-21",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T22:08:22.229242+08:00"
+      },
+      "errors": {},
+      "report_path": "/tmp/one-trading-m5-cal-live-reverify-upD8Xz/w_2026_ytd/lab_reports/calendar_second_source_crosscheck.json"
+    },
+    "w_2025_2026": {
+      "ok": true,
+      "network": {
+        "szse_live": "ok",
+        "tencent_sh": "ok",
+        "tencent_sz": "ok"
+      },
+      "admission": {
+        "trading_calendar": {
+          "status": "LAB_PASS_CANDIDATE_SECOND_SOURCE_OK",
+          "discuss_standalone_production_publish": "DISCUSS_ONLY",
+          "reason": "SZSE calendar open days match Tencent SH open-day series on the compared span; Tencent SH/SZ series also match. Official SSE API still unavailable; production publish remains gated on rights + operator approval.",
+          "blockers_for_production": [
+            "exchange_data_redistribution_rights_not_formally_signed_off",
+            "official_sse_machine_readable_calendar_still_missing",
+            "bj_special_session_identity_not_independently_proven",
+            "operator_explicit_approval_required_before_writing_production_data"
+          ]
+        }
+      },
+      "production_publish": {
+        "status": "NO_GO",
+        "dataset": "trading_calendar",
+        "may_discuss_standalone_publish": true,
+        "reason": "Even with second-source agreement, formal production write is blocked until rights sign-off and explicit user approval. Listing/status datasets remain out of scope."
+      },
+      "comparisons": {
+        "tencent_sh_vs_tencent_sz": {
+          "left": "tencent_sh",
+          "right": "tencent_sz",
+          "span": [
+            "2025-01-01",
+            "2026-07-21"
+          ],
+          "left_count": 374,
+          "right_count": 374,
+          "intersection": 374,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_sh_vs_tencent_sh": {
+          "left": "szse_sh_open",
+          "right": "tencent_sh",
+          "span": [
+            "2025-01-02",
+            "2026-07-21"
+          ],
+          "left_count": 374,
+          "right_count": 374,
+          "intersection": 374,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_weekend_open_rows": 0
+      },
+      "szse": {
+        "producer": "szse_month_list",
+        "mode": "live",
+        "attempt": 0,
+        "months": [
+          "2025-01",
+          "2025-02",
+          "2025-03",
+          "2025-04",
+          "2025-05",
+          "2025-06",
+          "2025-07",
+          "2025-08",
+          "2025-09",
+          "2025-10",
+          "2025-11",
+          "2025-12",
+          "2026-01",
+          "2026-02",
+          "2026-03",
+          "2026-04",
+          "2026-05",
+          "2026-06",
+          "2026-07"
+        ],
+        "raw_days": 577,
+        "open_days": 382
+      },
+      "tencent_sh": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sh000001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2025-01-01",
+          "2026-07-21"
+        ],
+        "open_day_count": 374,
+        "first": "2025-01-02",
+        "last": "2026-07-21",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T22:08:23.242420+08:00"
+      },
+      "tencent_sz": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sz399001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2025-01-01",
+          "2026-07-21"
+        ],
+        "open_day_count": 374,
+        "first": "2025-01-02",
+        "last": "2026-07-21",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T22:08:23.444753+08:00"
+      },
+      "errors": {},
+      "report_path": "/tmp/one-trading-m5-cal-live-reverify-upD8Xz/w_2025_2026/lab_reports/calendar_second_source_crosscheck.json"
+    },
+    "w_jun_jul_2026": {
+      "ok": true,
+      "network": {
+        "szse_live": "ok",
+        "tencent_sh": "ok",
+        "tencent_sz": "ok"
+      },
+      "admission": {
+        "trading_calendar": {
+          "status": "LAB_PASS_CANDIDATE_SECOND_SOURCE_OK",
+          "discuss_standalone_production_publish": "DISCUSS_ONLY",
+          "reason": "SZSE calendar open days match Tencent SH open-day series on the compared span; Tencent SH/SZ series also match. Official SSE API still unavailable; production publish remains gated on rights + operator approval.",
+          "blockers_for_production": [
+            "exchange_data_redistribution_rights_not_formally_signed_off",
+            "official_sse_machine_readable_calendar_still_missing",
+            "bj_special_session_identity_not_independently_proven",
+            "operator_explicit_approval_required_before_writing_production_data"
+          ]
+        }
+      },
+      "production_publish": {
+        "status": "NO_GO",
+        "dataset": "trading_calendar",
+        "may_discuss_standalone_publish": true,
+        "reason": "Even with second-source agreement, formal production write is blocked until rights sign-off and explicit user approval. Listing/status datasets remain out of scope."
+      },
+      "comparisons": {
+        "tencent_sh_vs_tencent_sz": {
+          "left": "tencent_sh",
+          "right": "tencent_sz",
+          "span": [
+            "2026-06-01",
+            "2026-07-21"
+          ],
+          "left_count": 36,
+          "right_count": 36,
+          "intersection": 36,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_sh_vs_tencent_sh": {
+          "left": "szse_sh_open",
+          "right": "tencent_sh",
+          "span": [
+            "2026-06-01",
+            "2026-07-21"
+          ],
+          "left_count": 36,
+          "right_count": 36,
+          "intersection": 36,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_weekend_open_rows": 0
+      },
+      "szse": {
+        "producer": "szse_month_list",
+        "mode": "live",
+        "attempt": 0,
+        "months": [
+          "2026-06",
+          "2026-07"
+        ],
+        "raw_days": 61,
+        "open_days": 44
+      },
+      "tencent_sh": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sh000001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2026-06-01",
+          "2026-07-21"
+        ],
+        "open_day_count": 36,
+        "first": "2026-06-01",
+        "last": "2026-07-21",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T22:08:23.790118+08:00"
+      },
+      "tencent_sz": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sz399001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2026-06-01",
+          "2026-07-21"
+        ],
+        "open_day_count": 36,
+        "first": "2026-06-01",
+        "last": "2026-07-21",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T22:08:24.009323+08:00"
+      },
+      "errors": {},
+      "report_path": "/tmp/one-trading-m5-cal-live-reverify-upD8Xz/w_jun_jul_2026/lab_reports/calendar_second_source_crosscheck.json"
+    }
+  },
+  "direct_full_window": {
+    "tx_sh": 374,
+    "tx_sz": 374,
+    "szse_open": 374,
+    "tx_sh_eq_sz": true,
+    "szse_eq_tx_sh": true,
+    "only_szse": [],
+    "only_tx": [],
+    "only_szse_n": 0,
+    "only_tx_n": 0
+  },
+  "prev_claims_audit": {
+    "prior_live_szse_outage": true,
+    "prior_dual_span_equal_36": true,
+    "prior_used_cache_fallback": true,
+    "now_live_szse": true,
+    "cache_vs_fresh_live_equal": true
+  },
+  "sse_official_still": "SOA service is null / no usable calendar payload",
+  "reverify_at": "2026-07-21T22:09:03.604356+08:00",
+  "session_audit": {
+    "prior_network_outage_confirmed": true,
+    "prior_cache_not_corrupted": true,
+    "prior_conclusion_too_conservative_on_long_window": true,
+    "reason": "Earlier long-window dual-source was marked PARTIAL only because live SZSE was down and no 2025 cache existed; fresh live pull now completes those windows with full equality.",
+    "unchanged_hard_blockers": [
+      "no_official_sse_machine_readable_calendar",
+      "production_rights_signoff_missing",
+      "no_explicit_user_approval_to_write_production_data",
+      "bj_independent_feed_missing"
+    ]
+  }
+}
