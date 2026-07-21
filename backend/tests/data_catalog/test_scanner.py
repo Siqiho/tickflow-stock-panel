@@ -646,3 +646,52 @@ def test_parquet_replacement_during_scan_fails_consistency_instead_of_mixing_ver
     assert result.state.quality_status == "failed"
     assert result.artifacts == ()
     assert any("changed during scan" in error for error in result.state.payload["scan_errors"])
+
+
+def test_trading_calendar_reference_root_scans_healthy(tmp_path: Path) -> None:
+    from datetime import date
+
+    root = _write_parquet(
+        tmp_path / "reference" / "trading_calendar" / "calendar.parquet",
+        [
+            {
+                "exchange": "SH",
+                "trade_date": date(2026, 7, 1),
+                "is_open": True,
+                "session_type": "normal",
+                "open_time": "09:30",
+                "close_time": "15:00",
+                "source": "szse_month_list",
+                "as_of": date(2026, 7, 21),
+            },
+            {
+                "exchange": "SZ",
+                "trade_date": date(2026, 7, 1),
+                "is_open": True,
+                "session_type": "normal",
+                "open_time": "09:30",
+                "close_time": "15:00",
+                "source": "szse_month_list",
+                "as_of": date(2026, 7, 21),
+            },
+        ],
+    )
+    _write_lineage(
+        tmp_path,
+        "trading_calendar",
+        root,
+        unit_version="trading_calendar_v1",
+        source="szse_month_list",
+    )
+
+    result = CatalogScanner(tmp_path).scan_dataset("trading_calendar", "run-calendar")
+
+    assert result.state.quality_status == "healthy"
+    assert result.state.row_count == 2
+    assert result.state.unit_version == "trading_calendar_v1"
+    assert result.state.earliest_time == "2026-07-01"
+    assert result.state.latest_time == "2026-07-01"
+    assert {item.path for item in result.artifacts} == {
+        "reference/trading_calendar/calendar.parquet"
+    }
+    assert result.state.payload.get("scan_errors", []) == []

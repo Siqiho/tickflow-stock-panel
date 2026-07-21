@@ -39,6 +39,12 @@ describe('catalog presentation', () => {
     expect(screen.getByRole('heading', { name: 'Five-level order book' })).toBeInTheDocument()
   })
 
+  it('renders trading calendar under reference group', () => {
+    render(<DataCatalogSection catalog={catalogFixture} />)
+    const reference = screen.getByRole('region', { name: '参考数据' })
+    expect(within(reference).getByRole('heading', { name: 'Trading calendar' })).toBeInTheDocument()
+  })
+
   it('renders first-class quote, sealed-L1, and pool cards and selects by accessible control', () => {
     const onSelect = vi.fn()
     render(<DataCatalogSection catalog={catalogFixture} onSelectDataset={onSelect} />)

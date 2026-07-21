@@ -36,6 +36,7 @@ REQUIRED_DATASET_IDS = {
     "sealed_l1",
     "depth5",
     "pools",
+    "trading_calendar",
     "ext_data",
     "financial_metrics",
     "financial_income",
@@ -321,3 +322,26 @@ def test_enriched_and_financial_descriptors_describe_persisted_narrow_tables() -
     assert "total_revenue" in financial_fields["financial_income"]
     assert "netcash_operate" in financial_fields["financial_cash_flow"]
     assert "announce_date" in financial_fields["financial_shares"]
+
+
+def test_trading_calendar_definition_is_reference_owned() -> None:
+    definition = get_dataset_definition("trading_calendar")
+    assert definition.roots == ("reference/trading_calendar",)
+    assert definition.storage_category == "reference"
+    assert definition.symbol_column is None
+    assert definition.time_column == "trade_date"
+    assert definition.unit_policy == "reference"
+    assert definition.lineage_ids == ("trading_calendar",)
+    assert definition.descriptor.unit_version == "trading_calendar_v1"
+    assert definition.descriptor.primary_key == ["exchange", "trade_date"]
+    field_names = {field.name for field in definition.descriptor.fields}
+    assert {
+        "exchange",
+        "trade_date",
+        "is_open",
+        "session_type",
+        "open_time",
+        "close_time",
+        "source",
+        "as_of",
+    } <= field_names

@@ -15,13 +15,15 @@ function groupCatalog(entries: DatasetCatalogEntry[]): CatalogGroup[] {
     const id = entry.descriptor.dataset_id
     return id.startsWith('stock_') || id.startsWith('index_') || ['quote_snapshot', 'sealed_l1', 'depth5'].includes(id)
   })
-  const grouped = new Set([...finance, ...etf, ...core])
+  const reference = entries.filter((entry) => entry.descriptor.dataset_id === 'trading_calendar')
+  const grouped = new Set([...finance, ...etf, ...core, ...reference])
   const other = entries.filter((entry) => !grouped.has(entry))
 
   return [
     { key: 'core', title: '核心行情', entries: core },
     { key: 'etf', title: 'ETF 数据', entries: etf },
     { key: 'finance', title: '财务数据', entries: finance },
+    { key: 'reference', title: '参考数据', entries: reference },
     { key: 'other', title: '其他数据', entries: other },
   ].filter((group) => group.entries.length > 0)
 }

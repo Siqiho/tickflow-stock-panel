@@ -102,6 +102,7 @@ export const catalogFixture: CatalogResponse = {
     makeEntry('sealed_l1', 'Sealed L1 quotes'),
     makeEntry('depth5', 'Five-level order book'),
     makeEntry('pools', 'Stock pools'),
+    makeEntry('trading_calendar', 'Trading calendar'),
     ...financeEntries,
   ],
   storage: storageFixture,

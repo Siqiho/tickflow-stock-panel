@@ -37,6 +37,7 @@ _CATEGORY_TITLES = {
     "pools": "Pools",
     "financials": "Financials",
     "ext_data": "External data",
+    "reference": "Reference data",
     "lineage": "Lineage",
     "job_store": "Job store",
     "logs": "Logs",

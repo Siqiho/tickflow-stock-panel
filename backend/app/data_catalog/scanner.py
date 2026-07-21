@@ -45,6 +45,7 @@ _MANAGED_TITLES = {
     "pools": "Pools",
     "financials": "Financials",
     "ext_data": "External data",
+    "reference": "Reference data",
 }
 
 
@@ -563,7 +564,7 @@ class CatalogScanner:
                     raise ValueError("lineage source is missing")
                 if not isinstance(unit_version, str) or not unit_version.strip():
                     raise ValueError("lineage unit_version is missing")
-                artifact_path = payload.get("target_artifact") or payload.get("artifact")
+                artifact_path = payload.get("target_artifact") or payload.get("artifact_path") or payload.get("artifact")
                 if artifact_path is not None:
                     artifact_path = self._canonical_artifact_path(str(artifact_path))
                 summaries.append(
