@@ -84,6 +84,167 @@ financial_cash_flow, financial_shares
 
 `depth5` and `sealed_l1` may inspect the existing physical `depth5` directory, but the scanner must assign each file to exactly one semantic dataset based on its schema/lineage. Ambiguous files default to `sealed_l1`, never true depth5.
 
+### Exact Python model contract
+
+Use these fields and types; later tasks may add methods/validators but must not silently rename the public fields:
+
+```python
+from typing import Any, Literal
+
+QualityStatus = Literal["unknown", "healthy", "degraded", "failed"]
+RunStatus = Literal["pending", "running", "succeeded", "degraded", "failed"]
+
+class DatasetAvailability(BaseModel):
+    provider_supported: bool = False
+    entitled: bool = False
+    local_materialized: bool = False
+    serving_ready: bool = False
+    reason_code: str | None = None
+
+class FieldContract(BaseModel):
+    name: str
+    dtype: str
+    semantic: str
+    unit: str | None = None
+    scale: str | None = None
+    currency: str | None = None
+    timezone: str | None = None
+    nullable: bool
+
+class DatasetDescriptor(BaseModel):
+    dataset_id: str
+    title: str
+    asset_types: list[str]
+    grain: str
+    primary_key: list[str]
+    partition_keys: list[str]
+    schema_version: str
+    unit_version: str
+    point_in_time: bool
+    adjustment: str | None = None
+    availability: DatasetAvailability
+    fields: list[FieldContract]
+
+class DatasetState(BaseModel):
+    dataset_id: str
+    schema_version: str
+    unit_version: str
+    quality_status: QualityStatus = "unknown"
+    row_count: int = 0
+    symbol_count: int = 0
+    expected_symbol_count: int | None = None
+    earliest_time: str | None = None
+    latest_time: str | None = None
+    managed_bytes: int = 0
+    last_run_id: str | None = None
+    updated_at: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+class MarketCoverage(BaseModel):
+    market: Literal["SH", "SZ", "BJ", "OTHER"]
+    symbol_count: int = 0
+    expected_symbol_count: int | None = None
+    ratio: float | None = None  # 0.0..1.0, None when denominator is unknown
+
+class ArtifactRecord(BaseModel):
+    run_id: str
+    dataset_id: str
+    path: str
+    sha256: str
+    row_count: int = 0
+    bytes: int = 0
+    partition_value: str | None = None
+    published_at: str
+
+class SyncRun(BaseModel):
+    run_id: str
+    dataset_id: str
+    provider: str | None = None
+    operation: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    status: RunStatus
+    rows_fetched: int = 0
+    rows_published: int = 0
+    quality_status: QualityStatus = "unknown"
+    error_code: str | None = None
+    error_message: str | None = None
+
+class SourceHealth(BaseModel):
+    provider: str
+    operation: str
+    last_success_at: str | None = None
+    last_failure_at: str | None = None
+    consecutive_failures: int = 0
+    cooldown_until: str | None = None
+    last_error_code: str | None = None
+
+class LineageSummary(BaseModel):
+    run_id: str | None = None
+    source: str
+    fetched_at: str | None = None
+    unit_version: str
+    quality_status: QualityStatus = "unknown"
+    scope: str | None = None
+    artifact_path: str | None = None
+    row_count: int | None = None
+
+class StorageCategory(BaseModel):
+    key: str
+    title: str
+    kind: Literal["managed", "operational"]
+    bytes: int = 0
+    files: int = 0
+
+class StorageBreakdown(BaseModel):
+    managed_data_bytes: int = 0
+    operational_bytes: int = 0
+    total_bytes: int = 0
+    categories: list[StorageCategory] = Field(default_factory=list)
+
+class DatasetCatalogEntry(BaseModel):
+    descriptor: DatasetDescriptor
+    state: DatasetState
+    provider: str | None = None
+    coverage: list[MarketCoverage] = Field(default_factory=list)
+    lineage: list[LineageSummary] = Field(default_factory=list)
+    depth5_available: bool = False
+
+class CatalogResponse(BaseModel):
+    datasets: list[DatasetCatalogEntry]
+    storage: StorageBreakdown
+    refreshed_at: str | None = None
+    stale: bool = False
+```
+
+Non-negative counters/bytes are validated. Coverage ratios, when present, are within `[0, 1]`. `StorageBreakdown` validates `total_bytes == managed_data_bytes + operational_bytes` and the category byte total equals `total_bytes`.
+
+### Exact internal definition contract
+
+`DatasetDefinition` is a frozen dataclass with these fields:
+
+```python
+@dataclass(frozen=True)
+class DatasetDefinition:
+    descriptor: DatasetDescriptor          # availability is the all-false placeholder
+    roots: tuple[str, ...]                  # paths relative to data_dir
+    provider: str | None
+    operation: str | None
+    storage_category: str
+    symbol_column: str | None = "symbol"
+    time_column: str | None = None
+    partition_key: str | None = None
+    lineage_ids: tuple[str, ...] = ()
+    semantic_classifier: Literal["default", "depth"] = "default"
+    shared_root_group: str | None = None
+```
+
+All roots are exclusive. The only allowed duplicate root is `depth5`, shared by `sealed_l1` and `depth5` with `shared_root_group="depth_semantics"` and `semantic_classifier="depth"`. Root mapping is the existing canonical directory name: `instruments`, `kline_daily`, `kline_daily_enriched`, `kline_minute`, `adj_factor`; ETF equivalents use `instruments_etf`, `kline_etf_daily`, `kline_etf_enriched`, `kline_etf_minute`, `adj_factor_etf`; index equivalents use `instruments_index`, `kline_index_daily`, `kline_index_enriched`; then `quote_snapshot`, `depth5`, `pools`, `ext_data`, and `financials/{metrics,income,balance_sheet,cash_flow,shares}`.
+
+Static registry validation requires: non-empty/unique dataset IDs; non-empty title, asset types, grain, schema/unit versions, primary key, and fields; unique field names inside each descriptor; valid roots; and no disallowed root overlap. Keep schema/unit versions at `"1"` / `"cn_market_v1"` for market datasets and use a truthful dataset-specific unit version for non-market reference/control data.
+
+Definitions must contain the current canonical columns relevant to each dataset. At minimum: instrument identifiers/metadata; OHLCV/amount/change for bars; factor value for adjustment data; snapshot/depth price and volume semantics; pool constituent identity; and each financial table's identifying dates plus its representative monetary/share fields. Reuse helpers to avoid duplicating common field contracts. Stock/index/ETF enriched helpers may share technical field names, but their `semantic` text must explicitly name the correct asset class. `limit_up` and `limit_down` are nullable CNY price fields with no percentage scale.
+
 ---
 
 ## Task 1: Define catalog models and the static dataset registry
