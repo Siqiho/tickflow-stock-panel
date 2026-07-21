@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { AlertTriangle, Database } from 'lucide-react'
 import type { CatalogResponse, DatasetCatalogEntry } from '@/lib/api'
 import { DatasetCatalogCard } from './DatasetCatalogCard'
@@ -31,16 +32,20 @@ export function DataCatalogSection({
   isStale = false,
   error = null,
   onSelectDataset,
+  actions,
+  headingLevel = 2,
 }: {
   catalog?: CatalogResponse
   isStale?: boolean
   error?: Error | null
   onSelectDataset?: (entry: DatasetCatalogEntry) => void
+  actions?: ReactNode
+  headingLevel?: 2 | 3
 }) {
   if (!catalog) {
     if (error) {
       return (
-        <div role="alert" className="rounded-card border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
+        <div role="alert" aria-label="数据目录错误" className="rounded-card border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
           数据目录暂不可用：{error.message}
         </div>
       )
@@ -52,23 +57,28 @@ export function DataCatalogSection({
     entry.descriptor.dataset_id !== 'depth5' || entry.depth5_available === true
   ))
   const stale = isStale || catalog.stale || Boolean(error)
+  const Heading = headingLevel === 3 ? 'h3' : 'h2'
+  const Container = headingLevel === 3 ? 'div' : 'section'
 
   return (
-    <section aria-labelledby="data-catalog-heading">
+    <Container aria-labelledby="data-catalog-heading">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
         <div>
-          <h2 id="data-catalog-heading" className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <Heading id="data-catalog-heading" className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Database aria-hidden="true" className="h-4 w-4 text-secondary" />
             数据目录
-          </h2>
+          </Heading>
           <p className="mt-1 text-[11px] text-muted">本地数据、可用性、覆盖与质量事实</p>
         </div>
-        {stale && (
-          <span className="inline-flex items-center gap-1.5 rounded-btn bg-warning/10 px-2 py-1 text-xs font-medium text-warning">
-            <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5" />
-            状态可能过期
-          </span>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {stale && (
+            <span className="inline-flex items-center gap-1.5 rounded-btn bg-warning/10 px-2 py-1 text-xs font-medium text-warning">
+              <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5" />
+              状态可能过期
+            </span>
+          )}
+          {actions}
+        </div>
       </div>
 
       {entries.length === 0 ? (
@@ -91,6 +101,6 @@ export function DataCatalogSection({
           ))}
         </div>
       )}
-    </section>
+    </Container>
   )
 }

@@ -1,1099 +1,588 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AnimatePresence, motion } from 'framer-motion'
 import {
-  Database,
-  Play,
-  Loader2,
-  HardDrive,
-  Clock,
+  AlertTriangle,
   Calendar,
   CheckSquare,
-  Trash2,
-  Plus,
-  Wifi,
-  SlidersHorizontal,
-  AlertTriangle,
+  Clock,
+  Database,
+  History,
   Info,
+  Loader2,
+  Play,
+  Plus,
+  RefreshCw,
+  SlidersHorizontal,
+  Trash2,
+  Wifi,
+  Wrench,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { EndpointTestDialog } from '@/components/EndpointTestDialog'
-import { api, type ExtDataConfig } from '@/lib/api'
-import {
-  useCapabilities,
-  useSettings,
-  usePreferences,
-  useQuoteStatus,
-  useQuoteInterval,
-  useDataStatus,
-} from '@/lib/useSharedQueries'
-import { useToggleRealtimeQuotes, useUpdateQuoteInterval } from '@/lib/useSharedMutations'
-import { QK } from '@/lib/queryKeys'
 import { PageHeader } from '@/components/PageHeader'
-import { formatScheduleDatePart, formatScheduleTimePart, isToday } from '@/lib/format'
-
-// 拆分出的子组件
-import { StatCard, type FieldTab } from '@/components/data/StatCard'
 import { ActiveJobCard } from '@/components/data/ActiveJobCard'
-import { SectionTitle, HistoryRow } from '@/components/data/SectionTitle'
-import { SettingsModal } from '@/components/data/SettingsModal'
-import { ScheduleEditor } from '@/components/data/ScheduleEditor'
-import { ExtendHistoryPanel } from '@/components/data/ExtendHistoryPanel'
+import { DataCatalogSection } from '@/components/data/DataCatalogSection'
+import { DatasetDetailDrawer } from '@/components/data/DatasetDetailDrawer'
+import { DatasetRunHistory } from '@/components/data/DatasetRunHistory'
 import { EnrichedRebuildPanel } from '@/components/data/EnrichedRebuildPanel'
+import { ExtendHistoryPanel } from '@/components/data/ExtendHistoryPanel'
 import { MinuteSyncConfig } from '@/components/data/MinuteSyncConfig'
+import { PageSettingsModal, getCardVisibility, type CardKey } from '@/components/data/PageSettingsModal'
 import { PipelineScopeConfig } from '@/components/data/PipelineScopeConfig'
-import { PageSettingsModal, getCardVisibility, getCardOrder, type CardKey } from '@/components/data/PageSettingsModal'
 import { QuoteConfigCard } from '@/components/data/QuoteConfigCard'
-import { EnrichedSchemaModal } from '@/components/data/SchemaModal'
+import { ScheduleEditor } from '@/components/data/ScheduleEditor'
+import { HistoryRow } from '@/components/data/SectionTitle'
+import { SettingsModal } from '@/components/data/SettingsModal'
+import { StorageBreakdownCard } from '@/components/data/StorageBreakdownCard'
 import { Skeleton } from '@/components/data/Skeleton'
-import { ExtDataStatCard } from '@/components/ext-data/ExtDataStatCard'
 import { CreateExtDialog } from '@/components/ext-data/CreateExtDialog'
 import { EditExtDialog } from '@/components/ext-data/EditExtDialog'
+import { ExtDataStatCard } from '@/components/ext-data/ExtDataStatCard'
+import { formatScheduleDatePart, formatScheduleTimePart, isToday } from '@/lib/format'
+import { api, type CatalogResponse, type DatasetCatalogEntry, type ExtDataConfig } from '@/lib/api'
+import { QK } from '@/lib/queryKeys'
+import { useToggleRealtimeQuotes, useUpdateQuoteInterval } from '@/lib/useSharedMutations'
+import {
+  useCapabilities,
+  useDataCatalog,
+  useDataStatus,
+  usePreferences,
+  useQuoteInterval,
+  useQuoteStatus,
+  useSettings,
+} from '@/lib/useSharedQueries'
+
+const CATALOG_GROUP_BY_DATASET: Record<string, CardKey> = {
+  stock_instruments: 'instruments',
+  stock_daily: 'daily',
+  stock_adj_factor: 'adj_factor',
+  stock_enriched: 'enriched',
+  stock_minute: 'minute',
+}
+
+function catalogVisibilityGroup(datasetId: string): CardKey | null {
+  if (CATALOG_GROUP_BY_DATASET[datasetId]) return CATALOG_GROUP_BY_DATASET[datasetId]
+  if (datasetId.startsWith('index_')) return 'index'
+  if (datasetId.startsWith('etf_')) return 'etf'
+  if (datasetId.startsWith('financial_')) return 'financials'
+  return null
+}
+
+function filterCatalogForRendering(
+  catalog: CatalogResponse | undefined,
+  visible: Record<CardKey, boolean>,
+): CatalogResponse | undefined {
+  if (!catalog) return undefined
+  return {
+    ...catalog,
+    datasets: catalog.datasets.filter((entry) => {
+      const group = catalogVisibilityGroup(entry.descriptor.dataset_id)
+      return group === null || visible[group]
+    }),
+  }
+}
+
+function warningMessage(label: string, error: unknown): string | null {
+  if (!error) return null
+  const message = error instanceof Error ? error.message : String(error)
+  return `${label}：${message}`
+}
 
 export function Data() {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient()
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
-  const startTime = useRef<number | null>(null)
+  const [selectedDataset, setSelectedDataset] = useState<DatasetCatalogEntry | null>(null)
+  const [openSettings, setOpenSettings] = useState<string | null>(null)
+  const [showScheduleEdit, setShowScheduleEdit] = useState(false)
+  const [showInstScheduleEdit, setShowInstScheduleEdit] = useState(false)
+  const [showClearConfirm, setShowClearConfirm] = useState(false)
+  const [showEndpointTest, setShowEndpointTest] = useState(false)
+  const [showCreateExt, setShowCreateExt] = useState(false)
+  const [editingExt, setEditingExt] = useState<ExtDataConfig | null>(null)
+  const [showIntervalEdit, setShowIntervalEdit] = useState(false)
+  const [indexExtendValue, setIndexExtendValue] = useState(6)
+  const [indexExtendUnit, setIndexExtendUnit] = useState<'month' | 'year'>('month')
+  const [indexBatchInput, setIndexBatchInput] = useState('100')
+  const [visibilityVersion, setVisibilityVersion] = useState(0)
   const topRef = useRef<HTMLDivElement>(null)
 
   const caps = useCapabilities()
   const settings = useSettings()
-
-  const status = useDataStatus({
-    refetchInterval: activeJobId ? 2_000 : 30_000,
-  })
-
+  const prefs = usePreferences()
+  const status = useDataStatus({ refetchInterval: activeJobId ? 2_000 : 30_000 })
+  const catalog = useDataCatalog({ refetchInterval: activeJobId ? 2_000 : 30_000 })
   const history = useQuery({
     queryKey: QK.pipelineJobs,
     queryFn: () => api.pipelineJobs(15),
     refetchInterval: activeJobId ? false : 60_000,
   })
-
+  const allRuns = useQuery({
+    queryKey: QK.dataCatalogRuns(),
+    queryFn: () => api.dataCatalogRuns(),
+  })
   const job = useQuery({
     queryKey: QK.pipelineJob(activeJobId ?? ''),
     queryFn: () => api.pipelineJob(activeJobId!),
-    enabled: !!activeJobId,
-    refetchInterval: (q: any) => {
-      const j = q.state.data
-      return j && (j.status === 'succeeded' || j.status === 'degraded' || j.status === 'failed') ? false : 1_000
+    enabled: Boolean(activeJobId),
+    refetchInterval: (query) => {
+      const current = query.state.data
+      return current && ['succeeded', 'degraded', 'failed'].includes(current.status) ? false : 1_000
     },
   })
+  const extConfigs = useQuery({ queryKey: QK.extData, queryFn: api.extDataList })
+
+  const selectedDatasetId = selectedDataset?.descriptor.dataset_id ?? ''
+  const selectedDetail = useQuery({
+    queryKey: QK.dataCatalogDataset(selectedDatasetId),
+    queryFn: () => api.dataCatalogDataset(selectedDatasetId),
+    enabled: Boolean(selectedDatasetId),
+  })
+  const selectedSchema = useQuery({
+    queryKey: QK.dataCatalogSchema(selectedDatasetId),
+    queryFn: () => api.dataCatalogSchema(selectedDatasetId),
+    enabled: Boolean(selectedDatasetId),
+  })
+  const selectedRuns = useQuery({
+    queryKey: QK.dataCatalogRuns(selectedDatasetId),
+    queryFn: () => api.dataCatalogRuns(selectedDatasetId),
+    enabled: Boolean(selectedDatasetId),
+  })
+
+  useEffect(() => {
+    const handleVisibilityChange = () => setVisibilityVersion((version) => version + 1)
+    window.addEventListener('data-card-visible-change', handleVisibilityChange)
+    return () => window.removeEventListener('data-card-visible-change', handleVisibilityChange)
+  }, [])
+
+  const cardVisibility = getCardVisibility(caps.data?.capabilities)
+  void visibilityVersion
+  const renderCatalog = filterCatalogForRendering(catalog.data, cardVisibility)
 
   const startSync = useMutation({
     mutationFn: api.pipelineRun,
-    onSuccess: ({ job_id }) => {
-      setActiveJobId(job_id)
-      startTime.current = Date.now()
-    },
+    onSuccess: ({ job_id }) => setActiveJobId(job_id),
   })
-
-  const [showClearConfirm, setShowClearConfirm] = useState(false)
   const clearData = useMutation({
     mutationFn: api.dataClear,
-    onSuccess: () => {
-      qc.invalidateQueries()
+    onSuccess: async () => {
+      const keys = [QK.dataStatus, QK.dataCatalog, QK.dataCatalogRuns(), QK.pipelineJobs]
+      await Promise.all(keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })))
+      if (selectedDatasetId) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: QK.dataCatalogDataset(selectedDatasetId) }),
+          queryClient.invalidateQueries({ queryKey: QK.dataCatalogSchema(selectedDatasetId) }),
+          queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(selectedDatasetId) }),
+        ])
+      }
       setShowClearConfirm(false)
     },
   })
+  const rescanCatalog = useMutation({
+    mutationFn: () => api.rescanDataCatalog(),
+    onSuccess: async (response) => {
+      queryClient.setQueryData(QK.dataCatalog, response)
+      const keys = [QK.dataStatus, QK.dataCatalogRuns()]
+      await Promise.all(keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })))
+      if (selectedDatasetId) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: QK.dataCatalogDataset(selectedDatasetId) }),
+          queryClient.invalidateQueries({ queryKey: QK.dataCatalogSchema(selectedDatasetId) }),
+          queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(selectedDatasetId) }),
+        ])
+      }
+    },
+  })
+  const deleteExt = useMutation({
+    mutationFn: (id: string) => api.extDataDelete(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: QK.extData }),
+  })
+
+  const pipelineSchedule = prefs.data?.pipeline_schedule ?? { hour: 15, minute: 30 }
+  const instrumentsSchedule = prefs.data?.instruments_schedule ?? { hour: 9, minute: 10 }
+  const minuteAuto = prefs.data?.minute_sync_enabled ?? false
+  const indexAuto = prefs.data?.pipeline_pull_index ?? true
+  const etfAuto = prefs.data?.pipeline_pull_etf ?? false
+  const indexDailyBatchSize = prefs.data?.index_daily_batch_size ?? 100
 
   const updateSchedule = useMutation({
-    mutationFn: ({ hour, minute }: { hour: number; minute: number }) =>
-      api.updatePipelineSchedule(hour, minute),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK.preferences })
-      qc.invalidateQueries({ queryKey: QK.dataStatus })
+    mutationFn: ({ hour, minute }: { hour: number; minute: number }) => api.updatePipelineSchedule(hour, minute),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: QK.preferences }),
+        queryClient.invalidateQueries({ queryKey: QK.dataStatus }),
+      ])
       setShowScheduleEdit(false)
     },
   })
-
   const updateInstSchedule = useMutation({
-    mutationFn: ({ hour, minute }: { hour: number; minute: number }) =>
-      api.updateInstrumentsSchedule(hour, minute),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK.preferences })
-      qc.invalidateQueries({ queryKey: QK.dataStatus })
+    mutationFn: ({ hour, minute }: { hour: number; minute: number }) => api.updateInstrumentsSchedule(hour, minute),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: QK.preferences }),
+        queryClient.invalidateQueries({ queryKey: QK.dataStatus }),
+      ])
       setShowInstScheduleEdit(false)
     },
   })
 
-  const [openSettings, setOpenSettings] = useState<string | null>(null)
-  const [showScheduleEdit, setShowScheduleEdit] = useState(false)
-  const [showInstScheduleEdit, setShowInstScheduleEdit] = useState(false)
-  const [indexExtendValue, setIndexExtendValue] = useState(6)
-  const [indexExtendUnit, setIndexExtendUnit] = useState<'month' | 'year'>('month')
-  const [schemaTable, setSchemaTable] = useState<string | null>(null)
-  const [showEndpointTest, setShowEndpointTest] = useState(false)
-  const [showCreateExt, setShowCreateExt] = useState(false)
-  const [editingExt, setEditingExt] = useState<ExtDataConfig | null>(null)
-  const [indexBatchInput, setIndexBatchInput] = useState('100')
-
-  const extConfigs = useQuery({
-    queryKey: QK.extData,
-    queryFn: api.extDataList,
-  })
-  const deleteExt = useMutation({
-    mutationFn: (id: string) => api.extDataDelete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: QK.extData }),
-  })
-
+  const hasDailyBatchCap = Boolean(caps.data?.capabilities?.['kline.daily.batch'])
+  const indexEarliestDate = status.data?.index_daily?.earliest_date ?? status.data?.index_enriched?.earliest_date ?? null
+  const indexOffsetDays = indexExtendUnit === 'month' ? indexExtendValue * 30 : indexExtendValue * 365
+  const indexTargetDate = new Date(indexEarliestDate ?? Date.now())
+  indexTargetDate.setDate(indexTargetDate.getDate() - indexOffsetDays)
+  const indexTargetDateText = indexTargetDate.toISOString().slice(0, 10)
+  const indexSyncDays = Math.min(5000, Math.max(30, Math.ceil((Date.now() - indexTargetDate.getTime()) / 86_400_000) + 1))
   const syncIndexDaily = useMutation({
     mutationFn: () => api.syncIndexDaily(indexSyncDays),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK.dataStatus })
-      qc.invalidateQueries({ queryKey: QK.indexList })
-      qc.invalidateQueries({ queryKey: QK.indexQuotes })
-      qc.invalidateQueries({ queryKey: ['index-daily'] })
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: QK.dataStatus }),
+        queryClient.invalidateQueries({ queryKey: QK.dataCatalog }),
+        queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns() }),
+        queryClient.invalidateQueries({ queryKey: QK.indexList }),
+        queryClient.invalidateQueries({ queryKey: QK.indexQuotes }),
+      ])
     },
   })
-
-  const prefs = usePreferences()
-  const minuteAuto = prefs.data?.minute_sync_enabled ?? false
-  const pipelineSched = prefs.data?.pipeline_schedule ?? { hour: 15, minute: 30 }
-  const instrumentsSched = prefs.data?.instruments_schedule ?? { hour: 9, minute: 10 }
-  const indexDailyBatchSize = prefs.data?.index_daily_batch_size ?? 100
-
-  useEffect(() => {
-    setIndexBatchInput(String(indexDailyBatchSize))
-  }, [indexDailyBatchSize])
-
   const updateIndexBatchSize = useMutation({
     mutationFn: (size: number) => api.updateIndexDailyBatchSize(size),
-    onSuccess: () => qc.invalidateQueries({ queryKey: QK.preferences }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: QK.preferences }),
   })
 
-  const [showIntervalEdit, setShowIntervalEdit] = useState(false)
+  useEffect(() => setIndexBatchInput(String(indexDailyBatchSize)), [indexDailyBatchSize])
+
+  const quoteInterval = useQuoteInterval()
+  const quoteStatus = useQuoteStatus()
+  const updateInterval = useUpdateQuoteInterval()
+  const toggleQuote = useToggleRealtimeQuotes()
   const handleToggleIntervalEdit = useCallback((fromEvent?: boolean) => {
-    setShowIntervalEdit(v => {
-      const next = !v
-      if (!fromEvent) {
-        window.dispatchEvent(new CustomEvent('quote-interval-editor-toggle', { detail: { source: 'data' } }))
-      }
+    setShowIntervalEdit((current) => {
+      const next = !current
+      if (!fromEvent) window.dispatchEvent(new CustomEvent('quote-interval-editor-toggle', { detail: { source: 'data' } }))
       return next
     })
   }, [])
   useEffect(() => {
-    const handler = (e: Event) => {
-      const ce = e as CustomEvent
-      if (ce.detail?.source !== 'data') {
-        setShowIntervalEdit(v => !v)
-      }
+    const handler = (event: Event) => {
+      if ((event as CustomEvent).detail?.source !== 'data') setShowIntervalEdit((current) => !current)
     }
     window.addEventListener('quote-interval-editor-toggle', handler)
     return () => window.removeEventListener('quote-interval-editor-toggle', handler)
   }, [])
-  const quoteInterval = useQuoteInterval()
-  const updateInterval = useUpdateQuoteInterval()
 
-  const realtimeEnabled = prefs.data?.realtime_quotes_enabled ?? false
-  const quoteStatus = useQuoteStatus()
-  const toggleQuote = useToggleRealtimeQuotes()
-
-  const hasAdjCap = !!caps.data?.capabilities?.['adj_factor']
-  const hasDailyBatchCap = !!caps.data?.capabilities?.['kline.daily.batch']
-  const minuteFeat = caps.data?.features?.minute ?? caps.data?.minute
-  const hasMinuteCap = !!(
-    minuteFeat?.full_market_sync_allowed
-    || (caps.data?.capabilities?.['kline.minute.batch'] && !(caps.data?.capabilities?.['kline.minute.batch'] as any)?.view_only)
-  )
-  const indexAuto = prefs.data?.pipeline_pull_index ?? true
-  const etfAuto = prefs.data?.pipeline_pull_etf ?? false
-  const hasFinancialPublic = (prefs.data?.financial_provider || '') === 'public' || !!caps.data?.capabilities?.['financial']
-  const pipelineSteps = [
-    '日K',
-    ...(hasAdjCap ? ['复权'] : []),
-    ...(hasFinancialPublic && (prefs.data?.financial_provider || '') === 'public' ? ['财务'] : []),
-    '指标',
-    ...(indexAuto ? ['指数'] : []),
-    ...(etfAuto ? ['ETF'] : []),
-    ...((hasMinuteCap && minuteAuto) ? ['分钟K'] : []),
-  ]
-
-  // 数据画像卡片显隐(由页面设置弹窗控制,存 localStorage)
-  const [cardVisibleTick, setCardVisibleTick] = useState(0)
+  const terminalJobStatus = job.data?.status
   useEffect(() => {
-    const handler = () => setCardVisibleTick(t => t + 1)
-    window.addEventListener('data-card-visible-change', handler)
-    return () => window.removeEventListener('data-card-visible-change', handler)
-  }, [])
-  const cardVisible = getCardVisibility(caps.data?.capabilities)
-  // 引用 cardVisibleTick 触发重渲染(避免 lint 警告)
-  void cardVisibleTick
+    if (!terminalJobStatus || !['succeeded', 'degraded', 'failed'].includes(terminalJobStatus)) return undefined
+    const keys = [QK.dataStatus, QK.dataCatalog, QK.dataCatalogRuns(), QK.pipelineJobs]
+    for (const queryKey of keys) void queryClient.invalidateQueries({ queryKey })
+    if (selectedDatasetId) void queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(selectedDatasetId) })
+    const timer = window.setTimeout(() => setActiveJobId(null), 5_000)
+    return () => window.clearTimeout(timer)
+  }, [queryClient, selectedDatasetId, terminalJobStatus])
 
   useEffect(() => {
-    if (job.data && (job.data.status === 'succeeded' || job.data.status === 'degraded' || job.data.status === 'failed')) {
-      qc.invalidateQueries({ queryKey: QK.dataStatus })
-      qc.invalidateQueries({ queryKey: QK.pipelineJobs })
-      const t = setTimeout(() => setActiveJobId(null), 5_000)
-      return () => clearTimeout(t)
-    }
-  }, [job.data?.status])
-
+    if (job.isError && /404/.test(String((job.error as Error)?.message ?? ''))) setActiveJobId(null)
+  }, [job.error, job.isError])
   useEffect(() => {
-    if (job.isError && /404/.test(String((job.error as any)?.message ?? ''))) {
-      setActiveJobId(null)
-    }
-  }, [job.isError, job.error])
-
-  useEffect(() => {
-    if (!activeJobId && history.data?.active_id) {
-      setActiveJobId(history.data.active_id)
-    }
-  }, [history.data?.active_id])
-
-  const s = status.data
-  const isLoading = status.isLoading
-  const isRunning = job.data?.status === 'running' || job.data?.status === 'pending'
-  const isStarting = startSync.isPending
-  const hasData = !!(s?.instruments?.rows || s?.daily?.rows)
-  // none 档(无 key / 无效 key) → 禁用立即同步 (同步依赖付费档的批量端点)
-  const isNoKey = settings.data?.mode === 'none'
-  const indexOverviewStats = s ? {
-    rows: 0,
-    earliest_date: s.index_daily?.earliest_date ?? s.index_enriched?.earliest_date ?? null,
-    latest_date: s.index_daily?.latest_date ?? s.index_enriched?.latest_date ?? null,
-    symbols_covered: s.index_daily?.symbols_covered ?? s.index_instruments?.rows ?? 0,
-    trading_days: s.index_daily?.trading_days ?? s.index_enriched?.trading_days ?? 0,
-  } : null
-  // ETF 统计(后端已按 asset_type='etf' 从 index 存储中拆分)
-  const etfOverviewStats = s ? {
-    rows: 0,
-    earliest_date: s.etf_daily?.earliest_date ?? s.etf_enriched?.earliest_date ?? null,
-    latest_date: s.etf_daily?.latest_date ?? s.etf_enriched?.latest_date ?? null,
-    symbols_covered: s.etf_daily?.symbols_covered ?? s.etf_instruments?.rows ?? 0,
-    trading_days: s.etf_daily?.trading_days ?? s.etf_enriched?.trading_days ?? 0,
-  } : null
-  const indexOverviewLabel = s ? '日 · 维表 · 日K · 指标' : undefined
-  const indexEarliestDate = s?.index_daily?.earliest_date ?? s?.index_enriched?.earliest_date ?? null
-  const indexOffsetDays = indexExtendUnit === 'month' ? indexExtendValue * 30 : indexExtendValue * 365
-  const indexTargetDate = (() => {
-    const d = indexEarliestDate ? new Date(indexEarliestDate) : new Date()
-    d.setDate(d.getDate() - indexOffsetDays)
-    return d
-  })()
-  const indexTargetDateText = indexTargetDate.toISOString().slice(0, 10)
-  const indexSyncDays = Math.min(
-    5000,
-    Math.max(30, Math.ceil((Date.now() - indexTargetDate.getTime()) / 86_400_000) + 1),
-  )
-
-  const STAGE_CARD: Record<string, string> = {
-    sync_instruments: 'instruments',
-    sync_daily: 'daily',
-    extend_history: 'daily',
-    sync_adj: 'adj_factor',
-    sync_financials: 'financials',
-    compute_enriched: 'enriched',
-    rebuild_enriched: 'enriched',
-    sync_index: 'index_daily',
-    sync_minute: 'minute',
-    extend_minute: 'minute',
-  }
-  const activeCard = isRunning && job.data ? STAGE_CARD[job.data.stage] ?? null : null
-
-  const skippedCards = new Set(
-    (job.data?.result?.skipped_stages ?? [])
-      .map(s => STAGE_CARD[s])
-      .filter(Boolean) as string[]
-  )
-
-  const prevStageRef = useRef<string | null>(null)
-  const [doneStages, setDoneStages] = useState<Set<string>>(new Set())
-  useEffect(() => {
-    if (!job.data?.stage) return
-    const stage = job.data.stage
-    if (stage === prevStageRef.current) return
-    const prev = prevStageRef.current
-    if (prev && STAGE_CARD[prev]) {
-      setDoneStages((s) => new Set(s).add(STAGE_CARD[prev]))
-    }
-    prevStageRef.current = stage
-    qc.invalidateQueries({ queryKey: QK.dataStatus })
-  }, [job.data?.stage])
-
-  useEffect(() => {
-    if (!activeJobId) {
-      setDoneStages(new Set())
-      prevStageRef.current = null
-    }
-  }, [activeJobId])
+    if (!activeJobId && history.data?.active_id) setActiveJobId(history.data.active_id)
+  }, [activeJobId, history.data?.active_id])
 
   const handleJobClick = useCallback((id: string) => {
     setActiveJobId(id)
-    requestAnimationFrame(() => {
-      topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    })
+    requestAnimationFrame(() => topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
   }, [])
 
-  // 按卡片 key 渲染对应的 StatCard (顺序由 getCardOrder 控制, 显隐由 cardVisible 控制)
-  const renderStatCard = (k: CardKey): React.ReactNode => {
-    switch (k) {
-      case 'instruments':
-        return (
-          <StatCard
-            title="个股维表"
-            hint="盘前同步 · 元数据快照"
-            stats={s?.instruments}
-            isInstrument
-            loading={isLoading}
-            active={activeCard === 'instruments'}
-            done={doneStages.has('instruments')}
-            skipped={skippedCards.has('instruments')}
-            stagePct={activeCard === 'instruments' ? (job.data?.stage_pct ?? 0) : 0}
-            tierKey="instruments"
-            capLimits={caps.data?.capabilities}
-            tierLabel={caps.data?.label}
-            auto
-            onShowFields={() => setSchemaTable('instruments')}
-          />
-        )
-      case 'daily':
-        return (
-          <StatCard
-            title="日 K"
-            hint="增量同步 · 全市场"
-            stats={s?.daily}
-            loading={isLoading}
-            active={activeCard === 'daily'}
-            done={doneStages.has('daily')}
-            skipped={skippedCards.has('daily')}
-            stagePct={activeCard === 'daily' ? (job.data?.stage_pct ?? 0) : 0}
-            tierKey="daily"
-            capLimits={caps.data?.capabilities}
-            tierLabel={caps.data?.label}
-            auto
-            onShowFields={() => setSchemaTable('daily')}
-            onSettings={hasData ? () => setOpenSettings(v => v === 'daily' ? null : 'daily') : undefined}
-            settingsOpen={openSettings === 'daily'}
-          />
-        )
-      case 'adj_factor':
-        return (
-          <StatCard
-            title="除权因子"
-            hint="增量同步 · TickFlow 或本地 public（按 public_data_scope）"
-            stats={s?.adj_factor}
-            loading={isLoading}
-            active={activeCard === 'adj_factor'}
-            done={doneStages.has('adj_factor')}
-            skipped={skippedCards.has('adj_factor')}
-            stagePct={activeCard === 'adj_factor' ? (job.data?.stage_pct ?? 0) : 0}
-            tierKey="adj_factor"
-            capLimits={caps.data?.capabilities}
-            tierLabel={caps.data?.label}
-            auto
-            onShowFields={() => setSchemaTable('adj_factor')}
-          />
-        )
-      case 'enriched':
-        return (
-          <StatCard
-            title="Enriched"
-            hint="复权 OHLCV + 技术指标"
-            stats={s?.enriched}
-            loading={isLoading}
-            active={activeCard === 'enriched'}
-            done={doneStages.has('enriched')}
-            skipped={skippedCards.has('enriched')}
-            stagePct={activeCard === 'enriched' ? (job.data?.stage_pct ?? 0) : 0}
-            tierKey="enriched"
-            capLimits={caps.data?.capabilities}
-            tierLabel={caps.data?.label}
-            auto
-            subLabel="字段 · 指标 · 信号"
-            localBadgeSuffix={`${prefs.data?.enriched_batch_size ?? 1000}只/批`}
-            onShowFields={() => setSchemaTable('enriched')}
-            onSettings={hasData ? () => setOpenSettings(v => v === 'enriched' ? null : 'enriched') : undefined}
-            settingsOpen={openSettings === 'enriched'}
-          />
-        )
-      case 'index':
-        return (
-          <StatCard
-            title="指数"
-            hint="CN_Index · 独立存储"
-            stats={indexOverviewStats}
-            loading={isLoading}
-            active={activeCard === 'index_daily'}
-            done={doneStages.has('index_daily')}
-            skipped={skippedCards.has('index_daily')}
-            stagePct={activeCard === 'index_daily' ? (job.data?.stage_pct ?? 0) : 0}
-            tierKey="daily"
-            capLimits={caps.data?.capabilities}
-            tierLabel={caps.data?.label}
-            auto={indexAuto}
-            subLabel={indexOverviewLabel}
-            fieldTabs={[
-              { label: '维表', table: 'index_instruments' },
-              { label: '日K', table: 'index_daily' },
-              { label: '指标', table: 'index_enriched' },
-            ] as FieldTab[]}
-            onShowFields={(t) => setSchemaTable(t ?? 'index_daily')}
-            onSettings={hasData ? () => setOpenSettings(v => v === 'index' ? null : 'index') : undefined}
-            settingsOpen={openSettings === 'index'}
-          />
-        )
-      case 'etf':
-        return (
-          <StatCard
-            title="ETF"
-            hint="场内基金 · 独立存储"
-            stats={etfOverviewStats}
-            loading={isLoading}
-            tierKey="etf"
-            capLimits={caps.data?.capabilities}
-            tierLabel={caps.data?.label}
-            auto={etfAuto}
-            subLabel="维表 · 日K · 指标"
-            fieldTabs={[
-              { label: '维表', table: 'etf_instruments' },
-              { label: '日K', table: 'etf_daily' },
-              { label: '指标', table: 'etf_enriched' },
-            ] as FieldTab[]}
-            onShowFields={(t) => setSchemaTable(t ?? 'etf_daily')}
-          />
-        )
-      case 'minute':
-        return (
-          <StatCard
-            title="分钟 K"
-            hint="全市场同步"
-            stats={s?.minute}
-            loading={isLoading}
-            active={activeCard === 'minute'}
-            done={doneStages.has('minute')}
-            skipped={skippedCards.has('minute')}
-            stagePct={activeCard === 'minute' ? (job.data?.stage_pct ?? 0) : 0}
-            tierKey="minute"
-            capLimits={caps.data?.capabilities}
-            tierLabel={caps.data?.label}
-            auto={minuteAuto}
-            onShowFields={() => setSchemaTable('minute')}
-            onSettings={hasData ? () => setOpenSettings(v => v === 'minute' ? null : 'minute') : undefined}
-            settingsOpen={openSettings === 'minute'}
-          />
-        )
-      case 'financials':
-        return (
-          <StatCard
-            title="财务数据"
-            hint="利润表 / 资负表 / 现金流 / 股本 / 指标 · public 按 public_data_scope"
-            stats={s?.financials ? { rows: s.financials.rows } : null}
-            loading={isLoading}
-            active={activeCard === 'financials'}
-            done={doneStages.has('financials')}
-            skipped={skippedCards.has('financials')}
-            stagePct={activeCard === 'financials' ? (job.data?.stage_pct ?? 0) : 0}
-            tierKey="financials"
-            capLimits={caps.data?.capabilities}
-            tierLabel={caps.data?.label}
-            localBadgeSuffix={
-              (prefs.data?.public_data_scope || 'CSI300')
-              + ` · ${prefs.data?.financial_max_periods ?? 12}期`
-            }
-            subLabel={
-              s?.financials
-                ? `${s.financials.symbols ?? s.financials.tables?.income?.symbols ?? '—'} 标的 · provider ${prefs.data?.financial_provider || '—'}`
-                : undefined
-            }
-          />
-        )
-      default:
-        return null
-    }
-  }
+  const dataStatus = status.data
+  const hasData = Boolean(dataStatus?.instruments?.rows || dataStatus?.daily?.rows)
+  const isRunning = job.data?.status === 'running' || job.data?.status === 'pending'
+  const isNoKey = settings.data?.mode === 'none'
+  const minuteFeature = caps.data?.features?.minute ?? caps.data?.minute
+  const hasMinuteCap = Boolean(
+    minuteFeature?.full_market_sync_allowed
+    || (caps.data?.capabilities?.['kline.minute.batch'] && !(caps.data.capabilities['kline.minute.batch'] as { view_only?: boolean })?.view_only),
+  )
+  const hasAdjCap = Boolean(caps.data?.capabilities?.adj_factor)
+  const hasFinancialPublic = prefs.data?.financial_provider === 'public' || Boolean(caps.data?.capabilities?.financial)
+  const pipelineSteps = [
+    '日K',
+    ...(hasAdjCap ? ['复权'] : []),
+    ...(hasFinancialPublic && prefs.data?.financial_provider === 'public' ? ['财务'] : []),
+    '指标',
+    ...(indexAuto ? ['指数'] : []),
+    ...(etfAuto ? ['ETF'] : []),
+    ...(hasMinuteCap && minuteAuto ? ['分钟K'] : []),
+  ]
+
+  const detailWarnings = [
+    warningMessage('详情暂不可用，保留目录快照', selectedDetail.error),
+    warningMessage('Schema 暂不可用，使用目录字段', selectedSchema.error),
+    warningMessage('数据集运行记录暂不可用', selectedRuns.error),
+  ].filter((message): message is string => Boolean(message))
 
   return (
     <>
       <div ref={topRef} />
-      <PageHeader
-        title="数据"
-        subtitle="本地数据画像 · 同步状态 · 历史记录"
-        right={
-          <div className="flex items-center gap-3">
-            {!hasData && !isLoading && (
-              <span className="text-xs text-accent animate-pulse">首次使用请点击右侧按钮同步数据</span>
-            )}
-            <button
-              onClick={() => startSync.mutate()}
-              disabled={isStarting}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-btn bg-gradient-to-r from-accent/25 to-accent/10 border border-accent/30 text-accent text-xs font-medium hover:from-accent/35 hover:to-accent/20 disabled:opacity-40 transition-all duration-150"
-            >
-              {(isRunning || isStarting) ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Play className="h-3.5 w-3.5" />
-              )}
-              {isStarting ? '启动中…' : isRunning ? '同步中…' : '立即同步'}
-            </button>
-            <button
-              onClick={() => setOpenSettings('pipeline-scope')}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-btn text-secondary hover:text-accent hover:bg-accent/8 text-xs transition-colors duration-150"
-            >
-              <CheckSquare className="h-3.5 w-3.5" />
-              数据范围
-            </button>
-            <div className="w-px h-4 bg-border" />
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setShowCreateExt(true)}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-btn text-secondary hover:text-accent hover:bg-accent/8 text-xs transition-colors duration-150"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                扩展数据
-              </button>
-              <button
-                onClick={() => setShowEndpointTest(true)}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-btn text-secondary hover:text-accent hover:bg-accent/8 text-xs transition-colors duration-150"
-              >
-                <Wifi className="h-3.5 w-3.5" />
-                测试端点
-              </button>
-              <button
-                onClick={() => setOpenSettings('page-settings')}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-btn text-secondary hover:text-accent hover:bg-accent/8 text-xs transition-colors duration-150"
-              >
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-                页面设置
-              </button>
-              <button
-                onClick={() => setShowClearConfirm(true)}
-                disabled={isRunning}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-btn text-muted hover:text-danger hover:bg-danger/8 text-xs transition-colors duration-150 disabled:opacity-40 disabled:pointer-events-none"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                清除数据
-              </button>
+      <PageHeader title="数据" subtitle="本地数据画像 · 同步状态 · 历史记录" />
+
+      <div className="max-w-6xl space-y-8 px-8 py-6">
+        <section aria-labelledby="data-system-status-heading" className="space-y-4">
+          <div>
+            <h2 id="data-system-status-heading" className="flex items-center gap-2 text-base font-semibold text-foreground">
+              <Database aria-hidden="true" className="h-4 w-4 text-secondary" />
+              数据系统状态
+            </h2>
+            <p className="mt-1 text-xs text-muted">本地 catalog 报告的存储事实与当前运行状态</p>
+          </div>
+          {isNoKey && (
+            <div className="flex items-center gap-2 rounded-card border border-border bg-elevated/40 px-3 py-2 text-xs">
+              <Info aria-hidden="true" className="h-4 w-4 shrink-0 text-muted" />
+              <span className="text-secondary">当前使用免费历史数据模式；实时行情等扩展能力可在 <Link to="/settings?tab=account" className="font-medium text-accent hover:underline">配置</Link> 中启用。</span>
             </div>
-          </div>
-        }
-      />
-
-      <div className="px-8 py-6 space-y-6 max-w-6xl">
-        {/* None 档提示 —— 非阻断: 无需 Key 也可获取历史日K, 仅实时行情等扩展能力受限 */}
-        {isNoKey && (
-          <div className="flex items-center gap-2 rounded-card border border-border bg-elevated/40 px-3 py-2 text-xs">
-            <Info className="h-4 w-4 shrink-0 text-muted" />
-            <span className="text-secondary leading-relaxed">
-              当前为 None 档,将使用免费数据源获取历史日K(无需注册)。
-              配置 API Key 可解锁实时行情监控等扩展能力,前往
-              <Link to="/settings?tab=account" className="mx-0.5 font-medium text-accent hover:underline">
-                配置
-              </Link>
-              。
-            </span>
-          </div>
-        )}
-
-        {/* 实时进度 */}
-        <AnimatePresence>
-          {job.data && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-              className="overflow-hidden"
-            >
-              <ActiveJobCard job={job.data} />
-            </motion.div>
           )}
-        </AnimatePresence>
+          {job.data && <ActiveJobCard job={job.data} />}
+          {catalog.data ? (
+            <StorageBreakdownCard
+              storage={catalog.data.storage}
+              refreshedAt={catalog.data.refreshed_at}
+              isStale={catalog.isCatalogStale}
+              headingLevel={3}
+            />
+          ) : catalog.error ? (
+            <div role="alert" className="rounded-card border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
+              本地存储状态暂不可用：{(catalog.error as Error).message}
+            </div>
+          ) : (
+            <div className="rounded-card border border-border bg-surface p-4 text-sm text-muted">正在读取本地存储状态</div>
+          )}
+          {status.isError && (
+            <div role="status" className="rounded-btn border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
+              运行状态刷新失败，catalog 与维护操作仍可使用。
+            </div>
+          )}
+        </section>
 
-        {/* 实时行情 + 存储 + 调度 */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <QuoteConfigCard
-            enabled={realtimeEnabled}
-            running={quoteStatus.data?.running ?? false}
-            isTrading={quoteStatus.data?.is_trading_hours ?? false}
-            lastFetchMs={quoteStatus.data?.last_fetch_ms ?? null}
-            intervalS={quoteInterval.data?.interval ?? quoteStatus.data?.interval_s ?? 10}
-            intervalMin={quoteInterval.data?.min_interval ?? 5}
-            intervalMax={quoteInterval.data?.max_interval ?? 60}
-            loading={quoteStatus.isLoading}
-            onToggle={(v) => toggleQuote.mutate(v)}
-            toggling={toggleQuote.isPending}
-            showIntervalEdit={showIntervalEdit}
-            onShowIntervalEdit={handleToggleIntervalEdit}
-            onIntervalChange={(v) => updateInterval.mutate(v)}
+        <section aria-labelledby="data-catalog-region-heading" className="space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 id="data-catalog-region-heading" className="text-base font-semibold text-foreground">数据集目录</h2>
+              <p className="mt-1 text-xs text-muted">只读查看本地数据、覆盖、质量、Schema 与血缘</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => rescanCatalog.mutate()}
+                disabled={rescanCatalog.isPending}
+                className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-elevated px-3 py-1.5 text-xs text-secondary hover:text-foreground disabled:opacity-40"
+              >
+                {rescanCatalog.isPending ? <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw aria-hidden="true" className="h-3.5 w-3.5" />}
+                {rescanCatalog.isPending ? '扫描中…' : '重新扫描本地目录'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setOpenSettings('page-settings')}
+                className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-elevated px-3 py-1.5 text-xs text-secondary hover:text-foreground"
+              >
+                <SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
+                目录显示设置
+              </button>
+            </div>
+          </div>
+          {rescanCatalog.isError && (
+            <div role="alert" className="rounded-btn border border-danger/30 bg-danger/5 px-3 py-2 text-xs text-danger">
+              本地目录扫描失败：{(rescanCatalog.error as Error).message}
+            </div>
+          )}
+          <DataCatalogSection
+            catalog={renderCatalog}
+            isStale={catalog.isCatalogStale}
+            error={catalog.error as Error | null}
+            onSelectDataset={setSelectedDataset}
+            headingLevel={3}
           />
+        </section>
 
-          {/* 自动调度 */}
-          <div className="rounded-card border border-border bg-surface p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Calendar className="h-4 w-4 text-secondary" />
-              <h3 className="text-sm font-medium text-foreground">自动调度</h3>
-            </div>
-            {isLoading ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between"><Skeleton w="w-16" /><Skeleton w="w-28" /></div>
-                <div className="flex items-center justify-between"><Skeleton w="w-16" /><Skeleton w="w-28" /></div>
-                <div className="flex items-center justify-between"><Skeleton w="w-6" /><Skeleton w="w-20" /></div>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="flex items-center gap-1.5 text-[10px] text-muted pb-2 border-b border-border/50">
-                  <span className="text-accent/60 font-medium">盘前</span>
-                  <span>个股维表</span>
-                  <span className="text-border">→</span>
-                  <span className="text-accent/60 font-medium">盘后</span>
-                  {pipelineSteps.map((step, i) => (
-                    <span key={step} className="contents">
-                      {i > 0 && <span className="text-border">→</span>}
-                      <span>{step}</span>
-                    </span>
-                  ))}
-                </div>
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-muted">时区</span>
-                  <span className="font-mono text-secondary">Asia/Shanghai</span>
-                </div>
-                <div className="flex items-center justify-between text-[11px]">
-                  <div className="flex items-center gap-1">
-                    <span className="text-muted">盘前 · 个股维表</span>
-                    <span className="text-muted/50">·</span>
-                    <span className="font-mono text-secondary">
-                      {`${String(instrumentsSched.hour).padStart(2, '0')}:${String(instrumentsSched.minute).padStart(2, '0')}`}
-                    </span>
-                    <button
-                      onClick={() => setShowInstScheduleEdit(v => !v)}
-                      className={`p-0.5 rounded hover:bg-elevated transition-colors ${showInstScheduleEdit ? 'text-accent' : 'text-secondary'}`}
-                    >
-                      <Clock className="h-3 w-3" />
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-2 font-mono text-secondary">
-                    {s?.last_instruments_run && (
-                      <span className={`inline-flex flex-col items-center leading-tight ${isToday(s.last_instruments_run) ? 'text-bear' : 'text-secondary/70'}`}>
-                        <span>✓ {formatScheduleDatePart(s.last_instruments_run)}</span>
-                        <span>{formatScheduleTimePart(s.last_instruments_run)}</span>
-                      </span>
-                    )}
-                    {s?.next_instruments_run && (
-                      <span className="inline-flex flex-col items-center leading-tight text-foreground">
-                        <span>→ {formatScheduleDatePart(s.next_instruments_run)}</span>
-                        <span>{formatScheduleTimePart(s.next_instruments_run)}</span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <AnimatePresence>
-                  {showInstScheduleEdit && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                      className="overflow-hidden"
-                    >
-                      <ScheduleEditor
-                        value={instrumentsSched}
-                        onSave={(h, m) => updateInstSchedule.mutate({ hour: h, minute: m })}
-                        loading={updateInstSchedule.isPending}
-                        hint="不晚于 09:15"
-                      />
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-                <div className="flex items-center justify-between text-[11px]">
-                  <div className="flex items-center gap-1">
-                    <span className="text-muted">盘后 · 全量管道</span>
-                    <span className="text-muted/50">·</span>
-                    <span className="font-mono text-secondary">
-                      {`${String(pipelineSched.hour).padStart(2, '0')}:${String(pipelineSched.minute).padStart(2, '0')}`}
-                    </span>
-                    <button
-                      onClick={() => setShowScheduleEdit(v => !v)}
-                      className={`p-0.5 rounded hover:bg-elevated transition-colors ${showScheduleEdit ? 'text-accent' : 'text-secondary'}`}
-                    >
-                      <Clock className="h-3 w-3" />
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-2 font-mono text-secondary">
-                    {s?.last_pipeline_run && (
-                      <span className={`inline-flex flex-col items-center leading-tight ${isToday(s.last_pipeline_run) ? 'text-bear' : 'text-secondary/70'}`}>
-                        <span>✓ {formatScheduleDatePart(s.last_pipeline_run)}</span>
-                        <span>{formatScheduleTimePart(s.last_pipeline_run)}</span>
-                      </span>
-                    )}
-                    {s?.next_pipeline_run && (
-                      <span className="inline-flex flex-col items-center leading-tight text-foreground">
-                        <span>→ {formatScheduleDatePart(s.next_pipeline_run)}</span>
-                        <span>{formatScheduleTimePart(s.next_pipeline_run)}</span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <AnimatePresence>
-                  {showScheduleEdit && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                      className="overflow-hidden"
-                    >
-                      <ScheduleEditor
-                        value={pipelineSched}
-                        onSave={(h, m) => updateSchedule.mutate({ hour: h, minute: m })}
-                        loading={updateSchedule.isPending}
-                        hint="不早于 15:00"
-                      />
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            )}
+        <section aria-labelledby="data-maintenance-heading" className="space-y-4">
+          <div>
+            <h2 id="data-maintenance-heading" className="flex items-center gap-2 text-base font-semibold text-foreground">
+              <Wrench aria-hidden="true" className="h-4 w-4 text-secondary" />
+              同步和维护操作
+            </h2>
+            <p className="mt-1 text-xs text-muted">同步、配置和清理操作会明确触发写入；目录浏览不会访问外部数据源</p>
           </div>
-
-          {/* 存储 */}
-          <div className="rounded-card border border-border bg-surface p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <HardDrive className="h-4 w-4 text-secondary" />
-                <h3 className="text-sm font-medium text-foreground">存储</h3>
-              </div>
-              {isLoading ? (
-                <Skeleton w="w-12" />
-              ) : (
-                <span className="font-mono text-xs text-muted">{s ? `${s.storage.total_size_mb} MB` : '—'}</span>
-              )}
-            </div>
-            <div className="space-y-2">
-              {isLoading ? (
-                Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="flex items-center justify-between">
-                    <Skeleton w="w-10" />
-                    <div className="flex items-center gap-3">
-                      <Skeleton w="w-14" />
-                      <Skeleton w="w-16" />
-                    </div>
-                  </div>
-                ))
-              ) : [
-                { label: '个股维表', files: s?.storage.instruments_files, size: s?.storage.instruments_size_mb },
-                { label: '日 K',     files: s?.storage.daily_files,       size: s?.storage.daily_size_mb },
-                { label: '除权因子', files: s?.storage.adj_factor_files,  size: s?.storage.adj_factor_size_mb },
-                { label: 'Enriched', files: s?.storage.enriched_files,    size: s?.storage.enriched_size_mb },
-                { label: '分钟 K',   files: s?.storage.minute_files,      size: s?.storage.minute_size_mb },
-                { label: '财务数据', files: s?.storage.financials_files,   size: s?.storage.financials_size_mb },
-              ].map((item) => (
-                <div key={item.label} className="flex items-center justify-between text-[11px]">
-                  <span className="text-muted">{item.label}</span>
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-secondary">{item.files ?? 0} 文件</span>
-                    <span className="font-mono text-muted w-16 text-right">{(item.size ?? 0).toFixed(1)} MB</span>
-                  </div>
-                </div>
-              ))}
-              {/* 扩展数据 */}
-              {(extConfigs.data && (extConfigs.data.items?.length ?? 0) > 0) && (
-                <div className="flex items-center justify-between text-[11px] border-t border-border/50 pt-2 mt-1">
-                  <span className="text-muted">扩展数据</span>
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-secondary">{s?.storage.ext_data_files ?? extConfigs.data.items.length} 文件</span>
-                    <span className="font-mono text-muted w-16 text-right">
-                      {s?.storage.ext_data_size_mb != null ? `${s.storage.ext_data_size_mb.toFixed(1)} MB` : '—'}
-                    </span>
-                  </div>
+          <div className="flex flex-wrap gap-2 rounded-card border border-border bg-surface p-4">
+            <button type="button" onClick={() => startSync.mutate()} disabled={startSync.isPending || isRunning} className="inline-flex items-center gap-1.5 rounded-btn bg-accent px-3 py-1.5 text-xs font-medium text-base disabled:opacity-40">
+              {startSync.isPending || isRunning ? <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" /> : <Play aria-hidden="true" className="h-3.5 w-3.5" />}
+              {startSync.isPending ? '启动中…' : isRunning ? '同步中…' : '立即同步'}
+            </button>
+            <button type="button" onClick={() => setOpenSettings('pipeline-scope')} className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-elevated px-3 py-1.5 text-xs text-secondary hover:text-foreground"><CheckSquare aria-hidden="true" className="h-3.5 w-3.5" />数据范围</button>
+            <button type="button" onClick={() => setShowCreateExt(true)} className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-elevated px-3 py-1.5 text-xs text-secondary hover:text-foreground"><Plus aria-hidden="true" className="h-3.5 w-3.5" />新建扩展数据</button>
+            <button type="button" onClick={() => setShowEndpointTest(true)} className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-elevated px-3 py-1.5 text-xs text-secondary hover:text-foreground"><Wifi aria-hidden="true" className="h-3.5 w-3.5" />测试端点</button>
+            <button type="button" onClick={() => setOpenSettings('page-settings')} className="inline-flex items-center gap-1.5 rounded-btn border border-border bg-elevated px-3 py-1.5 text-xs text-secondary hover:text-foreground"><SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />目录显示设置</button>
+            <button type="button" onClick={() => setOpenSettings('daily')} disabled={!hasData} className="rounded-btn border border-border bg-elevated px-3 py-1.5 text-xs text-secondary hover:text-foreground disabled:opacity-40">日 K 历史扩展</button>
+            <button type="button" onClick={() => setOpenSettings('enriched')} disabled={!hasData} className="rounded-btn border border-border bg-elevated px-3 py-1.5 text-xs text-secondary hover:text-foreground disabled:opacity-40">重建 Enriched</button>
+            <button type="button" onClick={() => setOpenSettings('index')} disabled={!hasData} className="rounded-btn border border-border bg-elevated px-3 py-1.5 text-xs text-secondary hover:text-foreground disabled:opacity-40">指数手动获取</button>
+            <button type="button" onClick={() => setOpenSettings('minute')} disabled={!hasData} className="rounded-btn border border-border bg-elevated px-3 py-1.5 text-xs text-secondary hover:text-foreground disabled:opacity-40">分钟 K 设置</button>
+            <button type="button" onClick={() => setShowClearConfirm(true)} disabled={isRunning} className="inline-flex items-center gap-1.5 rounded-btn border border-danger/30 px-3 py-1.5 text-xs text-danger hover:bg-danger/5 disabled:opacity-40"><Trash2 aria-hidden="true" className="h-3.5 w-3.5" />清除数据</button>
+          </div>
+          {startSync.isError && <div role="alert" className="rounded-btn border border-danger/30 bg-danger/5 px-3 py-2 text-xs text-danger">启动失败：{(startSync.error as Error).message}</div>}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <QuoteConfigCard
+              enabled={prefs.data?.realtime_quotes_enabled ?? false}
+              running={quoteStatus.data?.running ?? false}
+              isTrading={quoteStatus.data?.is_trading_hours ?? false}
+              lastFetchMs={quoteStatus.data?.last_fetch_ms ?? null}
+              intervalS={quoteInterval.data?.interval ?? quoteStatus.data?.interval_s ?? 10}
+              intervalMin={quoteInterval.data?.min_interval ?? 5}
+              intervalMax={quoteInterval.data?.max_interval ?? 60}
+              loading={quoteStatus.isLoading}
+              onToggle={(value) => toggleQuote.mutate(value)}
+              toggling={toggleQuote.isPending}
+              showIntervalEdit={showIntervalEdit}
+              onShowIntervalEdit={handleToggleIntervalEdit}
+              onIntervalChange={(value) => updateInterval.mutate(value)}
+            />
+            <div className="rounded-card border border-border bg-surface p-4">
+              <div className="mb-3 flex items-center gap-2"><Calendar aria-hidden="true" className="h-4 w-4 text-secondary" /><h3 className="text-sm font-medium text-foreground">自动调度</h3></div>
+              {status.isLoading ? <div className="space-y-2"><Skeleton w="w-16" /><Skeleton w="w-28" /></div> : (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-1.5 border-b border-border/50 pb-2 text-[10px] text-muted"><span>盘前 个股维表</span><span>→</span><span>盘后 {pipelineSteps.join(' → ')}</span></div>
+                  <div className="flex items-center justify-between text-[11px]"><span className="text-muted">时区</span><span className="font-mono text-secondary">Asia/Shanghai</span></div>
+                  <ScheduleLine label="盘前 · 个股维表" schedule={instrumentsSchedule} lastRun={dataStatus?.last_instruments_run} nextRun={dataStatus?.next_instruments_run} open={showInstScheduleEdit} onToggle={() => setShowInstScheduleEdit((value) => !value)} />
+                  {showInstScheduleEdit && <ScheduleEditor value={instrumentsSchedule} onSave={(hour, minute) => updateInstSchedule.mutate({ hour, minute })} loading={updateInstSchedule.isPending} hint="不晚于 09:15" />}
+                  <ScheduleLine label="盘后 · 全量管道" schedule={pipelineSchedule} lastRun={dataStatus?.last_pipeline_run} nextRun={dataStatus?.next_pipeline_run} open={showScheduleEdit} onToggle={() => setShowScheduleEdit((value) => !value)} />
+                  {showScheduleEdit && <ScheduleEditor value={pipelineSchedule} onSave={(hour, minute) => updateSchedule.mutate({ hour, minute })} loading={updateSchedule.isPending} hint="不早于 15:00" />}
                 </div>
               )}
             </div>
           </div>
-        </div>
-
-        {/* 数据画像 */}
-        <div>
-          <SectionTitle icon={Database}>数据画像</SectionTitle>
-          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 items-stretch">
-            {getCardOrder().filter(k => cardVisible[k]).map((k: CardKey) => (
-              <Fragment key={k}>{renderStatCard(k)}</Fragment>
-            ))}
-            {(extConfigs.data?.items ?? []).map((ext) => (
-              <ExtDataStatCard
-                key={ext.id}
-                config={ext}
-                onDelete={() => deleteExt.mutate(ext.id)}
-                deleting={deleteExt.isPending}
-                onEdit={() => setEditingExt(ext)}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* 同步历史 */}
-        <div>
-          <SectionTitle icon={Clock}>同步历史</SectionTitle>
-          <div className="mt-3 rounded-card border border-border overflow-hidden">
-            {history.isLoading ? (
-              <div className="px-5 py-6 space-y-3">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <Skeleton w="w-4" h="h-4" rounded="rounded-full" />
-                      <div className="space-y-1.5">
-                        <Skeleton w="w-20" />
-                        <Skeleton w="w-28" h="h-3" />
-                      </div>
-                    </div>
-                    <Skeleton w="w-32" />
-                  </div>
+          {(extConfigs.data?.items ?? []).length > 0 && (
+            <div>
+              <h3 className="mb-3 text-xs font-medium uppercase tracking-widest text-secondary">扩展数据配置</h3>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {(extConfigs.data?.items ?? []).map((config) => (
+                  <ExtDataStatCard key={config.id} config={config} onDelete={() => deleteExt.mutate(config.id)} deleting={deleteExt.isPending} onEdit={() => setEditingExt(config)} />
                 ))}
               </div>
-            ) : history.data && history.data.jobs.length > 0 ? (
-              <div className="divide-y divide-border">
-                {history.data.jobs.map((j) => (
-                  <HistoryRow key={j.id} job={j} onClick={() => handleJobClick(j.id)} />
-                ))}
-              </div>
-            ) : (
-              <div className="px-5 py-8 text-center text-sm text-muted">
-                暂无同步记录 — 点右上角"立即同步"开始。
-              </div>
-            )}
-          </div>
-        </div>
+            </div>
+          )}
+        </section>
 
-        {startSync.isError && (
-          <div className="rounded-btn border border-danger/40 bg-danger/5 px-3 py-2 text-sm text-danger">
-            启动失败:{String((startSync.error as any).message)}
+        <section aria-labelledby="data-history-heading" className="space-y-4">
+          <div>
+            <h2 id="data-history-heading" className="flex items-center gap-2 text-base font-semibold text-foreground"><History aria-hidden="true" className="h-4 w-4 text-secondary" />同步历史与质量问题</h2>
+            <p className="mt-1 text-xs text-muted">本地控制库运行记录与兼容的管道任务历史</p>
           </div>
-        )}
+          {allRuns.isError && <div role="alert" aria-label="运行历史错误" className="rounded-btn border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">本地运行历史暂不可用：{(allRuns.error as Error).message}</div>}
+          <div className="rounded-card border border-border bg-surface p-4"><DatasetRunHistory runs={allRuns.data?.runs ?? []} /></div>
+          <div>
+            <h3 className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-secondary"><Clock aria-hidden="true" className="h-4 w-4" />管道任务历史</h3>
+            <div className="mt-3 overflow-hidden rounded-card border border-border">
+              {history.isLoading ? <div className="px-5 py-6"><Skeleton w="w-28" /></div> : history.data && history.data.jobs.length > 0 ? (
+                <div className="divide-y divide-border">{history.data.jobs.map((item) => <HistoryRow key={item.id} job={item} onClick={() => handleJobClick(item.id)} />)}</div>
+              ) : <div className="px-5 py-8 text-center text-sm text-muted">暂无同步记录 — 使用上方“立即同步”开始。</div>}
+            </div>
+          </div>
+        </section>
       </div>
 
-      {/* 弹窗 */}
-      <EnrichedSchemaModal
-        table={schemaTable}
-        onClose={() => setSchemaTable(null)}
+      <DatasetDetailDrawer
+        entry={selectedDetail.data ?? selectedDataset}
+        schema={selectedSchema.data}
+        runs={selectedRuns.data?.runs ?? []}
+        warnings={detailWarnings}
+        onClose={() => setSelectedDataset(null)}
       />
-
-      {showEndpointTest && (
-        <EndpointTestDialog
-          hasKey={settings.data?.mode === 'api_key'}
-          tierLabel={settings.data?.tier_label ?? ''}
-          currentEndpoint={settings.data?.current_endpoint ?? ''}
-          onClose={() => setShowEndpointTest(false)}
-        />
-      )}
-
+      {showEndpointTest && <EndpointTestDialog hasKey={settings.data?.mode === 'api_key'} tierLabel={settings.data?.tier_label ?? ''} currentEndpoint={settings.data?.current_endpoint ?? ''} onClose={() => setShowEndpointTest(false)} />}
       <AnimatePresence>
-        {showCreateExt && (
-          <CreateExtDialog onClose={() => setShowCreateExt(false)} />
-        )}
-        {editingExt && (
-          <EditExtDialog config={editingExt} onClose={() => setEditingExt(null)} />
-        )}
+        {showCreateExt && <CreateExtDialog onClose={() => setShowCreateExt(false)} />}
+        {editingExt && <EditExtDialog config={editingExt} onClose={() => setEditingExt(null)} />}
+      </AnimatePresence>
+      <AnimatePresence>
+        {openSettings === 'daily' && <SettingsModal title="日 K · 向前扩展历史" onClose={() => setOpenSettings(null)}><ExtendHistoryPanel caps={caps.data} isRunning={Boolean(activeJobId)} earliestDate={dataStatus?.daily?.earliest_date ?? null} onStart={() => setOpenSettings(null)} /></SettingsModal>}
+        {openSettings === 'enriched' && <SettingsModal title="Enriched · 计算设置" onClose={() => setOpenSettings(null)}><EnrichedRebuildPanel isRunning={Boolean(activeJobId)} onStart={() => setOpenSettings(null)} /></SettingsModal>}
+        {openSettings === 'pipeline-scope' && <SettingsModal title="盘后管道 · 拉取内容" onClose={() => setOpenSettings(null)}><PipelineScopeConfig /></SettingsModal>}
+        {openSettings === 'page-settings' && <SettingsModal title="页面设置 · 目录显隐" onClose={() => setOpenSettings(null)}><PageSettingsModal caps={caps.data?.capabilities} /></SettingsModal>}
+        {openSettings === 'index' && <SettingsModal title="指数 · 手动获取" onClose={() => setOpenSettings(null)}><IndexSettings indexExtendValue={indexExtendValue} setIndexExtendValue={setIndexExtendValue} indexExtendUnit={indexExtendUnit} setIndexExtendUnit={setIndexExtendUnit} indexTargetDateText={indexTargetDateText} indexEarliestDate={indexEarliestDate} indexBatchInput={indexBatchInput} setIndexBatchInput={setIndexBatchInput} indexDailyBatchSize={indexDailyBatchSize} hasDailyBatchCap={hasDailyBatchCap} blocked={Boolean(activeJobId)} sync={syncIndexDaily} updateBatchSize={updateIndexBatchSize} /></SettingsModal>}
+        {openSettings === 'minute' && <SettingsModal title="分钟 K · 同步设置" onClose={() => setOpenSettings(null)}><MinuteSyncConfig caps={caps.data} isRunning={Boolean(activeJobId)} onStart={() => setOpenSettings(null)} /></SettingsModal>}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {openSettings === 'daily' && (
-          <SettingsModal title="日 K · 向前扩展历史" onClose={() => setOpenSettings(null)}>
-            <ExtendHistoryPanel
-              caps={caps.data}
-              isRunning={!!activeJobId}
-              earliestDate={s?.daily?.earliest_date ?? null}
-              onStart={() => setOpenSettings(null)}
-            />
-          </SettingsModal>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {openSettings === 'enriched' && (
-          <SettingsModal title="Enriched · 计算设置" onClose={() => setOpenSettings(null)}>
-            <EnrichedRebuildPanel isRunning={!!activeJobId} onStart={() => setOpenSettings(null)} />
-          </SettingsModal>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {openSettings === 'pipeline-scope' && (
-          <SettingsModal title="盘后管道 · 拉取内容" onClose={() => setOpenSettings(null)}>
-            <PipelineScopeConfig />
-          </SettingsModal>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {openSettings === 'page-settings' && (
-          <SettingsModal title="页面设置 · 数据画像卡片" onClose={() => setOpenSettings(null)}>
-            <PageSettingsModal caps={caps.data?.capabilities} />
-          </SettingsModal>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {openSettings === 'index' && (
-          <SettingsModal title="指数 · 手动获取" onClose={() => setOpenSettings(null)}>
-            <div className="space-y-4">
-              <div className="rounded-card border border-border bg-base/30 p-4 space-y-3">
-                <div>
-                  <div className="text-sm font-medium text-foreground">指数日 K</div>
-                  <div className="text-[11px] text-muted mt-1">获取数据时会先刷新 CN_Index 维表，再向前扩展指数历史；指数不需要复权。</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center">
-                    <button
-                      onClick={() => setIndexExtendValue(v => Math.max(1, v - 1))}
-                      disabled={!hasDailyBatchCap || !!activeJobId || syncIndexDaily.isPending}
-                      className="h-6 w-6 flex items-center justify-center rounded-l-btn bg-elevated border border-border text-secondary hover:bg-border/50 disabled:opacity-30 transition-colors text-xs"
-                    >−</button>
-                    <div className="h-6 w-8 flex items-center justify-center border-y border-border text-[11px] font-mono tabular-nums text-foreground bg-base">
-                      {indexExtendValue}
-                    </div>
-                    <button
-                      onClick={() => setIndexExtendValue(v => Math.min(indexExtendUnit === 'year' ? 10 : 36, v + 1))}
-                      disabled={!hasDailyBatchCap || !!activeJobId || syncIndexDaily.isPending}
-                      className="h-6 w-6 flex items-center justify-center rounded-r-btn bg-elevated border border-border text-secondary hover:bg-border/50 disabled:opacity-30 transition-colors text-xs"
-                    >+</button>
-                  </div>
-
-                  <div className="flex rounded-btn border border-border overflow-hidden">
-                    {(['month', 'year'] as const).map(u => (
-                      <button
-                        key={u}
-                        onClick={() => { setIndexExtendUnit(u); if (u === 'year' && indexExtendValue > 10) setIndexExtendValue(1); if (u === 'month' && indexExtendValue > 36) setIndexExtendValue(6) }}
-                        disabled={!hasDailyBatchCap || !!activeJobId || syncIndexDaily.isPending}
-                        className={`px-2 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-40 ${
-                          indexExtendUnit === u ? 'bg-accent/15 text-accent' : 'text-secondary hover:bg-elevated'
-                        }`}
-                      >{u === 'month' ? '月' : '年'}</button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="text-[10px] text-muted">
-                  预计扩展至 <span className="font-mono text-secondary">{indexTargetDateText}</span>
-                  {indexEarliestDate && <span> (当前最早: <span className="font-mono text-secondary">{indexEarliestDate}</span>)</span>}
-                </div>
-
-                <div className="rounded-btn border border-border bg-base/40 p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-medium text-foreground">批次大小</div>
-                      <div className="text-[10px] text-muted mt-0.5">每批同步并计算的指数数量，默认 100。</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={1}
-                        max={10000}
-                        value={indexBatchInput}
-                        onChange={e => setIndexBatchInput(e.target.value)}
-                        disabled={updateIndexBatchSize.isPending || !!activeJobId || syncIndexDaily.isPending}
-                        className="w-20 px-2 py-1 rounded-btn bg-elevated border border-border text-xs font-mono text-foreground outline-none focus:border-accent disabled:opacity-40"
-                      />
-                      <button
-                        onClick={() => {
-                          const size = Math.max(1, Math.min(10000, Number(indexBatchInput) || 100))
-                          setIndexBatchInput(String(size))
-                          updateIndexBatchSize.mutate(size)
-                        }}
-                        disabled={updateIndexBatchSize.isPending || !!activeJobId || syncIndexDaily.isPending}
-                        className="px-2.5 py-1 rounded-btn bg-elevated border border-border text-xs text-secondary hover:text-foreground disabled:opacity-40 transition-colors"
-                      >
-                        {updateIndexBatchSize.isPending ? '保存中…' : '保存'}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="text-[10px] text-muted">
-                    当前生效: <span className="font-mono text-secondary">{indexDailyBatchSize}</span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => syncIndexDaily.mutate()}
-                  disabled={!hasDailyBatchCap || !!activeJobId || syncIndexDaily.isPending}
-                  className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-btn bg-accent/90 text-base text-xs font-medium hover:bg-accent disabled:opacity-40 disabled:pointer-events-none transition-colors duration-150"
-                >
-                  {syncIndexDaily.isPending ? (
-                    <>
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      获取中…
-                    </>
-                  ) : (
-                    <>获取数据</>
-                  )}
-                </button>
-                {!hasDailyBatchCap && (
-                  <span className="text-[10px] text-warning/80 bg-warning/8 rounded px-1.5 py-px font-medium">
-                    需 Starter+ / Pro 批量日 K 权限
-                  </span>
-                )}
-              </div>
-            </div>
-          </SettingsModal>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {openSettings === 'minute' && (
-          <SettingsModal title="分钟 K · 同步设置" onClose={() => setOpenSettings(null)}>
-            <MinuteSyncConfig caps={caps.data} isRunning={!!activeJobId} onStart={() => setOpenSettings(null)} />
-          </SettingsModal>
-        )}
-      </AnimatePresence>
-
-      {/* 清除数据二次确认弹窗 */}
       <AnimatePresence>
         {showClearConfirm && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-              onClick={() => !clearData.isPending && setShowClearConfirm(false)}
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 12 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.97, y: 8 }}
-              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-              className="relative w-[90vw] max-w-[420px] rounded-card border border-border bg-base shadow-2xl p-6"
-            >
-              <div className="flex items-start gap-3">
-                <div className="shrink-0 h-10 w-10 rounded-full bg-danger/12 flex items-center justify-center">
-                  <AlertTriangle className="h-5 w-5 text-danger" />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="text-sm font-semibold text-foreground mb-1.5">确认清除本地数据？</h3>
-                  <p className="text-xs text-secondary leading-relaxed">
-                    此操作将<span className="text-danger font-medium">永久删除</span>所有已同步的本地数据，包括：
-                  </p>
-                  <ul className="mt-2 text-[11px] text-muted leading-relaxed space-y-0.5">
-                    <li>· 个股维表、日 K、除权因子</li>
-                    <li>· Enriched 指标数据、分钟 K</li>
-                    <li>· 财务数据、指数、ETF</li>
-                  </ul>
-                  <p className="mt-2 text-[11px] text-danger/90">
-                    操作不可恢复，需重新执行同步才能恢复数据。
-                  </p>
-                  <div className="mt-2 flex items-start gap-1.5 text-[11px] text-warning">
-                    <Info className="h-3.5 w-3.5 shrink-0 mt-px text-warning" />
-                    <span>此操作不会清除扩展数据，如需删除请在扩展数据设置中单独操作。</span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center justify-end gap-2 mt-5">
-                <button
-                  onClick={() => setShowClearConfirm(false)}
-                  disabled={clearData.isPending}
-                  className="px-3 py-1.5 rounded-btn bg-elevated text-secondary hover:bg-elevated/80 text-sm transition-colors disabled:opacity-50"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={() => clearData.mutate()}
-                  disabled={clearData.isPending}
-                  className="px-3 py-1.5 rounded-btn bg-danger/90 text-base text-sm font-medium hover:bg-danger disabled:opacity-50 transition-colors"
-                >
-                  {clearData.isPending ? '清除中…' : '清除数据'}
-                </button>
-              </div>
+            <motion.div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !clearData.isPending && setShowClearConfirm(false)} />
+            <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} className="relative w-[90vw] max-w-[420px] rounded-card border border-border bg-base p-6 shadow-2xl">
+              <div className="flex items-start gap-3"><AlertTriangle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-danger" /><div><h3 className="text-sm font-semibold text-foreground">确认清除本地数据？</h3><p className="mt-2 text-xs leading-relaxed text-secondary">此操作将永久删除个股维表、日 K、除权因子、Enriched、分钟 K、财务、指数和 ETF 数据；扩展数据不受影响。</p></div></div>
+              <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setShowClearConfirm(false)} disabled={clearData.isPending} className="rounded-btn bg-elevated px-3 py-1.5 text-sm text-secondary">取消</button><button type="button" onClick={() => clearData.mutate()} disabled={clearData.isPending} className="rounded-btn bg-danger px-3 py-1.5 text-sm font-medium text-base disabled:opacity-50">{clearData.isPending ? '清除中…' : '清除数据'}</button></div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
     </>
+  )
+}
+
+function ScheduleLine({
+  label,
+  schedule,
+  lastRun,
+  nextRun,
+  open,
+  onToggle,
+}: {
+  label: string
+  schedule: { hour: number; minute: number }
+  lastRun?: string | null
+  nextRun?: string | null
+  open: boolean
+  onToggle: () => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-[11px]">
+      <div className="flex items-center gap-1"><span className="text-muted">{label}</span><span className="font-mono text-secondary">{String(schedule.hour).padStart(2, '0')}:{String(schedule.minute).padStart(2, '0')}</span><button type="button" onClick={onToggle} aria-label={`编辑${label}调度`} className={`rounded p-0.5 hover:bg-elevated ${open ? 'text-accent' : 'text-secondary'}`}><Clock aria-hidden="true" className="h-3 w-3" /></button></div>
+      <div className="flex items-center gap-2 font-mono text-secondary">{lastRun && <span className={isToday(lastRun) ? 'text-bear' : 'text-muted'}>✓ {formatScheduleDatePart(lastRun)} {formatScheduleTimePart(lastRun)}</span>}{nextRun && <span>→ {formatScheduleDatePart(nextRun)} {formatScheduleTimePart(nextRun)}</span>}</div>
+    </div>
+  )
+}
+
+function IndexSettings({
+  indexExtendValue,
+  setIndexExtendValue,
+  indexExtendUnit,
+  setIndexExtendUnit,
+  indexTargetDateText,
+  indexEarliestDate,
+  indexBatchInput,
+  setIndexBatchInput,
+  indexDailyBatchSize,
+  hasDailyBatchCap,
+  blocked,
+  sync,
+  updateBatchSize,
+}: {
+  indexExtendValue: number
+  setIndexExtendValue: (value: number | ((current: number) => number)) => void
+  indexExtendUnit: 'month' | 'year'
+  setIndexExtendUnit: (value: 'month' | 'year') => void
+  indexTargetDateText: string
+  indexEarliestDate: string | null
+  indexBatchInput: string
+  setIndexBatchInput: (value: string) => void
+  indexDailyBatchSize: number
+  hasDailyBatchCap: boolean
+  blocked: boolean
+  sync: { isPending: boolean; mutate: () => void }
+  updateBatchSize: { isPending: boolean; mutate: (value: number) => void }
+}) {
+  const disabled = !hasDailyBatchCap || blocked || sync.isPending
+  return (
+    <div className="space-y-4 rounded-card border border-border bg-base/30 p-4">
+      <div><div className="text-sm font-medium text-foreground">指数日 K</div><div className="mt-1 text-[11px] text-muted">先刷新 CN_Index 维表，再向前扩展指数历史；指数不需要复权。</div></div>
+      <div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => setIndexExtendValue((value) => Math.max(1, value - 1))} disabled={disabled} className="rounded-btn border border-border bg-elevated px-2 py-1 text-xs">−</button><span className="font-mono text-xs">{indexExtendValue}</span><button type="button" onClick={() => setIndexExtendValue((value) => Math.min(indexExtendUnit === 'year' ? 10 : 36, value + 1))} disabled={disabled} className="rounded-btn border border-border bg-elevated px-2 py-1 text-xs">+</button>{(['month', 'year'] as const).map((unit) => <button type="button" key={unit} onClick={() => setIndexExtendUnit(unit)} disabled={disabled} className={`rounded-btn border border-border px-2 py-1 text-xs ${indexExtendUnit === unit ? 'bg-accent/15 text-accent' : 'bg-elevated text-secondary'}`}>{unit === 'month' ? '月' : '年'}</button>)}</div>
+      <div className="text-[10px] text-muted">预计扩展至 <span className="font-mono text-secondary">{indexTargetDateText}</span>{indexEarliestDate && <>（当前最早：<span className="font-mono text-secondary">{indexEarliestDate}</span>）</>}</div>
+      <div className="rounded-btn border border-border p-3"><div className="flex items-center justify-between gap-3"><div><div className="text-xs font-medium">批次大小</div><div className="text-[10px] text-muted">当前生效：{indexDailyBatchSize}</div></div><div className="flex gap-2"><input aria-label="指数批次大小" type="number" min={1} max={10000} value={indexBatchInput} onChange={(event) => setIndexBatchInput(event.target.value)} disabled={updateBatchSize.isPending || blocked} className="w-20 rounded-btn border border-border bg-elevated px-2 py-1 text-xs" /><button type="button" onClick={() => { const size = Math.max(1, Math.min(10000, Number(indexBatchInput) || 100)); setIndexBatchInput(String(size)); updateBatchSize.mutate(size) }} disabled={updateBatchSize.isPending || blocked} className="rounded-btn border border-border bg-elevated px-2 py-1 text-xs">{updateBatchSize.isPending ? '保存中…' : '保存'}</button></div></div></div>
+      <button type="button" onClick={() => sync.mutate()} disabled={disabled} className="w-full rounded-btn bg-accent px-3 py-1.5 text-xs font-medium text-base disabled:opacity-40">{sync.isPending ? '获取中…' : '获取数据'}</button>
+      {!hasDailyBatchCap && <p className="text-[10px] text-warning">当前 Provider 不支持批量指数日 K。</p>}
+    </div>
   )
 }

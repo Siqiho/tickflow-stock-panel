@@ -20,19 +20,23 @@ export function StorageBreakdownCard({
   storage,
   refreshedAt,
   isStale = false,
+  headingLevel = 2,
 }: {
   storage: StorageBreakdown
   refreshedAt?: string | null
   isStale?: boolean
+  headingLevel?: 2 | 3
 }) {
+  const Heading = headingLevel === 3 ? 'h3' : 'h2'
+  const Container = headingLevel === 3 ? 'div' : 'section'
   return (
-    <section className="rounded-card border border-border bg-surface p-4" aria-labelledby="storage-breakdown-heading">
+    <Container className="rounded-card border border-border bg-surface p-4" aria-labelledby="storage-breakdown-heading">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h2 id="storage-breakdown-heading" className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <Heading id="storage-breakdown-heading" className="flex items-center gap-2 text-sm font-medium text-foreground">
             <HardDrive aria-hidden="true" className="h-4 w-4 text-secondary" />
             本地存储
-          </h2>
+          </Heading>
           {refreshedAt && <p className="mt-1 text-[10px] text-muted">刷新时间 <span className="font-mono">{refreshedAt}</span></p>}
         </div>
         {isStale && <span className="rounded-btn bg-warning/10 px-2 py-1 text-[10px] font-medium text-warning">状态可能过期</span>}
@@ -66,6 +70,6 @@ export function StorageBreakdownCard({
         ))}
         {storage.categories.length === 0 && <p className="py-3 text-xs text-muted">暂无存储分类</p>}
       </div>
-    </section>
+    </Container>
   )
 }

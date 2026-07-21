@@ -62,11 +62,13 @@ export function DatasetDetailDrawer({
   entry,
   schema,
   runs = [],
+  warnings = [],
   onClose,
 }: {
   entry: DatasetCatalogEntry | null
   schema?: CatalogSchemaResponse | null
   runs?: SyncRun[]
+  warnings?: string[]
   onClose: () => void
 }) {
   const dialogRef = useRef<HTMLElement>(null)
@@ -156,6 +158,11 @@ export function DatasetDetailDrawer({
         </header>
 
         <div className="scrollbar-gutter-stable flex-1 space-y-7 overflow-y-auto px-4 py-5 sm:px-6">
+          {warnings.length > 0 && (
+            <div role="alert" className="space-y-1 rounded-card border border-warning/30 bg-warning/5 p-3 text-xs text-warning">
+              {warnings.map((warning) => <p key={warning}>{warning}</p>)}
+            </div>
+          )}
           <section aria-labelledby={`${headingId}-contract`}>
             <h3 id={`${headingId}-contract`} className="text-xs font-medium uppercase tracking-widest text-secondary">数据契约</h3>
             <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 text-xs sm:grid-cols-2">
