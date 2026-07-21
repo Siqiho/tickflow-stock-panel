@@ -80,10 +80,49 @@ class JobStore:
         return token
 
     def clear_control_plane_sink(self, token: object | None) -> bool:
-        """Clear only the sink installed by the caller holding ``token``."""
+        """Terminate this owner's mirrors, then clear only its installed sink.
+
+        The legacy job remains active and may still finish into its JSON store.  Its
+        control-plane projection, however, belongs to this lifespan and must not be
+        left permanently running after that owner exits.
+        """
         with self._sink_owner_lock:
             if token is None or token not in self._sink_owners:
                 return False
+            sink = self._sink_owners[token]
+            with self._lock:
+                owned_job_ids = [
+                    job_id
+                    for job_id, owner_token in self._mirror_owner_tokens.items()
+                    if owner_token is token
+                ]
+                aborted: list[dict[str, Any]] = []
+                for job_id in owned_job_ids:
+                    job = self._active_jobs.get(job_id)
+                    metadata = self._mirror_metadata.pop(job_id, None)
+                    self._mirror_owner_tokens.pop(job_id, None)
+                    if job is None or metadata is None:
+                        continue
+                    payload = dict(job)
+                    payload.update(
+                        status="failed",
+                        finished_at=datetime.now(UTC)
+                        .isoformat(timespec="seconds")
+                        .replace("+00:00", "Z"),
+                        error="control-plane owner shutdown",
+                    )
+                    payload["duration_s"] = _duration_s(payload)
+                    payload["_catalog_mirror"] = dict(metadata)
+                    payload["_catalog_error_code"] = "control_plane_owner_shutdown"
+                    aborted.append(payload)
+            for payload in aborted:
+                try:
+                    sink(payload)
+                except Exception:
+                    logger.exception(
+                        "control-plane owner shutdown mirror failed: job_id=%s",
+                        payload.get("id"),
+                    )
             del self._sink_owners[token]
             self._sink_owner_order.remove(token)
             if self._sink_owner_order:

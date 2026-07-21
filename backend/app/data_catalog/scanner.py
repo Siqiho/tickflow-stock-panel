@@ -1,4 +1,5 @@
 """Explicit local-file scanner for catalog refreshes."""
+
 from __future__ import annotations
 
 import hashlib
@@ -70,15 +71,20 @@ class _FileSnapshot:
     relative: PurePosixPath
     bytes: int
     published_at: str
+    device: int
+    inode: int
+    mtime_ns: int
 
 
 @dataclass(frozen=True)
 class _ParquetFacts:
     columns: tuple[str, ...]
+    schema: pa.Schema
     row_count: int
     symbols: tuple[str, ...]
     times: tuple[str, ...]
     named_count: int
+    sha256: str
 
 
 class CatalogScanner:
@@ -194,9 +200,7 @@ class CatalogScanner:
                 dirnames.clear()
                 continue
             dirnames[:] = sorted(
-                dirname
-                for dirname in dirnames
-                if self._is_safe_directory(directory_path / dirname)
+                dirname for dirname in dirnames if self._is_safe_directory(directory_path / dirname)
             )
             filenames.sort()
             for filename in filenames:
@@ -221,6 +225,9 @@ class CatalogScanner:
                         published_at=datetime.fromtimestamp(file_stat.st_mtime, UTC)
                         .isoformat()
                         .replace("+00:00", "Z"),
+                        device=file_stat.st_dev,
+                        inode=file_stat.st_ino,
+                        mtime_ns=file_stat.st_mtime_ns,
                     )
                 )
         return tuple(files)
@@ -231,9 +238,7 @@ class CatalogScanner:
         except OSError:
             return False
         return (
-            stat.S_ISDIR(mode)
-            and not stat.S_ISLNK(mode)
-            and self._resolves_within_data_dir(path)
+            stat.S_ISDIR(mode) and not stat.S_ISLNK(mode) and self._resolves_within_data_dir(path)
         )
 
     def _resolves_within_data_dir(self, path: Path) -> bool:
@@ -252,7 +257,10 @@ class CatalogScanner:
     ) -> str | None:
         matches: list[DatasetDefinition] = []
         for definition in self.definitions:
-            if any(_has_path_prefix(file.relative.parts, PurePosixPath(root).parts) for root in definition.roots):
+            if any(
+                _has_path_prefix(file.relative.parts, PurePosixPath(root).parts)
+                for root in definition.roots
+            ):
                 matches.append(definition)
         if not matches:
             return None
@@ -281,15 +289,13 @@ class CatalogScanner:
         if not {"bid_prices", "ask_prices"} <= normalized:
             return False
         try:
-            with file.path.open("rb") as handle:
-                schema = pq.ParquetFile(handle).schema_arrow
             return all(
-                pa.types.is_list(schema.field(column).type)
-                or pa.types.is_large_list(schema.field(column).type)
-                or pa.types.is_fixed_size_list(schema.field(column).type)
+                pa.types.is_list(facts.schema.field(column).type)
+                or pa.types.is_large_list(facts.schema.field(column).type)
+                or pa.types.is_fixed_size_list(facts.schema.field(column).type)
                 for column in ("bid_prices", "ask_prices")
             )
-        except (OSError, pa.ArrowException):
+        except (KeyError, pa.ArrowException):
             return False
 
     def _scan_files(
@@ -310,29 +316,33 @@ class CatalogScanner:
         fields: set[str] = set()
         named_count = 0
         row_count = 0
-        for file in sorted(files, key=lambda item: item.relative.as_posix()):
-            if file.path.suffix.lower() != ".parquet":
-                continue
+        material_files = tuple(
+            file
+            for file in sorted(files, key=lambda item: item.relative.as_posix())
+            if file.path.suffix.lower() == ".parquet"
+            and file.path.name not in definition.ignored_parquet_names
+        )
+        fatal_errors: list[str] = []
+        for file in material_files:
             facts = self._parquet_facts(file, definition, fact_cache)
             if isinstance(facts, Exception):
-                errors.append(self._bounded_error(file, facts))
+                fatal_errors.append(self._bounded_error(file, facts))
+                continue
+            schema_error = self._schema_error(definition, facts.columns)
+            if schema_error is not None:
+                fatal_errors.append(f"{file.relative.as_posix()}: {schema_error}")
                 continue
             row_count += facts.row_count
             symbols.update(facts.symbols)
             times.update(facts.times)
             fields.update(facts.columns)
             named_count += facts.named_count
-            try:
-                digest = _sha256(file.path)
-            except OSError as error:
-                errors.append(self._bounded_error(file, error))
-                continue
             artifacts.append(
                 ArtifactRecord(
                     run_id=run_id,
                     dataset_id=definition.descriptor.dataset_id,
                     path=file.relative.as_posix(),
-                    sha256=digest,
+                    sha256=facts.sha256,
                     row_count=facts.row_count,
                     bytes=file.bytes,
                     partition_value=self._partition_value(file.relative, definition.partition_key),
@@ -341,13 +351,31 @@ class CatalogScanner:
             )
 
         lineage, lineage_errors = self._read_lineage(definition, all_snapshot_files)
-        errors.extend(lineage_errors)
+        fatal_errors.extend(lineage_errors)
+        artifact_paths = {artifact.path for artifact in artifacts}
+        lineage = tuple(item for item in lineage if item.artifact_path in artifact_paths)
+        unit_version, unit_errors, unit_failed = self._admit_units(
+            definition,
+            tuple(artifacts),
+            lineage,
+        )
+        errors.extend(fatal_errors)
+        errors.extend(unit_errors)
         errors = sorted(set(errors))[:_MAX_SCAN_ERRORS]
         coverage = self._coverage(symbols, expected_by_market)
-        quality_status = self._quality_status(bool(artifacts), lineage, errors)
-        depth5_available = definition.descriptor.dataset_id == "depth5" and bool(artifacts)
+        quality_status = self._quality_status(
+            bool(artifacts),
+            lineage,
+            has_fatal_errors=bool(fatal_errors) or unit_failed,
+            units_verified=(definition.unit_policy == "reference" or not unit_errors),
+        )
+        depth5_available = (
+            definition.descriptor.dataset_id == "depth5"
+            and bool(artifacts)
+            and quality_status in {"healthy", "degraded"}
+        )
         payload = {
-            "file_count": len(files),
+            "file_count": len(material_files),
             "field_count": len(fields),
             "trading_days": len({_calendar_day(value) for value in times}),
             "named_count": named_count,
@@ -364,7 +392,7 @@ class CatalogScanner:
         state = DatasetState(
             dataset_id=definition.descriptor.dataset_id,
             schema_version=definition.descriptor.schema_version,
-            unit_version=definition.descriptor.unit_version,
+            unit_version=unit_version,
             quality_status=quality_status,
             row_count=row_count,
             symbol_count=len(symbols),
@@ -394,13 +422,20 @@ class CatalogScanner:
             cached = cache[file.path]
             if isinstance(cached, Exception):
                 return cached
-            required = {column for column in (definition.symbol_column, definition.time_column, "name") if column}
+            required = {
+                column
+                for column in (definition.symbol_column, definition.time_column, "name")
+                if column
+            }
             if required <= set(cached.columns) or not required:
                 return cached
         try:
             with file.path.open("rb") as handle:
+                before = os.fstat(handle.fileno())
+                self._assert_same_file(file, before)
                 parquet = pq.ParquetFile(handle)
-                columns = tuple(parquet.schema_arrow.names)
+                schema = parquet.schema_arrow
+                columns = tuple(schema.names)
                 requested = (
                     definition.symbol_column,
                     definition.time_column,
@@ -409,21 +444,98 @@ class CatalogScanner:
                 selected = [column for column in requested if column and column in columns]
                 table = parquet.read(columns=list(dict.fromkeys(selected))) if selected else None
                 row_count = parquet.metadata.num_rows
+                handle.seek(0)
+                digest = _sha256_handle(handle)
+                after = os.fstat(handle.fileno())
+                self._assert_same_file(file, after)
+                current = file.path.stat(follow_symlinks=False)
+                self._assert_same_file(file, current)
             symbols = _column_strings(table, definition.symbol_column)
             times = _column_strings(table, definition.time_column)
             names = _column_strings(table, "name")
             facts = _ParquetFacts(
                 columns=columns,
+                schema=schema,
                 row_count=row_count,
                 symbols=tuple(symbols),
                 times=tuple(times),
                 named_count=sum(bool(value.strip()) for value in names),
+                sha256=digest,
             )
             cache[file.path] = facts
             return facts
         except (OSError, pa.ArrowException, ValueError) as error:
             cache[file.path] = error
             return error
+
+    @staticmethod
+    def _assert_same_file(file: _FileSnapshot, observed: os.stat_result) -> None:
+        identity = (
+            observed.st_dev,
+            observed.st_ino,
+            observed.st_size,
+            observed.st_mtime_ns,
+        )
+        expected = (file.device, file.inode, file.bytes, file.mtime_ns)
+        if identity != expected:
+            raise OSError("file changed during scan")
+
+    @staticmethod
+    def _schema_error(
+        definition: DatasetDefinition,
+        columns: tuple[str, ...],
+    ) -> str | None:
+        if definition.schema_policy == "opaque_dynamic":
+            return None if columns else "opaque parquet schema has no columns"
+        available = set(columns)
+        required_sets = (
+            definition.required_column_sets
+            if definition.required_column_sets
+            else (definition.required_columns,)
+        )
+        if any(set(required) <= available for required in required_sets):
+            return None
+        required = min(required_sets, key=lambda item: len(set(item) - available))
+        missing = sorted(set(required) - available)
+        return f"missing required columns: {', '.join(missing)}"
+
+    @staticmethod
+    def _admit_units(
+        definition: DatasetDefinition,
+        artifacts: tuple[ArtifactRecord, ...],
+        lineage: tuple[LineageSummary, ...],
+    ) -> tuple[str, list[str], bool]:
+        if not artifacts:
+            return "unknown", [], False
+        if definition.unit_policy == "reference":
+            return definition.descriptor.unit_version, [], False
+        by_artifact: dict[str, list[LineageSummary]] = {}
+        for summary in lineage:
+            if summary.artifact_path is not None:
+                by_artifact.setdefault(summary.artifact_path, []).append(summary)
+        errors: list[str] = []
+        failed = False
+        for artifact in artifacts:
+            matches = by_artifact.get(artifact.path, [])
+            if not matches:
+                errors.append(f"{artifact.path}: matching lineage is missing")
+                continue
+            mismatches = sorted(
+                {
+                    summary.unit_version
+                    for summary in matches
+                    if summary.unit_version != definition.descriptor.unit_version
+                }
+            )
+            if mismatches:
+                failed = True
+                errors.append(
+                    f"{artifact.path}: unit_version mismatch: "
+                    f"expected {definition.descriptor.unit_version}, got {', '.join(mismatches)}"
+                )
+        if errors:
+            return "unknown", errors, failed
+        return definition.descriptor.unit_version, [], False
 
     def _read_lineage(
         self,
@@ -456,7 +568,9 @@ class CatalogScanner:
                     artifact_path = self._canonical_artifact_path(str(artifact_path))
                 summaries.append(
                     LineageSummary(
-                        run_id=_optional_text(payload.get("run_id") or payload.get("source_job_id")),
+                        run_id=_optional_text(
+                            payload.get("run_id") or payload.get("source_job_id")
+                        ),
                         source=source.strip(),
                         fetched_at=_optional_text(payload.get("fetched_at")),
                         unit_version=unit_version.strip(),
@@ -540,9 +654,7 @@ class CatalogScanner:
             "index": "index_instruments",
         }
         expected = {
-            asset_type: {
-                item.market: item.symbol_count for item in results[dataset_id].coverage
-            }
+            asset_type: {item.market: item.symbol_count for item in results[dataset_id].coverage}
             for asset_type, dataset_id in instrument_ids.items()
         }
         updated: dict[str, DatasetScanResult] = {}
@@ -587,16 +699,18 @@ class CatalogScanner:
     def _quality_status(
         has_readable_parquet: bool,
         lineage: tuple[LineageSummary, ...],
-        errors: list[str],
+        *,
+        has_fatal_errors: bool,
+        units_verified: bool,
     ) -> str:
-        if errors:
+        if has_fatal_errors:
             return "failed"
         statuses = {item.quality_status for item in lineage}
         if "failed" in statuses:
             return "failed"
         if "degraded" in statuses:
             return "degraded"
-        if has_readable_parquet:
+        if has_readable_parquet and units_verified:
             return "healthy"
         return "unknown"
 
@@ -617,14 +731,17 @@ class CatalogScanner:
 
     def _empty_category_counts(self) -> dict[str, dict[str, int]]:
         return {
-            key: {"bytes": 0, "files": 0}
-            for key in (*_MANAGED_TITLES, *_OPERATIONAL_CATEGORIES)
+            key: {"bytes": 0, "files": 0} for key in (*_MANAGED_TITLES, *_OPERATIONAL_CATEGORIES)
         }
 
     @staticmethod
     def _operational_category(relative: PurePosixPath) -> str:
         first = relative.parts[0] if relative.parts else ""
-        return first if first in _OPERATIONAL_CATEGORIES and first != "operational_other" else "operational_other"
+        return (
+            first
+            if first in _OPERATIONAL_CATEGORIES and first != "operational_other"
+            else "operational_other"
+        )
 
     @staticmethod
     def _storage_breakdown(counts: dict[str, dict[str, int]]) -> StorageBreakdown:
@@ -632,9 +749,7 @@ class CatalogScanner:
             StorageCategory(
                 key=key,
                 title=(
-                    _MANAGED_TITLES[key]
-                    if key in _MANAGED_TITLES
-                    else _OPERATIONAL_CATEGORIES[key]
+                    _MANAGED_TITLES[key] if key in _MANAGED_TITLES else _OPERATIONAL_CATEGORIES[key]
                 ),
                 kind="managed" if key in _MANAGED_TITLES else "operational",
                 bytes=value["bytes"],
@@ -656,11 +771,10 @@ def _has_path_prefix(parts: tuple[str, ...], prefix: tuple[str, ...]) -> bool:
     return len(parts) >= len(prefix) and parts[: len(prefix)] == prefix
 
 
-def _sha256(path: Path) -> str:
+def _sha256_handle(handle) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
+    for block in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(block)
     return digest.hexdigest()
 
 

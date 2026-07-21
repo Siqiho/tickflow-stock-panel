@@ -57,7 +57,16 @@ def test_availability_flags_are_independent() -> None:
 @pytest.mark.parametrize(
     ("factory", "kwargs"),
     [
-        (DatasetState, {"dataset_id": "stock_daily", "schema_version": "1", "unit_version": "v1", "updated_at": "2026-07-21", "row_count": -1}),
+        (
+            DatasetState,
+            {
+                "dataset_id": "stock_daily",
+                "schema_version": "1",
+                "unit_version": "v1",
+                "updated_at": "2026-07-21",
+                "row_count": -1,
+            },
+        ),
         (MarketCoverage, {"market": "SH", "ratio": 1.01}),
         (StorageBreakdown, {"managed_data_bytes": 1, "operational_bytes": 1, "total_bytes": 1}),
         (
@@ -123,7 +132,7 @@ def test_enriched_descriptions_identify_the_correct_asset_class() -> None:
         dataset_id: next(
             field.semantic
             for field in get_dataset_definition(dataset_id).descriptor.fields
-            if field.name == "ma5"
+            if field.name == "raw_close"
         )
         for dataset_id in ("stock_enriched", "etf_enriched", "index_enriched")
     }
@@ -134,9 +143,40 @@ def test_enriched_descriptions_identify_the_correct_asset_class() -> None:
     assert len(set(semantics.values())) == 3
 
 
+def test_enriched_descriptors_expose_only_columns_persisted_by_each_writer() -> None:
+    fields = {
+        dataset_id: {field.name for field in get_dataset_definition(dataset_id).descriptor.fields}
+        for dataset_id in ("stock_enriched", "etf_enriched", "index_enriched")
+    }
+    common = {
+        "symbol",
+        "date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "amount",
+        "raw_close",
+        "raw_high",
+        "raw_low",
+    }
+
+    assert fields["etf_enriched"] == common
+    assert fields["index_enriched"] == common
+    assert fields["stock_enriched"] == common | {
+        "turnover_rate",
+        "consecutive_limit_ups",
+        "consecutive_limit_downs",
+    }
+
+
 def test_registry_validation_rejects_overlapping_exclusive_roots() -> None:
     stock_daily = get_dataset_definition("stock_daily")
-    duplicate_root = replace(stock_daily, descriptor=stock_daily.descriptor.model_copy(update={"dataset_id": "duplicate"}))
+    duplicate_root = replace(
+        stock_daily,
+        descriptor=stock_daily.descriptor.model_copy(update={"dataset_id": "duplicate"}),
+    )
 
     with pytest.raises(ValueError, match="overlap"):
         validate_dataset_definitions((stock_daily, duplicate_root))
@@ -146,7 +186,8 @@ def test_depth_root_is_only_allowed_shared_root() -> None:
     sealed_l1 = get_dataset_definition("sealed_l1")
     depth5 = get_dataset_definition("depth5")
 
-    assert sealed_l1.roots == depth5.roots == ("depth5",)
+    assert sealed_l1.roots == ("sealed_l1", "depth5")
+    assert depth5.roots == ("depth5",)
     assert sealed_l1.shared_root_group == depth5.shared_root_group == "depth_semantics"
     assert sealed_l1.semantic_classifier == depth5.semantic_classifier == "depth"
 
@@ -207,12 +248,76 @@ def test_depth_dataset_exception_does_not_allow_nested_roots(reversed_order: boo
 
 
 def test_realtime_datasets_use_utc_timestamp_and_name_shanghai_market_timezone() -> None:
-    for dataset_id in ("quote_snapshot", "sealed_l1", "depth5"):
+    for dataset_id, time_field in (
+        ("quote_snapshot", "fetched_at"),
+        ("sealed_l1", "fetched_at"),
+        ("depth5", "timestamp"),
+    ):
         timestamp = next(
             field
             for field in get_dataset_definition(dataset_id).descriptor.fields
-            if field.name == "timestamp"
+            if field.name == time_field
         )
 
         assert timestamp.timezone == "UTC"
         assert "asia/shanghai" in timestamp.semantic.lower()
+
+
+def test_writer_contracts_are_explicit_and_match_current_materialized_columns() -> None:
+    instruments = get_dataset_definition("stock_instruments")
+    pools = get_dataset_definition("pools")
+    sealed = get_dataset_definition("sealed_l1")
+    ext_data = get_dataset_definition("ext_data")
+
+    assert instruments.required_columns == (
+        "symbol",
+        "name",
+        "code",
+        "exchange",
+        "region",
+        "type",
+        "listing_date",
+        "total_shares",
+        "float_shares",
+        "tick_size",
+        "limit_up",
+        "limit_down",
+        "as_of",
+    )
+    assert instruments.time_column == "as_of"
+    assert pools.required_columns == ("pool_id", "symbol", "as_of")
+    assert pools.time_column == "as_of"
+    assert sealed.required_columns == (
+        "symbol",
+        "sealed_up",
+        "sealed_down",
+        "ask1_vol",
+        "bid1_vol",
+        "status",
+        "fetched_at",
+    )
+    assert sealed.descriptor.unit_version == "sealed_l1_v1"
+    assert ext_data.schema_policy == "opaque_dynamic"
+    assert ext_data.required_columns == ()
+
+
+def test_enriched_and_financial_descriptors_describe_persisted_narrow_tables() -> None:
+    stock_enriched = get_dataset_definition("stock_enriched")
+    fields = {field.name for field in stock_enriched.descriptor.fields}
+    assert {"raw_close", "raw_high", "raw_low", "turnover_rate"} <= fields
+    assert "rsi14" not in fields
+
+    financial_fields = {
+        dataset_id: {field.name for field in get_dataset_definition(dataset_id).descriptor.fields}
+        for dataset_id in (
+            "financial_metrics",
+            "financial_income",
+            "financial_balance_sheet",
+            "financial_cash_flow",
+            "financial_shares",
+        )
+    }
+    assert "notice_date" in financial_fields["financial_metrics"]
+    assert "total_revenue" in financial_fields["financial_income"]
+    assert "netcash_operate" in financial_fields["financial_cash_flow"]
+    assert "announce_date" in financial_fields["financial_shares"]

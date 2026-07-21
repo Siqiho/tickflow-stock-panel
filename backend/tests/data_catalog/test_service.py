@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
+import threading
 import time
 from dataclasses import replace
 from datetime import date
@@ -9,6 +11,7 @@ from pathlib import Path
 
 import polars as pl
 import pyarrow.parquet as pq
+import pytest
 
 from app.data_catalog.control_db import CatalogControlDB
 from app.data_catalog.definitions import (
@@ -160,9 +163,7 @@ def test_availability_keeps_provider_entitlement_local_and_serving_independent(
 
 def test_local_failed_quality_remains_materialized_but_not_serving_ready(tmp_path: Path) -> None:
     db = CatalogControlDB(tmp_path)
-    db.upsert_dataset_state(
-        _state("stock_daily", quality="failed", managed_bytes=10, file_count=1)
-    )
+    db.upsert_dataset_state(_state("stock_daily", quality="failed", managed_bytes=10, file_count=1))
     service = CatalogService(
         tmp_path,
         db,
@@ -221,7 +222,23 @@ def test_provider_selection_prefers_latest_lineage_source_not_payload_order(tmp_
 def test_rescan_is_local_only_and_persists_real_parquet_without_network(
     tmp_path: Path, monkeypatch
 ) -> None:
-    _write_parquet(tmp_path / "kline_daily" / "date=2026-07-21" / "part.parquet", [_bar("600000.SH")])
+    parquet = _write_parquet(
+        tmp_path / "kline_daily" / "date=2026-07-21" / "part.parquet",
+        [_bar("600000.SH")],
+    )
+    lineage = tmp_path / "lineage" / "kline_daily" / "run.json"
+    lineage.parent.mkdir(parents=True)
+    lineage.write_text(
+        json.dumps(
+            {
+                "source": "test-writer",
+                "unit_version": "canonical_daily_v1",
+                "quality": "success",
+                "target_artifact": parquet.relative_to(tmp_path).as_posix(),
+            }
+        ),
+        encoding="utf-8",
+    )
 
     def deny_network(*args, **kwargs):
         raise AssertionError("catalog rescan attempted network access")
@@ -357,7 +374,9 @@ def test_hot_reads_use_sqlite_only_and_warmed_catalog_query_is_under_200ms(
 def test_compatibility_status_preserves_exact_legacy_keys_and_all_financial_tables(
     tmp_path: Path,
 ) -> None:
-    _write_parquet(tmp_path / "kline_daily" / "date=2026-07-21" / "part.parquet", [_bar("600000.SH")])
+    _write_parquet(
+        tmp_path / "kline_daily" / "date=2026-07-21" / "part.parquet", [_bar("600000.SH")]
+    )
     _write_parquet(
         tmp_path / "instruments" / "part.parquet",
         [{"symbol": "600000.SH", "name": "浦发银行", "as_of": date(2026, 7, 21)}],
@@ -472,3 +491,127 @@ def test_compatibility_checked_at_uses_fresh_clock_without_changing_catalog_fres
     assert first["checked_at"] == "2026-07-21T09:00:00Z"
     assert second["checked_at"] == "2026-07-21T09:00:01Z"
     assert service.list_catalog().refreshed_at == "2026-07-21T08:00:00Z"
+
+
+def test_schema_admission_failure_retains_previous_healthy_snapshot_as_stale(
+    tmp_path: Path,
+) -> None:
+    artifact = _write_parquet(tmp_path / "kline_daily" / "part.parquet", [_bar("600000.SH")])
+    lineage = tmp_path / "lineage" / "kline_daily" / "run.json"
+    lineage.parent.mkdir(parents=True)
+    lineage.write_text(
+        json.dumps(
+            {
+                "source": "test",
+                "unit_version": "canonical_daily_v1",
+                "quality": "success",
+                "target_artifact": artifact.relative_to(tmp_path).as_posix(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    db = CatalogControlDB(tmp_path)
+    service = CatalogService(tmp_path, db, manifests=())
+    service.rescan("stock_daily")
+    healthy = db.get_dataset_state("stock_daily")
+    healthy_artifacts = db.list_artifacts("stock_daily")
+    assert healthy is not None and healthy.quality_status == "healthy"
+
+    _write_parquet(
+        artifact,
+        [{"symbol": "600000.SH", "date": date(2026, 7, 22), "close": 10.0}],
+    )
+    response = service.rescan("stock_daily")
+
+    assert response.stale is True
+    assert service.list_catalog().stale is True
+    assert db.get_dataset_state("stock_daily") == healthy
+    assert db.list_artifacts("stock_daily") == healthy_artifacts
+    failed = db.list_sync_runs("stock_daily", limit=1)[0]
+    assert failed.status == "failed"
+    assert failed.error_code == "catalog_quality_failed"
+
+
+def test_first_invalid_scan_persists_failed_non_serving_state(tmp_path: Path) -> None:
+    _write_parquet(
+        tmp_path / "kline_daily" / "part.parquet",
+        [{"symbol": "600000.SH", "date": date(2026, 7, 21), "close": 10.0}],
+    )
+    service = CatalogService(tmp_path, CatalogControlDB(tmp_path), manifests=())
+
+    response = service.rescan("stock_daily")
+    daily = next(item for item in response.datasets if item.descriptor.dataset_id == "stock_daily")
+
+    assert daily.state.quality_status == "failed"
+    assert daily.descriptor.availability.local_materialized is True
+    assert daily.descriptor.availability.serving_ready is False
+    assert daily.descriptor.availability.reason_code == "quality_failed"
+
+
+def test_rescan_mutex_rejects_concurrent_call_without_waiting(tmp_path: Path) -> None:
+    _write_parquet(
+        tmp_path / "instruments" / "part.parquet",
+        [
+            {
+                "symbol": "600000.SH",
+                "name": "浦发银行",
+                "code": "600000",
+                "exchange": "SH",
+                "region": "CN",
+                "type": "stock",
+                "listing_date": date(1999, 11, 10),
+                "total_shares": 1_000.0,
+                "float_shares": 900.0,
+                "tick_size": 0.01,
+                "limit_up": 11.0,
+                "limit_down": 9.0,
+                "as_of": date(2026, 7, 21),
+            }
+        ],
+    )
+    base_scanner = CatalogScanner(tmp_path)
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingScanner:
+        calls = 0
+
+        def scan_dataset(self, dataset_id, run_id, *, expected_by_market=None):
+            self.calls += 1
+            if self.calls == 1:
+                entered.set()
+                assert release.wait(timeout=2)
+            return base_scanner.scan_dataset(
+                dataset_id,
+                run_id,
+                expected_by_market=expected_by_market,
+            )
+
+    scanner = BlockingScanner()
+    service = CatalogService(
+        tmp_path,
+        CatalogControlDB(tmp_path),
+        scanner=scanner,  # type: ignore[arg-type]
+        manifests=(),
+    )
+    errors: list[BaseException] = []
+
+    def slow_rescan() -> None:
+        try:
+            service.rescan("stock_instruments")
+        except BaseException as error:  # pragma: no cover - asserted below
+            errors.append(error)
+
+    worker = threading.Thread(target=slow_rescan)
+    worker.start()
+    assert entered.wait(timeout=1)
+
+    with pytest.raises(RuntimeError, match="catalog rescan already in progress"):
+        service.rescan("stock_instruments")
+
+    release.set()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert not errors
+    assert scanner.calls == 1
+    assert service.get_dataset("stock_instruments").state.row_count == 1  # type: ignore[union-attr]

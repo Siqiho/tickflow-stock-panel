@@ -1,9 +1,11 @@
 """Local HTTP access to the SQLite-backed data catalog."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
 from .models import CatalogResponse, DatasetCatalogEntry
+from .service import CatalogRescanInProgress
 
 router = APIRouter(prefix="/api/data", tags=["data-catalog"])
 
@@ -64,5 +66,10 @@ def rescan_catalog(request: Request, dataset_id: str | None = None) -> CatalogRe
     service = _service(request)
     try:
         return service.rescan(dataset_id)
+    except CatalogRescanInProgress:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "catalog_rescan_in_progress"},
+        ) from None
     except KeyError:
         raise _missing_dataset(dataset_id or "") from None

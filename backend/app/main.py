@@ -47,12 +47,39 @@ from app.jobs import daily_pipeline
 from app.services import runtime_logging as runtime_logging_service
 from app.services.quote_service import QuoteService
 from app.tickflow import client as tf_client
+from app.tickflow.capabilities import Cap, CapabilitySet
 from app.tickflow.policy import detect_capabilities
 from app.tickflow.repository import DataStore, KlineRepository
 
 # 统一运行日志: 控制台 + data/logs 滚动文件 + 结构化缓冲
 runtime_logging_service.setup_runtime_logging(settings.log_level, settings.data_dir)
 logger = logging.getLogger(__name__)
+
+_CATALOG_OPERATION_CAPS: dict[str, tuple[Cap, ...]] = {
+    "daily": (Cap.KLINE_DAILY_BATCH, Cap.KLINE_DAILY_BY_SYMBOL),
+    "minute": (Cap.KLINE_MINUTE_BATCH, Cap.KLINE_MINUTE_BY_SYMBOL),
+    "depth5": (Cap.DEPTH5_BATCH, Cap.DEPTH5),
+    "financial": (Cap.FINANCIAL,),
+    "adj_factor": (Cap.ADJ_FACTOR,),
+    "realtime": (Cap.QUOTE_BATCH, Cap.QUOTE_BY_SYMBOL, Cap.QUOTE_POOL),
+    "instruments": (Cap.KLINE_DAILY_BY_SYMBOL, Cap.KLINE_DAILY_BATCH),
+}
+
+
+def build_catalog_entitlement_resolver(capset: CapabilitySet):
+    """Resolve built-in manifest operations against the probed runtime capabilities."""
+
+    def resolve(manifest) -> bool:
+        if manifest.provider in {"public", "local"}:
+            return True
+        if manifest.provider != "tickflow":
+            return False
+        operation_caps = [_CATALOG_OPERATION_CAPS.get(operation) for operation in manifest.operations]
+        if not operation_caps or any(caps is None for caps in operation_caps):
+            return False
+        return all(any(capset.has(cap) for cap in caps) for caps in operation_caps if caps)
+
+    return resolve
 
 
 @asynccontextmanager
@@ -61,13 +88,22 @@ async def catalog_control_plane_lifespan(
     data_dir: Path,
     *,
     job_store_instance=None,
+    capability_set: CapabilitySet | None = None,
 ):
     """Install the catalog service and release only this lifespan's sink on exit."""
     from app.services.pipeline_jobs import job_store
 
     store = job_store_instance or job_store
     control_db = CatalogControlDB(data_dir)
-    catalog_service = CatalogService(data_dir, control_db)
+    catalog_service = CatalogService(
+        data_dir,
+        control_db,
+        entitlement_resolver=(
+            build_catalog_entitlement_resolver(capability_set)
+            if capability_set is not None
+            else None
+        ),
+    )
     if not control_db.has_dataset_states():
         catalog_service.rescan()
     app.state.catalog_control_db = control_db
@@ -93,10 +129,28 @@ async def catalog_control_plane_lifespan(
                 finished_at=job.get("finished_at"),
                 status=status,
                 quality_status=quality_status,
-                error_code="pipeline_failed" if status == "failed" else None,
+                error_code=(
+                    job.get("_catalog_error_code")
+                    or ("pipeline_failed" if status == "failed" else None)
+                ),
                 error_message=job.get("error"),
             )
         )
+        if status not in {"succeeded", "degraded", "failed"}:
+            return
+        if job.get("_catalog_error_code") == "control_plane_owner_shutdown":
+            return
+        dataset_id = (
+            "stock_instruments" if metadata["operation"] == "instruments" else None
+        )
+        try:
+            catalog_service.refresh_after_mutation(dataset_id)
+        except Exception:
+            # Mirroring is best effort and must never alter the legacy job result.
+            logger.exception(
+                "catalog refresh after pipeline terminal failed: job_id=%s",
+                job.get("id"),
+            )
 
     sink_token = store.set_control_plane_sink(mirror_pipeline_run)
     try:
@@ -134,131 +188,139 @@ async def lifespan(app: FastAPI):
     app.state.capabilities = capset
     logger.info("ready; %d capabilities active", len(capset.all()))
 
-    # 全局行情服务
-    qs = QuoteService()
-    app.state.quote_service = qs
-    qs.set_repo(repo)
-    qs.boot_check()
-
-    # QuoteService 需要访问 strategy_monitor 等单例
-    # 先创建 strategy_monitor，再注入 app.state
-    from app.strategy.monitor import StrategyMonitorService
-    strategy_monitor = StrategyMonitorService()
-    app.state.strategy_monitor = strategy_monitor
-    qs.set_app_state(app.state)
-
-    # 五档盘口 sealed 服务(真假涨停/跌停, 独立旁路线)
-    from app.services.depth_service import DepthService
-    depth_service = DepthService()
-    depth_service.set_repo(repo)
-    depth_service.set_app_state(app.state)
-    app.state.depth_service = depth_service
-
-    # 启动调度器(若 enriched 数据为空,首次启动可手动 POST /api/pipeline/run)
-    try:
-        daily_pipeline.set_app_state(app.state)  # 供 depth_finalize job 访问 depth_service
-        scheduler = daily_pipeline.start_scheduler(repo, capset)
-        app.state.scheduler = scheduler
-    except Exception as e:  # noqa: BLE001
-        logger.warning("scheduler not started: %s", e)
-        app.state.scheduler = None
-
-    # depth sealed: 启动补跑(当天文件不存在) + 盘中轮询(有能力时)
-    try:
-        depth_service.boot_check()
-        depth_service.start_polling()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("depth_service init failed: %s", e)
-
-    # 扩展数据定时拉取
-    from app.services.ext_pull import pull_scheduler
-    pull_scheduler.start(store.data_dir)
-    pull_scheduler.refresh(store.data_dir)
-    app.state.pull_scheduler = pull_scheduler
-
-    # 内置扩展表 (概念/行业): 只创建 config (含拉取配置), 不自动拉数据
-    # 数据获取由用户在概念/行业页点「获取数据」手动触发 (POST /api/ext-data/presets/{id}/fetch)
-    try:
-        from app.services.ext_presets import ensure_builtin_presets
-        await ensure_builtin_presets(store.data_dir)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("内置扩展表初始化失败 (不影响启动): %s", e)
-
-    # 财务数据 (需 Expert 套餐): 仅初始化调度器供 /api/financials/sync/* 手动同步,
-    # 不启动自动调度——用户在「财务分析」页点「同步」手动拉取。
-    from app.services.financial_sync import financial_scheduler
-    financial_scheduler.start(store.data_dir, capset)
-    app.state.financial_scheduler = financial_scheduler
-
-    # 策略引擎
-    from app.services.screener import ScreenerService
-    from app.strategy.engine import StrategyEngine
-    from app.strategy.monitor import StrategyMonitorService
-
-    _screener_svc = ScreenerService(repo)
-    strategy_dirs = [
-        Path(__file__).resolve().parent / "strategy" / "builtin",
-        store.data_dir / "strategies" / "custom",
-        store.data_dir / "strategies" / "ai",
-    ]
-    strategy_engine = StrategyEngine(
-        enriched_loader=_screener_svc._load_enriched_for_date,
-        enriched_history_loader=_screener_svc._load_enriched_history,
-        strategy_dirs=strategy_dirs,
+    # Catalog migration/initial scan is the startup gate. No scheduler, poller,
+    # or other background resource may start before this local control plane.
+    control_scope = catalog_control_plane_lifespan(
+        app,
+        store.data_dir,
+        capability_set=capset,
     )
-    app.state.strategy_engine = strategy_engine
-    logger.info("strategy engine loaded: %d strategies", len(strategy_engine.list_strategies()))
-
-    # 通用监控规则引擎: 启动时 reload 规则到内存态 (修复重启后告警失效)
-    from app.services import preferences
-    from app.strategy import monitor_rules as mr_store
-    from app.strategy.monitor import MonitorRuleEngine
-    monitor_engine = MonitorRuleEngine()
-    monitor_engine.set_strategy_engine(strategy_engine)
-    monitor_engine.set_data_dir(store.data_dir)
-    # 复用 ScreenerService 的历史窗口加载器 (三级缓存, 启动预计算命中 ~0ms),
-    # 让声明 filter_history 的策略 (如反包) 也能在实时监控里跑选股 → 盘中触发通知。
-    monitor_engine.set_history_loader(_screener_svc._load_enriched_history)
-
-    # 自动迁移: 把旧 strategy_monitor_ids 同步为 type=strategy 规则 (统一到监控页)
-    try:
-        if preferences.get_strategy_monitor_enabled():
-            ids = preferences.get_strategy_monitor_ids()
-            if ids:
-                names = {s.id: s.name for s in strategy_engine.list_strategies()}
-                mr_store.migrate_strategy_monitors(store.data_dir, ids, names)
-                logger.info("strategy monitor migrated: %d strategies", len(ids))
-    except Exception as e:  # noqa: BLE001
-        logger.warning("strategy monitor migration failed: %s", e)
-
-    try:
-        rules = mr_store.load_all(store.data_dir)
-        monitor_engine.set_rules(rules)
-        logger.info("monitor engine loaded: %d rules", monitor_engine.rule_count)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("monitor engine load failed: %s", e)
-    app.state.monitor_engine = monitor_engine
-
-    control_scope = catalog_control_plane_lifespan(app, store.data_dir)
     await control_scope.__aenter__()
     try:
+        # 全局行情服务
+        qs = QuoteService()
+        app.state.quote_service = qs
+        qs.set_repo(repo)
+        qs.boot_check()
+
+        # QuoteService 需要访问 strategy_monitor 等单例
+        # 先创建 strategy_monitor，再注入 app.state
+        from app.strategy.monitor import StrategyMonitorService
+        strategy_monitor = StrategyMonitorService()
+        app.state.strategy_monitor = strategy_monitor
+        qs.set_app_state(app.state)
+
+        # 五档盘口 sealed 服务(真假涨停/跌停, 独立旁路线)
+        from app.services.depth_service import DepthService
+        depth_service = DepthService()
+        depth_service.set_repo(repo)
+        depth_service.set_app_state(app.state)
+        app.state.depth_service = depth_service
+
+        # 启动调度器(若 enriched 数据为空,首次启动可手动 POST /api/pipeline/run)
+        try:
+            daily_pipeline.set_app_state(app.state)  # 供 depth_finalize job 访问 depth_service
+            scheduler = daily_pipeline.start_scheduler(repo, capset)
+            app.state.scheduler = scheduler
+        except Exception as e:  # noqa: BLE001
+            logger.warning("scheduler not started: %s", e)
+            app.state.scheduler = None
+
+        # depth sealed: 启动补跑(当天文件不存在) + 盘中轮询(有能力时)
+        try:
+            depth_service.boot_check()
+            depth_service.start_polling()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("depth_service init failed: %s", e)
+
+        # 扩展数据定时拉取
+        from app.services.ext_pull import pull_scheduler
+        pull_scheduler.start(store.data_dir)
+        pull_scheduler.refresh(store.data_dir)
+        app.state.pull_scheduler = pull_scheduler
+
+        # 内置扩展表 (概念/行业): 只创建 config (含拉取配置), 不自动拉数据
+        # 数据获取由用户在概念/行业页点「获取数据」手动触发 (POST /api/ext-data/presets/{id}/fetch)
+        try:
+            from app.services.ext_presets import ensure_builtin_presets
+            await ensure_builtin_presets(store.data_dir)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("内置扩展表初始化失败 (不影响启动): %s", e)
+
+        # 财务数据 (需 Expert 套餐): 仅初始化调度器供 /api/financials/sync/* 手动同步,
+        # 不启动自动调度——用户在「财务分析」页点「同步」手动拉取。
+        from app.services.financial_sync import financial_scheduler
+        financial_scheduler.start(store.data_dir, capset)
+        app.state.financial_scheduler = financial_scheduler
+
+        # 策略引擎
+        from app.services.screener import ScreenerService
+        from app.strategy.engine import StrategyEngine
+        from app.strategy.monitor import StrategyMonitorService
+
+        _screener_svc = ScreenerService(repo)
+        strategy_dirs = [
+            Path(__file__).resolve().parent / "strategy" / "builtin",
+            store.data_dir / "strategies" / "custom",
+            store.data_dir / "strategies" / "ai",
+        ]
+        strategy_engine = StrategyEngine(
+            enriched_loader=_screener_svc._load_enriched_for_date,
+            enriched_history_loader=_screener_svc._load_enriched_history,
+            strategy_dirs=strategy_dirs,
+        )
+        app.state.strategy_engine = strategy_engine
+        logger.info(
+            "strategy engine loaded: %d strategies", len(strategy_engine.list_strategies())
+        )
+
+        # 通用监控规则引擎: 启动时 reload 规则到内存态 (修复重启后告警失效)
+        from app.services import preferences
+        from app.strategy import monitor_rules as mr_store
+        from app.strategy.monitor import MonitorRuleEngine
+        monitor_engine = MonitorRuleEngine()
+        monitor_engine.set_strategy_engine(strategy_engine)
+        monitor_engine.set_data_dir(store.data_dir)
+        # 复用 ScreenerService 的历史窗口加载器 (三级缓存, 启动预计算命中 ~0ms),
+        # 让声明 filter_history 的策略 (如反包) 也能在实时监控里跑选股 → 盘中触发通知。
+        monitor_engine.set_history_loader(_screener_svc._load_enriched_history)
+
+        # 自动迁移: 把旧 strategy_monitor_ids 同步为 type=strategy 规则 (统一到监控页)
+        try:
+            if preferences.get_strategy_monitor_enabled():
+                ids = preferences.get_strategy_monitor_ids()
+                if ids:
+                    names = {s.id: s.name for s in strategy_engine.list_strategies()}
+                    mr_store.migrate_strategy_monitors(store.data_dir, ids, names)
+                    logger.info("strategy monitor migrated: %d strategies", len(ids))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("strategy monitor migration failed: %s", e)
+
+        try:
+            rules = mr_store.load_all(store.data_dir)
+            monitor_engine.set_rules(rules)
+            logger.info("monitor engine loaded: %d rules", monitor_engine.rule_count)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("monitor engine load failed: %s", e)
+        app.state.monitor_engine = monitor_engine
+
         yield
     finally:
         try:
-            if app.state.scheduler:
-                app.state.scheduler.shutdown(wait=False)
-            ps = getattr(app.state, "pull_scheduler", None)
-            if ps:
-                ps.stop()
-            fsc = getattr(app.state, "financial_scheduler", None)
-            if fsc:
-                fsc.stop()
-            qs = getattr(app.state, "quote_service", None)
-            if qs:
-                qs.stop()
-            dsvc = getattr(app.state, "depth_service", None)
-            if dsvc:
-                dsvc.stop_polling()
+            resources = (
+                (getattr(app.state, "scheduler", None), "shutdown", {"wait": False}),
+                (getattr(app.state, "pull_scheduler", None), "stop", {}),
+                (getattr(app.state, "financial_scheduler", None), "stop", {}),
+                (getattr(app.state, "quote_service", None), "stop", {}),
+                (getattr(app.state, "depth_service", None), "stop_polling", {}),
+            )
+            for resource, method_name, kwargs in resources:
+                if resource is None:
+                    continue
+                try:
+                    getattr(resource, method_name)(**kwargs)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("shutdown resource failed (%s): %s", method_name, exc)
             logger.info("shutdown")
         finally:
             await control_scope.__aexit__(None, None, None)

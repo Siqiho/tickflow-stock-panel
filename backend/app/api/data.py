@@ -742,6 +742,11 @@ def clear_data(request: Request):
 
     logger.info("数据已清除: 删除 %d 个 parquet 文件", deleted)
     invalidate_data_cache(None)
+    # Serialize behind any manual scan and do not return while the catalog can
+    # still advertise artifacts that this request has removed.
+    catalog_service = getattr(request.app.state, "catalog_service", None)
+    if catalog_service is not None:
+        catalog_service.refresh_after_mutation()
     return {"deleted_files": deleted}
 
 

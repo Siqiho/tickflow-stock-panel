@@ -1,4 +1,5 @@
 """SQLite control-plane storage for the local data catalog."""
+
 from __future__ import annotations
 
 import json
@@ -15,6 +16,66 @@ from .models import ArtifactRecord, DatasetState, SourceHealth, SyncRun
 
 _MIGRATION_PATTERN = re.compile(r"^(?P<version>\d+)_.*\.sql$")
 _MIGRATIONS_DIR = Path(__file__).with_name("migrations")
+_SYNC_RUN_UPSERT_SQL = """
+    INSERT INTO sync_runs (
+        run_id, dataset_id, provider, operation, started_at, finished_at, status,
+        rows_fetched, rows_published, quality_status, error_code, error_message
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(run_id) DO UPDATE SET
+        dataset_id = sync_runs.dataset_id,
+        provider = COALESCE(sync_runs.provider, excluded.provider),
+        operation = sync_runs.operation,
+        started_at = CASE
+            WHEN sync_runs.started_at IS NULL THEN excluded.started_at
+            WHEN excluded.started_at IS NULL THEN sync_runs.started_at
+            WHEN excluded.started_at < sync_runs.started_at THEN excluded.started_at
+            ELSE sync_runs.started_at
+        END,
+        finished_at = CASE
+            WHEN sync_runs.status IN ('succeeded', 'degraded', 'failed')
+                THEN sync_runs.finished_at
+            WHEN sync_runs.status = 'running' AND excluded.status = 'pending'
+                THEN sync_runs.finished_at
+            ELSE excluded.finished_at
+        END,
+        status = CASE
+            WHEN sync_runs.status IN ('succeeded', 'degraded', 'failed')
+                THEN sync_runs.status
+            WHEN sync_runs.status = 'running' AND excluded.status = 'pending'
+                THEN sync_runs.status
+            ELSE excluded.status
+        END,
+        rows_fetched = CASE
+            WHEN sync_runs.status IN ('succeeded', 'degraded', 'failed')
+                OR (sync_runs.status = 'running' AND excluded.status = 'pending')
+                THEN sync_runs.rows_fetched
+            ELSE excluded.rows_fetched
+        END,
+        rows_published = CASE
+            WHEN sync_runs.status IN ('succeeded', 'degraded', 'failed')
+                OR (sync_runs.status = 'running' AND excluded.status = 'pending')
+                THEN sync_runs.rows_published
+            ELSE excluded.rows_published
+        END,
+        quality_status = CASE
+            WHEN sync_runs.status IN ('succeeded', 'degraded', 'failed')
+                OR (sync_runs.status = 'running' AND excluded.status = 'pending')
+                THEN sync_runs.quality_status
+            ELSE excluded.quality_status
+        END,
+        error_code = CASE
+            WHEN sync_runs.status IN ('succeeded', 'degraded', 'failed')
+                OR (sync_runs.status = 'running' AND excluded.status = 'pending')
+                THEN sync_runs.error_code
+            ELSE excluded.error_code
+        END,
+        error_message = CASE
+            WHEN sync_runs.status IN ('succeeded', 'degraded', 'failed')
+                OR (sync_runs.status = 'running' AND excluded.status = 'pending')
+                THEN sync_runs.error_message
+            ELSE excluded.error_message
+        END
+"""
 
 
 class CatalogControlDB:
@@ -137,27 +198,7 @@ class CatalogControlDB:
             run.error_message,
         )
         with self.transaction() as connection:
-            connection.execute(
-                """
-                INSERT INTO sync_runs (
-                    run_id, dataset_id, provider, operation, started_at, finished_at, status,
-                    rows_fetched, rows_published, quality_status, error_code, error_message
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(run_id) DO UPDATE SET
-                    dataset_id = excluded.dataset_id,
-                    provider = excluded.provider,
-                    operation = excluded.operation,
-                    started_at = excluded.started_at,
-                    finished_at = excluded.finished_at,
-                    status = excluded.status,
-                    rows_fetched = excluded.rows_fetched,
-                    rows_published = excluded.rows_published,
-                    quality_status = excluded.quality_status,
-                    error_code = excluded.error_code,
-                    error_message = excluded.error_message
-                """,
-                values,
-            )
+            connection.execute(_SYNC_RUN_UPSERT_SQL, values)
 
     def get_sync_run(self, run_id: str) -> SyncRun | None:
         row = self._read_one("SELECT * FROM sync_runs WHERE run_id = ?", (run_id,))
@@ -167,7 +208,8 @@ class CatalogControlDB:
         bounded_limit = min(max(limit, 1), 1000)
         if dataset_id is None:
             rows = self._read_all(
-                "SELECT * FROM sync_runs ORDER BY started_at DESC, run_id ASC LIMIT ?", (bounded_limit,)
+                "SELECT * FROM sync_runs ORDER BY started_at DESC, run_id ASC LIMIT ?",
+                (bounded_limit,),
             )
         else:
             rows = self._read_all(
@@ -223,7 +265,8 @@ class CatalogControlDB:
             rows = self._read_all("SELECT * FROM artifacts ORDER BY dataset_id, path")
         else:
             rows = self._read_all(
-                "SELECT * FROM artifacts WHERE dataset_id = ? ORDER BY dataset_id, path", (dataset_id,)
+                "SELECT * FROM artifacts WHERE dataset_id = ? ORDER BY dataset_id, path",
+                (dataset_id,),
             )
         return [self._artifact_from_row(row) for row in rows]
 
@@ -256,7 +299,8 @@ class CatalogControlDB:
 
     def get_source_health(self, provider: str, operation: str) -> SourceHealth | None:
         row = self._read_one(
-            "SELECT * FROM source_health WHERE provider = ? AND operation = ?", (provider, operation)
+            "SELECT * FROM source_health WHERE provider = ? AND operation = ?",
+            (provider, operation),
         )
         return self._source_health_from_row(row) if row is not None else None
 
@@ -302,24 +346,7 @@ class CatalogControlDB:
         with self.transaction() as connection:
             for state, run, artifacts in results:
                 connection.execute(
-                    """
-                    INSERT INTO sync_runs (
-                        run_id, dataset_id, provider, operation, started_at, finished_at, status,
-                        rows_fetched, rows_published, quality_status, error_code, error_message
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(run_id) DO UPDATE SET
-                        dataset_id = excluded.dataset_id,
-                        provider = excluded.provider,
-                        operation = excluded.operation,
-                        started_at = excluded.started_at,
-                        finished_at = excluded.finished_at,
-                        status = excluded.status,
-                        rows_fetched = excluded.rows_fetched,
-                        rows_published = excluded.rows_published,
-                        quality_status = excluded.quality_status,
-                        error_code = excluded.error_code,
-                        error_message = excluded.error_message
-                    """,
+                    _SYNC_RUN_UPSERT_SQL,
                     (
                         run.run_id,
                         run.dataset_id,
@@ -435,7 +462,9 @@ class CatalogControlDB:
         backup_dir = self.path.parent / "migration_backups"
         backup_dir.mkdir(exist_ok=True)
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-        backup_path = backup_dir / f"catalog-v{source_version}-to-v{target_version}-{timestamp}.sqlite3"
+        backup_path = (
+            backup_dir / f"catalog-v{source_version}-to-v{target_version}-{timestamp}.sqlite3"
+        )
         destination = sqlite3.connect(backup_path)
         try:
             source.backup(destination)

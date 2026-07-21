@@ -388,7 +388,9 @@ class DepthService:
             "fetched_at": pl.Float64,
         })
         ds = today.isoformat()
-        table = "depth5" if self._has_tickflow_depth() else "sealed_l1"
+        # The persisted shape is always the seven-column sealed-limit summary,
+        # even when TickFlow depth was the upstream source. It is not a five-level book.
+        table = "sealed_l1"
         out = self._repo.store.data_dir / table / f"date={ds}" / "part.parquet"
         out.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_parquet(df, out)
@@ -398,7 +400,7 @@ class DepthService:
             {
                 "date": ds,
                 "source": self._depth_source(),
-                "unit_version": "sealed_l1_v1" if table == "sealed_l1" else "depth5_v1",
+                "unit_version": "sealed_l1_v1",
                 "row_count": df.height,
                 "scope": "limit_stocks",
                 "quality": "sealed_snapshot",

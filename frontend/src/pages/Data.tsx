@@ -168,17 +168,9 @@ export function Data() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: QK.dataStatus, exact: true }),
-        queryClient.invalidateQueries({ queryKey: QK.dataCatalog, exact: true }),
-        queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(), exact: true }),
+        queryClient.invalidateQueries({ queryKey: QK.dataCatalog }),
         queryClient.invalidateQueries({ queryKey: QK.pipelineJobs, exact: true }),
       ])
-      if (selectedDatasetId) {
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: QK.dataCatalogDataset(selectedDatasetId), exact: true }),
-          queryClient.invalidateQueries({ queryKey: QK.dataCatalogSchema(selectedDatasetId), exact: true }),
-          queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(selectedDatasetId), exact: true }),
-        ])
-      }
       setShowClearConfirm(false)
     },
   })
@@ -242,10 +234,18 @@ export function Data() {
   const syncIndexDaily = useMutation({
     mutationFn: () => api.syncIndexDaily(indexSyncDays),
     onSuccess: async () => {
+      const affectedCatalogKeys = ['index_instruments', 'index_daily', 'index_enriched'].flatMap(
+        (datasetId) => [
+          QK.dataCatalogDataset(datasetId),
+          QK.dataCatalogSchema(datasetId),
+          QK.dataCatalogRuns(datasetId),
+        ],
+      )
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: QK.dataStatus, exact: true }),
         queryClient.invalidateQueries({ queryKey: QK.dataCatalog, exact: true }),
         queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(), exact: true }),
+        ...affectedCatalogKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey, exact: true })),
         queryClient.invalidateQueries({ queryKey: QK.indexList, exact: true }),
         queryClient.invalidateQueries({ queryKey: QK.indexQuotes, exact: true }),
       ])
@@ -281,13 +281,11 @@ export function Data() {
   useEffect(() => {
     if (!terminalJobStatus || !['succeeded', 'degraded', 'failed'].includes(terminalJobStatus)) return undefined
     void queryClient.invalidateQueries({ queryKey: QK.dataStatus, exact: true })
-    void queryClient.invalidateQueries({ queryKey: QK.dataCatalog, exact: true })
-    void queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(), exact: true })
+    void queryClient.invalidateQueries({ queryKey: QK.dataCatalog })
     void queryClient.invalidateQueries({ queryKey: QK.pipelineJobs, exact: true })
-    if (selectedDatasetId) void queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(selectedDatasetId), exact: true })
     const timer = window.setTimeout(() => setActiveJobId(null), 5_000)
     return () => window.clearTimeout(timer)
-  }, [queryClient, selectedDatasetId, terminalJobStatus])
+  }, [queryClient, terminalJobStatus])
 
   useEffect(() => {
     if (job.isError && /404/.test(String((job.error as Error)?.message ?? ''))) setActiveJobId(null)

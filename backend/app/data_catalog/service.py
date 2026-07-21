@@ -1,6 +1,8 @@
 """SQLite-backed catalog composition and explicit local rescans."""
+
 from __future__ import annotations
 
+import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -74,6 +76,13 @@ _LEGACY_STORAGE_DATASETS = {
 }
 
 
+class CatalogRescanInProgress(RuntimeError):  # noqa: N818
+    """Raised when a second local rescan would overlap the active snapshot."""
+
+    def __init__(self) -> None:
+        super().__init__("catalog rescan already in progress")
+
+
 class CatalogService:
     def __init__(
         self,
@@ -103,9 +112,29 @@ class CatalogService:
             )
         )
         self.entitlement_resolver = entitlement_resolver
+        self._rescan_lock = threading.Lock()
         self.control_db.initialize()
 
     def rescan(self, dataset_id: str | None = None) -> CatalogResponse:
+        if not self._rescan_lock.acquire(blocking=False):
+            raise CatalogRescanInProgress()
+        try:
+            return self._rescan_locked(dataset_id)
+        finally:
+            self._rescan_lock.release()
+
+    def refresh_after_mutation(self, dataset_id: str | None = None) -> CatalogResponse:
+        """Serialize a writer-triggered refresh behind any explicit scan.
+
+        Mutations must not silently lose their refresh merely because a manual
+        scan was already in flight.  The public rescan endpoint remains
+        non-blocking/409; writer completion instead waits and publishes the
+        post-mutation snapshot before returning.
+        """
+        with self._rescan_lock:
+            return self._rescan_locked(dataset_id)
+
+    def _rescan_locked(self, dataset_id: str | None = None) -> CatalogResponse:
         if dataset_id is not None and dataset_id not in self._by_id:
             raise KeyError(f"unknown dataset_id: {dataset_id}")
         dataset_ids = [dataset_id] if dataset_id is not None else list(self._by_id)
@@ -158,12 +187,14 @@ class CatalogService:
                         error_message=message,
                     )
                 )
+            self.control_db.set_meta("catalog_stale", {"value": True})
             # A failed local scan must never discard the prior committed snapshot.
             # Make the retained response explicit so callers do not mistake it for a fresh scan.
             return self.list_catalog().model_copy(update={"stale": True})
 
         finished_at = _utc_now()
         persisted = []
+        retained_failure = False
         for scanned_dataset_id, result in scan_results.items():
             run_status = _run_status(result)
             run = SyncRun(
@@ -184,8 +215,29 @@ class CatalogService:
                     else None
                 ),
             )
+            previous = self.control_db.get_dataset_state(scanned_dataset_id)
+            if (
+                run_status == "failed"
+                and previous is not None
+                and previous.quality_status
+                in {
+                    "healthy",
+                    "degraded",
+                }
+            ):
+                self.control_db.upsert_sync_run(run)
+                retained_failure = True
+                continue
             persisted.append((result.state, run, result.artifacts))
-        self.control_db.commit_scan_results(persisted, meta_updates)
+        any_failed = retained_failure or any(
+            _run_status(result) == "failed" for result in scan_results.values()
+        )
+        meta_updates["catalog_stale"] = {"value": any_failed}
+        if retained_failure and not persisted:
+            # Preserve the previous successful state/artifact/storage snapshot.
+            self.control_db.set_meta("catalog_stale", {"value": True})
+        else:
+            self.control_db.commit_scan_results(persisted, meta_updates)
         return self.list_catalog()
 
     def list_catalog(self) -> CatalogResponse:
@@ -193,7 +245,9 @@ class CatalogService:
         refreshed_meta = self.control_db.get_meta("catalog_refreshed_at")
         refreshed_at = refreshed_meta.get("value") if refreshed_meta else None
         entries = [
-            self._catalog_entry(definition, states.get(definition.descriptor.dataset_id), refreshed_at)
+            self._catalog_entry(
+                definition, states.get(definition.descriptor.dataset_id), refreshed_at
+            )
             for definition in self.definitions
         ]
         storage_meta = self.control_db.get_meta("storage_breakdown")
@@ -202,11 +256,12 @@ class CatalogService:
             if storage_meta is not None
             else StorageBreakdown()
         )
+        stale_meta = self.control_db.get_meta("catalog_stale")
         return CatalogResponse(
             datasets=entries,
             storage=storage,
             refreshed_at=refreshed_at,
-            stale=not bool(states),
+            stale=not bool(states) or bool((stale_meta or {}).get("value")),
         )
 
     def get_dataset(self, dataset_id: str) -> DatasetCatalogEntry | None:
@@ -232,9 +287,7 @@ class CatalogService:
             "daily": self._table_stats(states.get("stock_daily")),
             "enriched": self._table_stats(states.get("stock_enriched"), enriched=True),
             "index_daily": self._table_stats(states.get("index_daily")),
-            "index_enriched": self._table_stats(
-                states.get("index_enriched"), enriched=True
-            ),
+            "index_enriched": self._table_stats(states.get("index_enriched"), enriched=True),
             "index_instruments": self._instrument_stats(states.get("index_instruments")),
             "etf_daily": self._table_stats(states.get("etf_daily")),
             "etf_enriched": self._table_stats(states.get("etf_enriched"), enriched=True),
@@ -268,15 +321,9 @@ class CatalogService:
         coverage = [
             MarketCoverage.model_validate(item) for item in state.payload.get("coverage", [])
         ]
-        lineage = [
-            LineageSummary.model_validate(item) for item in state.payload.get("lineage", [])
-        ]
-        provider, provider_supported, entitled = self._provider_resolution(
-            definition, lineage
-        )
-        local_materialized = bool(
-            state.managed_bytes or int(state.payload.get("file_count", 0))
-        )
+        lineage = [LineageSummary.model_validate(item) for item in state.payload.get("lineage", [])]
+        provider, provider_supported, entitled = self._provider_resolution(definition, lineage)
+        local_materialized = bool(state.managed_bytes or int(state.payload.get("file_count", 0)))
         serving_ready = local_materialized and state.quality_status in {"healthy", "degraded"}
         reason_code: str | None
         if serving_ready:
@@ -364,16 +411,13 @@ class CatalogService:
         return {
             item.market: item.symbol_count
             for item in (
-                MarketCoverage.model_validate(value)
-                for value in state.payload.get("coverage", [])
+                MarketCoverage.model_validate(value) for value in state.payload.get("coverage", [])
             )
         }
 
     def _rebuild_storage(self, dataset_storage: Mapping[str, Any]) -> StorageBreakdown:
         previous = self.control_db.get_meta("storage_breakdown")
-        previous_categories = {
-            item["key"]: item for item in (previous or {}).get("categories", [])
-        }
+        previous_categories = {item["key"]: item for item in (previous or {}).get("categories", [])}
         category_values: dict[str, dict[str, int]] = {
             key: {"bytes": 0, "files": 0}
             for key in _CATEGORY_TITLES
@@ -483,6 +527,8 @@ class CatalogService:
 
 def _run_status(result: DatasetScanResult) -> str:
     if result.state.quality_status == "failed":
+        return "failed"
+    if result.state.quality_status == "unknown" and result.state.payload.get("scan_errors"):
         return "failed"
     if result.state.quality_status == "degraded":
         return "degraded"

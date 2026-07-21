@@ -76,9 +76,7 @@ def test_initialize_creates_contract_schema_pragmas_and_no_fresh_backup(tmp_path
         assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
         tables = {
             row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
     assert {"dataset_state", "sync_runs", "artifacts", "source_health", "catalog_meta"} <= tables
 
@@ -115,7 +113,59 @@ def test_sync_runs_preserve_lifecycle_details_and_list_newest_first(tmp_path: Pa
     assert db.get_sync_run("run-newer").error_message == "保留错误细节"  # type: ignore[union-attr]
 
 
-def test_replace_artifacts_is_atomic_and_replaces_the_target_dataset_snapshot(tmp_path: Path) -> None:
+def test_sync_run_state_machine_is_monotonic_and_terminal_absorbs_late_callbacks(
+    tmp_path: Path,
+) -> None:
+    db = CatalogControlDB(tmp_path)
+    pending = make_run("run-race").model_copy(
+        update={
+            "status": "pending",
+            "started_at": None,
+            "finished_at": None,
+            "quality_status": "unknown",
+            "error_code": None,
+            "error_message": None,
+        }
+    )
+    running = pending.model_copy(update={"status": "running", "started_at": "2026-07-21T09:00:00Z"})
+    terminal = running.model_copy(
+        update={
+            "status": "succeeded",
+            "finished_at": "2026-07-21T09:01:00Z",
+            "quality_status": "healthy",
+            "rows_published": 12,
+        }
+    )
+    late_running = running.model_copy(
+        update={"started_at": "2026-07-21T09:00:30Z", "rows_published": 999}
+    )
+    late_failed = terminal.model_copy(
+        update={
+            "status": "failed",
+            "finished_at": "2026-07-21T09:02:00Z",
+            "quality_status": "failed",
+            "error_code": "late",
+            "error_message": "late terminal",
+        }
+    )
+
+    for callback in (pending, running, terminal, late_running, pending, late_failed):
+        db.upsert_sync_run(callback)
+
+    persisted = db.get_sync_run("run-race")
+    assert persisted is not None
+    assert persisted.status == "succeeded"
+    assert persisted.started_at == "2026-07-21T09:00:00Z"
+    assert persisted.finished_at == "2026-07-21T09:01:00Z"
+    assert persisted.rows_published == 12
+    assert persisted.quality_status == "healthy"
+    assert persisted.error_code is None
+    assert persisted.error_message is None
+
+
+def test_replace_artifacts_is_atomic_and_replaces_the_target_dataset_snapshot(
+    tmp_path: Path,
+) -> None:
     db = CatalogControlDB(tmp_path)
     db.upsert_sync_run(make_run())
     db.upsert_sync_run(make_run("run-2"))
@@ -127,13 +177,19 @@ def test_replace_artifacts_is_atomic_and_replaces_the_target_dataset_snapshot(tm
         ("replacement.parquet", "run-1"),
     ]
     with pytest.raises(ValueError, match="dataset_id"):
-        db.replace_artifacts("stock_daily", "run-1", [make_artifact("bad.parquet").model_copy(update={"dataset_id": "etf_daily"})])
+        db.replace_artifacts(
+            "stock_daily",
+            "run-1",
+            [make_artifact("bad.parquet").model_copy(update={"dataset_id": "etf_daily"})],
+        )
     assert [item.path for item in db.list_artifacts("stock_daily")] == ["replacement.parquet"]
 
 
 def test_source_health_and_meta_are_deterministic_and_ordered(tmp_path: Path) -> None:
     db = CatalogControlDB(tmp_path)
-    db.upsert_source_health(SourceHealth(provider="zeta", operation="daily", consecutive_failures=1))
+    db.upsert_source_health(
+        SourceHealth(provider="zeta", operation="daily", consecutive_failures=1)
+    )
     health = SourceHealth(
         provider="alpha",
         operation="daily",
@@ -199,7 +255,8 @@ def test_wal_reader_completes_while_writer_transaction_is_open(tmp_path: Path) -
         try:
             with db.transaction() as connection:
                 connection.execute(
-                    "UPDATE dataset_state SET row_count = ? WHERE dataset_id = ?", (99, "stock_daily")
+                    "UPDATE dataset_state SET row_count = ? WHERE dataset_id = ?",
+                    (99, "stock_daily"),
                 )
                 entered_write.set()
                 assert release_write.wait(timeout=2)

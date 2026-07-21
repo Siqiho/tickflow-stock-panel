@@ -17,6 +17,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/index", tags=["index"])
 
 
+def _refresh_catalog(request: Request, *dataset_ids: str) -> None:
+    """Best-effort writer refresh without changing the legacy sync response."""
+    service = getattr(request.app.state, "catalog_service", None)
+    if service is None:
+        return
+    for dataset_id in dataset_ids:
+        try:
+            service.refresh_after_mutation(dataset_id)
+        except Exception:
+            logger.exception("catalog refresh failed after index sync: dataset_id=%s", dataset_id)
+
+
 def _index_info(repo, symbol: str) -> dict:
     df = repo.get_index_instruments()
     if df.is_empty() or "symbol" not in df.columns:
@@ -129,6 +141,7 @@ def sync_index_instruments(request: Request):
     """同步 CN_Index 指数标的列表。"""
     repo = request.app.state.repo
     count = index_sync.sync_index_instruments(repo)
+    _refresh_catalog(request, "index_instruments")
     return {"status": "ok", "count": count}
 
 
@@ -146,4 +159,5 @@ def sync_index_daily(
     start = end - timedelta(days=days)
     count = index_sync.sync_index_instruments(repo)
     rows = index_sync.sync_and_persist_index_daily(repo, capset, start_date=start, end_date=end)
+    _refresh_catalog(request, "index_instruments", "index_daily", "index_enriched")
     return {"status": "ok", "index_count": count, "rows_written": rows}

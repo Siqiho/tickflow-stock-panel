@@ -72,6 +72,12 @@ function expectUnselectedCatalogQueriesFresh(
   })
 }
 
+function expectUnselectedCatalogQueriesRefetched(
+  queryFns: ReturnType<typeof seedUnselectedCatalogQueries>,
+) {
+  queryFns.forEach((queryFn) => expect(queryFn).toHaveBeenCalled())
+}
+
 function UnselectedCatalogProbe({ queryFns }: { queryFns: ReturnType<typeof seedUnselectedCatalogQueries> }) {
   useQuery({ queryKey: unselectedCatalogKeys[0], queryFn: queryFns[0] })
   useQuery({ queryKey: unselectedCatalogKeys[1], queryFn: queryFns[1] })
@@ -176,7 +182,7 @@ describe('Data workbench integration', () => {
     expect(invalidate.mock.calls.every(([filters]) => Boolean(filters && 'queryKey' in filters))).toBe(true)
   })
 
-  it('invalidates only explicit workbench keys when a pipeline reaches a terminal state', async () => {
+  it('invalidates the full catalog prefix when a pipeline reaches a terminal state', async () => {
     const client = createClient()
     const unselectedQueryFns = seedUnselectedCatalogQueries(client)
     client.setQueryData(QK.pipelineJobs, { active_id: 'job-1', jobs: [] })
@@ -208,11 +214,10 @@ describe('Data workbench integration', () => {
       const invalidatedKeys = invalidate.mock.calls.map(([filters]) => filters?.queryKey)
       expect(invalidatedKeys).toContainEqual(QK.dataStatus)
       expect(invalidatedKeys).toContainEqual(QK.dataCatalog)
-      expect(invalidatedKeys).toContainEqual(QK.dataCatalogRuns())
       expect(invalidatedKeys).toContainEqual(QK.pipelineJobs)
     })
     expect(invalidate.mock.calls.every(([filters]) => Boolean(filters && 'queryKey' in filters))).toBe(true)
-    expectUnselectedCatalogQueriesFresh(client, unselectedQueryFns)
+    await waitFor(() => expectUnselectedCatalogQueriesRefetched(unselectedQueryFns))
   })
 
   it('normalizes 36 months to one year before calculating index sync days', async () => {
@@ -279,6 +284,7 @@ describe('Data workbench integration', () => {
         trading_days: 1,
       },
     })
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
     renderData(client, unselectedQueryFns)
 
     fireEvent.click(await screen.findByRole('button', { name: '指数手动获取' }))
@@ -286,9 +292,15 @@ describe('Data workbench integration', () => {
 
     await waitFor(() => expect(api.syncIndexDaily).toHaveBeenCalledTimes(1))
     await waitFor(() => expectUnselectedCatalogQueriesFresh(client, unselectedQueryFns))
+    const invalidatedKeys = invalidate.mock.calls.map(([filters]) => filters?.queryKey)
+    for (const datasetId of ['index_instruments', 'index_daily', 'index_enriched']) {
+      expect(invalidatedKeys).toContainEqual(QK.dataCatalogDataset(datasetId))
+      expect(invalidatedKeys).toContainEqual(QK.dataCatalogSchema(datasetId))
+      expect(invalidatedKeys).toContainEqual(QK.dataCatalogRuns(datasetId))
+    }
   })
 
-  it('keeps unrelated catalog children fresh after destructive clear', async () => {
+  it('invalidates the full catalog prefix after destructive clear', async () => {
     const client = createClient()
     const unselectedQueryFns = seedUnselectedCatalogQueries(client)
     renderData(client, unselectedQueryFns)
@@ -297,7 +309,7 @@ describe('Data workbench integration', () => {
     fireEvent.click(screen.getAllByRole('button', { name: '清除数据' }).at(-1)!)
 
     await waitFor(() => expect(api.dataClear).toHaveBeenCalledTimes(1))
-    await waitFor(() => expectUnselectedCatalogQueriesFresh(client, unselectedQueryFns))
+    await waitFor(() => expectUnselectedCatalogQueriesRefetched(unselectedQueryFns))
   })
 
   it('keeps maintenance and legacy history usable when catalog and run queries fail', async () => {
