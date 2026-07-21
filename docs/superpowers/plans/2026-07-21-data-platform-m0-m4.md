@@ -291,6 +291,41 @@ Definitions must contain the current canonical columns relevant to each dataset.
 - Dataset state and source health use deterministic upserts. Sync runs preserve start/terminal timestamps and error details. Artifact replacement for one dataset/run is atomic.
 - Connections are short-lived and safe for FastAPI threadpool use; the class must not share one mutable cursor across threads.
 
+**Exact persistence contract:**
+
+- `dataset_state`: primary key `dataset_id`; all `DatasetState` fields; `payload` is stored as deterministic JSON in `payload_json`; counters/bytes have SQL `CHECK >= 0`; quality status is constrained to the model enum.
+- `sync_runs`: primary key `run_id`; all `SyncRun` fields; counters have `CHECK >= 0`; run and quality status values are constrained to their model enums.
+- `artifacts`: primary key `(dataset_id, path)`; all `ArtifactRecord` fields; non-negative row/byte checks; `run_id` references `sync_runs(run_id)` with delete cascade.
+- `source_health`: primary key `(provider, operation)`; all `SourceHealth` fields; `consecutive_failures CHECK >= 0`.
+- Add a small `catalog_meta(key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL)` table for cached `StorageBreakdown`, catalog refresh time, and future control-plane metadata. It stores no market rows.
+- Add indexes for `sync_runs(dataset_id, started_at DESC)` and `artifacts(dataset_id)`.
+
+`CatalogControlDB` exposes these stable methods for later tasks:
+
+```python
+initialize() -> None
+transaction() -> ContextManager[sqlite3.Connection]
+has_dataset_states() -> bool
+upsert_dataset_state(state: DatasetState) -> None
+get_dataset_state(dataset_id: str) -> DatasetState | None
+list_dataset_states() -> list[DatasetState]
+delete_dataset_state(dataset_id: str) -> None
+upsert_sync_run(run: SyncRun) -> None
+get_sync_run(run_id: str) -> SyncRun | None
+list_sync_runs(dataset_id: str | None = None, limit: int = 100) -> list[SyncRun]
+replace_artifacts(dataset_id: str, run_id: str, artifacts: Sequence[ArtifactRecord]) -> None
+list_artifacts(dataset_id: str | None = None) -> list[ArtifactRecord]
+upsert_source_health(health: SourceHealth) -> None
+get_source_health(provider: str, operation: str) -> SourceHealth | None
+list_source_health() -> list[SourceHealth]
+set_meta(key: str, value: dict[str, Any]) -> None
+get_meta(key: str) -> dict[str, Any] | None
+```
+
+Constructing the object does not mutate disk; `initialize()` creates/migrates. Methods may call `initialize()` defensively but must remain idempotent. JSON is UTF-8, `ensure_ascii=False`, `sort_keys=True`. Listing is deterministic: dataset/artifact/source lists by their keys, runs newest-first and capped to `1..1000`.
+
+Migration files are discovered by their numeric prefix and applied one by one. Before each pending migration of an existing non-empty database, create a consistent SQLite backup under `<data_dir>/control/migration_backups/` named with source/target versions and a UTC timestamp. Use SQLite's backup mechanism so WAL state is included; do not hard-code the Mac user path. If a migration fails, its transaction and `user_version` roll back, and the error propagates.
+
 - [ ] Write failing tests for schema/migration, PRAGMAs, state upsert/read, run lifecycle, artifacts, source health, pre-migration backup, rollback on invalid writes, and concurrent readers during a writer transaction.
 - [ ] Verify RED before implementation.
 - [ ] Implement migration loading, connection/transaction helpers, and repositories.
