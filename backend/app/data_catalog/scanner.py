@@ -88,6 +88,7 @@ class CatalogScanner:
         definitions: tuple[DatasetDefinition, ...] = DATASET_DEFINITIONS,
     ) -> None:
         self.data_dir = Path(data_dir)
+        self._resolved_data_dir = self.data_dir.resolve(strict=False)
         self.definitions = tuple(definitions)
         self._by_id = {
             definition.descriptor.dataset_id: definition for definition in self.definitions
@@ -184,11 +185,20 @@ class CatalogScanner:
         )
 
     def _walk_snapshot(self, root: Path) -> tuple[_FileSnapshot, ...]:
+        if not self._is_safe_directory(root):
+            return ()
         files: list[_FileSnapshot] = []
         for directory, dirnames, filenames in os.walk(root, followlinks=False):
-            dirnames.sort()
-            filenames.sort()
             directory_path = Path(directory)
+            if not self._is_safe_directory(directory_path):
+                dirnames.clear()
+                continue
+            dirnames[:] = sorted(
+                dirname
+                for dirname in dirnames
+                if self._is_safe_directory(directory_path / dirname)
+            )
+            filenames.sort()
             for filename in filenames:
                 path = directory_path / filename
                 try:
@@ -196,6 +206,8 @@ class CatalogScanner:
                 except OSError:
                     continue
                 if not stat.S_ISREG(file_stat.st_mode):
+                    continue
+                if not self._resolves_within_data_dir(path):
                     continue
                 try:
                     relative = PurePosixPath(path.relative_to(self.data_dir).as_posix())
@@ -212,6 +224,26 @@ class CatalogScanner:
                     )
                 )
         return tuple(files)
+
+    def _is_safe_directory(self, path: Path) -> bool:
+        try:
+            mode = path.lstat().st_mode
+        except OSError:
+            return False
+        return (
+            stat.S_ISDIR(mode)
+            and not stat.S_ISLNK(mode)
+            and self._resolves_within_data_dir(path)
+        )
+
+    def _resolves_within_data_dir(self, path: Path) -> bool:
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError:
+            return False
+        return resolved == self._resolved_data_dir or resolved.is_relative_to(
+            self._resolved_data_dir
+        )
 
     def _owner_for_file(
         self,

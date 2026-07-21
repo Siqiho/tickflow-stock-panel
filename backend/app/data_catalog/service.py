@@ -226,8 +226,6 @@ class CatalogService:
 
     def compatibility_status(self) -> dict[str, Any]:
         states = {state.dataset_id: state for state in self.control_db.list_dataset_states()}
-        refreshed_meta = self.control_db.get_meta("catalog_refreshed_at")
-        checked_at = refreshed_meta.get("value") if refreshed_meta else _utc_now()
         return {
             "daily": self._table_stats(states.get("stock_daily")),
             "enriched": self._table_stats(states.get("stock_enriched"), enriched=True),
@@ -248,7 +246,7 @@ class CatalogService:
             "next_instruments_run": None,
             "last_pipeline_run": None,
             "last_instruments_run": None,
-            "checked_at": checked_at,
+            "checked_at": _utc_now(),
         }
 
     def _catalog_entry(

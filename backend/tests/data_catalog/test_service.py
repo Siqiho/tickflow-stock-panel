@@ -453,3 +453,22 @@ def test_compatibility_status_preserves_exact_legacy_keys_and_all_financial_tabl
     }
     assert status["next_pipeline_run"] is None
     assert status["next_instruments_run"] is None
+
+
+def test_compatibility_checked_at_uses_fresh_clock_without_changing_catalog_freshness(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db = CatalogControlDB(tmp_path)
+    db.set_meta("catalog_refreshed_at", {"value": "2026-07-21T08:00:00Z"})
+    service = CatalogService(tmp_path, db, manifests=())
+    import app.data_catalog.service as service_module
+
+    clock = iter(("2026-07-21T09:00:00Z", "2026-07-21T09:00:01Z"))
+    monkeypatch.setattr(service_module, "_utc_now", lambda: next(clock))
+
+    first = service.compatibility_status()
+    second = service.compatibility_status()
+
+    assert first["checked_at"] == "2026-07-21T09:00:00Z"
+    assert second["checked_at"] == "2026-07-21T09:00:01Z"
+    assert service.list_catalog().refreshed_at == "2026-07-21T08:00:00Z"

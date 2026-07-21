@@ -43,7 +43,7 @@ def _instrument(symbol: str, name: str, asset_type: str) -> dict:
 
 
 def test_full_scan_is_one_walk_exact_bytes_and_assigns_every_file_once(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, tmp_path_factory, monkeypatch
 ) -> None:
     _write_parquet(tmp_path / "instruments" / "part.parquet", [_instrument("600000.SH", "浦发", "stock")])
     _write_parquet(tmp_path / "kline_daily" / "date=2026-07-21" / "part.parquet", [_bar("600000.SH")])
@@ -54,6 +54,9 @@ def test_full_scan_is_one_walk_exact_bytes_and_assigns_every_file_once(
     (tmp_path / "misc" / "unknown.bin").write_bytes(b"other")
     symlink = tmp_path / "misc" / "link.bin"
     symlink.symlink_to(tmp_path / "misc" / "unknown.bin")
+    outside = tmp_path_factory.mktemp("catalog-full-outside")
+    (outside / "escaped.bin").write_bytes(b"must-not-be-scanned")
+    (tmp_path / "misc" / "outside-dir").symlink_to(outside, target_is_directory=True)
 
     import app.data_catalog.scanner as scanner_module
 
@@ -109,6 +112,40 @@ def test_full_scan_is_one_walk_exact_bytes_and_assigns_every_file_once(
         "control",
         "operational_other",
     }
+
+
+def test_dataset_and_lineage_symlink_roots_never_escape_data_dir(
+    tmp_path: Path, tmp_path_factory
+) -> None:
+    outside_data = tmp_path_factory.mktemp("catalog-dataset-outside")
+    _write_parquet(outside_data / "part.parquet", [_bar("600000.SH")])
+    (tmp_path / "kline_daily").symlink_to(outside_data, target_is_directory=True)
+
+    outside_lineage = tmp_path_factory.mktemp("catalog-lineage-outside")
+    (outside_lineage / "failed.json").write_text(
+        json.dumps(
+            {
+                "source": "outside",
+                "unit_version": "cn_market_v1",
+                "quality": "failed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lineage").mkdir()
+    (tmp_path / "lineage" / "stock_daily").symlink_to(
+        outside_lineage, target_is_directory=True
+    )
+
+    result = CatalogScanner(tmp_path).scan_dataset("stock_daily", "run-stock")
+
+    assert result.state.row_count == 0
+    assert result.state.managed_bytes == 0
+    assert result.state.payload["file_count"] == 0
+    assert result.state.payload["scan_errors"] == []
+    assert result.state.quality_status == "unknown"
+    assert result.artifacts == ()
+    assert result.lineage == ()
 
 
 def test_full_scan_separates_stock_index_etf_and_all_five_financial_tables(tmp_path: Path) -> None:
@@ -283,10 +320,15 @@ def test_corrupt_parquet_fails_only_its_dataset_with_bounded_deterministic_error
 
 
 def test_scan_dataset_only_walks_owned_root_and_accepts_cached_expected_counts(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, tmp_path_factory, monkeypatch
 ) -> None:
     _write_parquet(tmp_path / "kline_daily" / "part.parquet", [_bar("600000.SH")])
     _write_parquet(tmp_path / "kline_index_daily" / "part.parquet", [_bar("000001.SH")])
+    outside = tmp_path_factory.mktemp("catalog-nested-outside")
+    _write_parquet(outside / "escaped.parquet", [_bar("000001.SZ")])
+    (tmp_path / "kline_daily" / "outside-dir").symlink_to(
+        outside, target_is_directory=True
+    )
 
     import app.data_catalog.scanner as scanner_module
 
@@ -309,6 +351,7 @@ def test_scan_dataset_only_walks_owned_root_and_accepts_cached_expected_counts(
 
     assert walked == [tmp_path / "kline_daily"]
     assert result.state.row_count == 1
+    assert result.state.payload["file_count"] == 1
     assert result.state.expected_symbol_count == 9
     assert {item.market: item.expected_symbol_count for item in result.coverage} == {
         "SH": 2,
