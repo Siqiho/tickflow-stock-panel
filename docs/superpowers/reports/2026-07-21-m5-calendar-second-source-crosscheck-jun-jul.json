@@ -1,0 +1,166 @@
+{
+  "kind": "trading_calendar_second_source_crosscheck",
+  "started_at": "2026-07-21T21:40:54.935295+08:00",
+  "window": [
+    "2026-06-01",
+    "2026-07-21"
+  ],
+  "lab_dir": "/tmp/one-trading-m5-cal-xcheck-09mEbX/window_jun_jul_2026",
+  "sources": {
+    "szse_live_error": "SZSE fetch failed for 2026-06: Server disconnected without sending a response.",
+    "szse": {
+      "producer": "szse_month_list",
+      "mode": "cache_parquet",
+      "path": "/tmp/one-trading-m5-ref-lab-dWIXGI/reference/trading_calendar/calendar.parquet",
+      "rows": 153
+    },
+    "szse_publish": {
+      "ok": true,
+      "dataset_id": "trading_calendar",
+      "run_id": "xcheck-szse-2026-07-21",
+      "published_path": "/tmp/one-trading-m5-cal-xcheck-09mEbX/window_jun_jul_2026/reference/trading_calendar/calendar.parquet",
+      "row_count": 153,
+      "quality_report_path": "/tmp/one-trading-m5-cal-xcheck-09mEbX/window_jun_jul_2026/.staging/trading_calendar/xcheck-szse-2026-07-21/quality_report.json",
+      "lineage_path": "/tmp/one-trading-m5-cal-xcheck-09mEbX/window_jun_jul_2026/lineage/trading_calendar/date=2026-07-21/xcheck-szse-2026-07-21.json",
+      "kept_prior": false,
+      "error": null,
+      "checks": [
+        {
+          "code": "not_empty",
+          "passed": true,
+          "detail": "153 rows"
+        },
+        {
+          "code": "required_columns",
+          "passed": true,
+          "detail": "ok"
+        },
+        {
+          "code": "pk_unique",
+          "passed": true,
+          "detail": "unique=153 rows=153"
+        },
+        {
+          "code": "enum:exchange",
+          "passed": true,
+          "detail": "ok"
+        },
+        {
+          "code": "enum:session_type",
+          "passed": true,
+          "detail": "ok"
+        },
+        {
+          "code": "calendar_session_consistency",
+          "passed": true,
+          "detail": "ok"
+        }
+      ],
+      "staging_dir": "/tmp/one-trading-m5-cal-xcheck-09mEbX/window_jun_jul_2026/.staging/trading_calendar/xcheck-szse-2026-07-21"
+    },
+    "tencent_sh": {
+      "producer": "tencent_index_daily_open_days",
+      "producer_kind": "secondary_open_day_series",
+      "not_official_sse_api": true,
+      "code": "sh000001",
+      "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+      "window": [
+        "2026-06-01",
+        "2026-07-21"
+      ],
+      "open_day_count": 36,
+      "first": "2026-06-01",
+      "last": "2026-07-21",
+      "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+      "fetched_at": "2026-07-21T21:41:05.551711+08:00"
+    },
+    "tencent_sz": {
+      "producer": "tencent_index_daily_open_days",
+      "producer_kind": "secondary_open_day_series",
+      "not_official_sse_api": true,
+      "code": "sz399001",
+      "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+      "window": [
+        "2026-06-01",
+        "2026-07-21"
+      ],
+      "open_day_count": 36,
+      "first": "2026-06-01",
+      "last": "2026-07-21",
+      "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+      "fetched_at": "2026-07-21T21:41:07.086690+08:00"
+    },
+    "sse_official_api": {
+      "status": "unavailable_in_this_environment",
+      "attempts": [
+        "https://query.sse.com.cn/commonSoaQuery.do?sqlId=COMMON_SSE_ZQPZ_GLRLB",
+        "https://www.sse.com.cn/services/tradingservice/calendar/"
+      ],
+      "note": "No stable official SSE machine-readable calendar endpoint succeeded in Lab probes (404 / SOA null / SSL failures). Secondary check uses Tencent SH composite open days as a proxy, clearly labeled."
+    }
+  },
+  "comparisons": {
+    "tencent_sh_vs_tencent_sz": {
+      "left": "tencent_sh",
+      "right": "tencent_sz",
+      "span": [
+        "2026-06-01",
+        "2026-07-21"
+      ],
+      "left_count": 36,
+      "right_count": 36,
+      "intersection": 36,
+      "only_left_count": 0,
+      "only_right_count": 0,
+      "only_left": [],
+      "only_right": [],
+      "equal": true
+    },
+    "szse_sh_vs_tencent_sh": {
+      "left": "szse_sh_open",
+      "right": "tencent_sh",
+      "span": [
+        "2026-06-01",
+        "2026-07-21"
+      ],
+      "left_count": 36,
+      "right_count": 36,
+      "intersection": 36,
+      "only_left_count": 0,
+      "only_right_count": 0,
+      "only_left": [],
+      "only_right": [],
+      "equal": true
+    },
+    "szse_weekend_open_rows": 0
+  },
+  "network": {
+    "szse_live": "error: SZSE fetch failed for 2026-06: Server disconnected without sending a response.",
+    "szse_cache": "ok",
+    "tencent_sh": "ok",
+    "tencent_sz": "ok"
+  },
+  "admission": {
+    "trading_calendar": {
+      "status": "LAB_PASS_CANDIDATE_SECOND_SOURCE_OK",
+      "discuss_standalone_production_publish": "DISCUSS_ONLY",
+      "reason": "SZSE calendar open days match Tencent SH open-day series on the compared span; Tencent SH/SZ series also match. Official SSE API still unavailable; production publish remains gated on rights + operator approval.",
+      "blockers_for_production": [
+        "exchange_data_redistribution_rights_not_formally_signed_off",
+        "official_sse_machine_readable_calendar_still_missing",
+        "bj_special_session_identity_not_independently_proven",
+        "operator_explicit_approval_required_before_writing_production_data",
+        "this_run_used_szse_cache_because_live_endpoint_failed"
+      ]
+    }
+  },
+  "ok": true,
+  "as_of": "2026-07-21",
+  "production_publish": {
+    "status": "NO_GO",
+    "dataset": "trading_calendar",
+    "may_discuss_standalone_publish": true,
+    "reason": "Even with second-source agreement, formal production write is blocked until rights sign-off and explicit user approval. Listing/status datasets remain out of scope."
+  },
+  "finished_at": "2026-07-21T21:41:07.087184+08:00"
+}

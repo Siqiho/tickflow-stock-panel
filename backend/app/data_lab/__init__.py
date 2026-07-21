@@ -13,16 +13,22 @@ from .schemas_reference import (
     TRADING_CALENDAR_SCHEMA,
     ReferenceDatasetSchema,
 )
+from .sources.calendar_crosscheck import (
+    CalendarCrosscheckConfig,
+    run_calendar_second_source_crosscheck,
+)
 
 __all__ = [
     "INSTRUMENT_STATUS_HISTORY_SCHEMA",
     "LISTING_DELISTING_EVENTS_SCHEMA",
     "REFERENCE_DATASETS",
     "TRADING_CALENDAR_SCHEMA",
+    "CalendarCrosscheckConfig",
     "LabRunConfig",
     "PublishRequest",
     "PublishResult",
     "ReferenceDatasetSchema",
     "publish_dataset",
+    "run_calendar_second_source_crosscheck",
     "run_reference_source_lab",
 ]

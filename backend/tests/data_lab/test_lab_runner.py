@@ -8,6 +8,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from app.data_lab import lab_runner as lab_runner_mod
 from app.data_lab.lab_runner import LabRunConfig, run_reference_source_lab
 from app.data_lab.sources import calendar_probe as cp
 
@@ -52,6 +53,7 @@ def test_run_reference_source_lab_isolated(tmp_path: Path, monkeypatch: pytest.M
             {"trade_date": "2026-07-06", "is_open_flag": "0", "weekday_code": 1, "month": "2026-07"},
         ]
 
+    monkeypatch.setattr(lab_runner_mod, "fetch_szse_calendar_range", fake_range)
     monkeypatch.setattr(cp, "fetch_szse_calendar_range", fake_range)
 
     report = run_reference_source_lab(

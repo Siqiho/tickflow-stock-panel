@@ -92,3 +92,10 @@ Produce `docs/superpowers/reports/2026-07-21-m5-reference-lab-go-no-go.md` with:
 - Isolated lab_dir example: `/tmp/one-trading-m5-ref-lab-dWIXGI`
 - Go/No-Go: `docs/superpowers/reports/2026-07-21-m5-reference-source-lab-go-no-go.md`
 - Production publish remains **NO-GO**.
+
+
+## Second-source calendar cross-check (2026-07-21)
+
+- Implemented Tencent open-day proxy + SZSE live/cache cross-check.
+- Report: `docs/superpowers/reports/2026-07-21-m5-calendar-second-source-go-no-go.md`
+- Result: dual-source agreement on 2026-06-01..2026-07-21; production publish still NO-GO; standalone publish may be discussed with gates.

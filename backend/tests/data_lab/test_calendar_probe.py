@@ -66,6 +66,9 @@ def test_fetch_szse_month_calendar_empty_fails() -> None:
 
 @pytest.mark.integration
 def test_live_szse_month_optional() -> None:
-    rows = fetch_szse_month_calendar("2026-07", timeout=10.0)
+    try:
+        rows = fetch_szse_month_calendar("2026-07", timeout=10.0)
+    except CalendarProbeError as exc:
+        pytest.skip(f"SZSE live endpoint unavailable: {exc}")
     assert len(rows) >= 28
     assert any(r["is_open_flag"] == "1" for r in rows)

@@ -1,0 +1,410 @@
+{
+  "generated_at": "2026-07-21T21:42:19.415944+08:00",
+  "lab_root": "/tmp/one-trading-m5-cal-xcheck-09mEbX",
+  "network_observation": {
+    "szse_live": "empty reply / disconnect during this session",
+    "sse_official_api": "unavailable (404 / SOA null / SSL failures earlier)",
+    "tencent_fqkline": "stable"
+  },
+  "windows": {
+    "jun_jul_2026": {
+      "ok": true,
+      "network": {
+        "szse_live": "error: SZSE fetch failed for 2026-06: Server disconnected without sending a response.",
+        "szse_cache": "ok",
+        "tencent_sh": "ok",
+        "tencent_sz": "ok"
+      },
+      "admission": {
+        "trading_calendar": {
+          "status": "LAB_PASS_CANDIDATE_SECOND_SOURCE_OK",
+          "discuss_standalone_production_publish": "DISCUSS_ONLY",
+          "reason": "SZSE calendar open days match Tencent SH open-day series on the compared span; Tencent SH/SZ series also match. Official SSE API still unavailable; production publish remains gated on rights + operator approval.",
+          "blockers_for_production": [
+            "exchange_data_redistribution_rights_not_formally_signed_off",
+            "official_sse_machine_readable_calendar_still_missing",
+            "bj_special_session_identity_not_independently_proven",
+            "operator_explicit_approval_required_before_writing_production_data",
+            "this_run_used_szse_cache_because_live_endpoint_failed"
+          ]
+        }
+      },
+      "production_publish": {
+        "status": "NO_GO",
+        "dataset": "trading_calendar",
+        "may_discuss_standalone_publish": true,
+        "reason": "Even with second-source agreement, formal production write is blocked until rights sign-off and explicit user approval. Listing/status datasets remain out of scope."
+      },
+      "comparisons": {
+        "tencent_sh_vs_tencent_sz": {
+          "left": "tencent_sh",
+          "right": "tencent_sz",
+          "span": [
+            "2026-06-01",
+            "2026-07-21"
+          ],
+          "left_count": 36,
+          "right_count": 36,
+          "intersection": 36,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_sh_vs_tencent_sh": {
+          "left": "szse_sh_open",
+          "right": "tencent_sh",
+          "span": [
+            "2026-06-01",
+            "2026-07-21"
+          ],
+          "left_count": 36,
+          "right_count": 36,
+          "intersection": 36,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_weekend_open_rows": 0
+      },
+      "szse": {
+        "producer": "szse_month_list",
+        "mode": "cache_parquet",
+        "path": "/tmp/one-trading-m5-ref-lab-dWIXGI/reference/trading_calendar/calendar.parquet",
+        "rows": 153
+      },
+      "tencent_sh": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sh000001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2026-06-01",
+          "2026-07-21"
+        ],
+        "open_day_count": 36,
+        "first": "2026-06-01",
+        "last": "2026-07-21",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T21:41:05.551711+08:00"
+      },
+      "tencent_sz": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sz399001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2026-06-01",
+          "2026-07-21"
+        ],
+        "open_day_count": 36,
+        "first": "2026-06-01",
+        "last": "2026-07-21",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T21:41:07.086690+08:00"
+      },
+      "report_path": null
+    },
+    "y2025": {
+      "ok": false,
+      "network": {
+        "szse_live": "error: SZSE fetch failed for 2025-01: Server disconnected without sending a response.",
+        "tencent_sh": "ok",
+        "tencent_sz": "ok"
+      },
+      "admission": {
+        "trading_calendar": {
+          "status": "LAB_PARTIAL_TENCENT_ONLY",
+          "discuss_standalone_production_publish": "NO",
+          "reason": "Tencent secondary series reachable, but SZSE primary live/cache unavailable for this run; cannot complete dual-source admission.",
+          "blockers_for_production": [
+            "exchange_data_redistribution_rights_not_formally_signed_off",
+            "official_sse_machine_readable_calendar_still_missing",
+            "bj_special_session_identity_not_independently_proven",
+            "operator_explicit_approval_required_before_writing_production_data"
+          ]
+        }
+      },
+      "production_publish": {
+        "status": "NO_GO",
+        "dataset": "trading_calendar",
+        "may_discuss_standalone_publish": false,
+        "reason": "Even with second-source agreement, formal production write is blocked until rights sign-off and explicit user approval. Listing/status datasets remain out of scope."
+      },
+      "comparisons": {
+        "tencent_sh_vs_tencent_sz": {
+          "left": "tencent_sh",
+          "right": "tencent_sz",
+          "span": [
+            "2025-01-01",
+            "2025-12-31"
+          ],
+          "left_count": 243,
+          "right_count": 243,
+          "intersection": 243,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        }
+      },
+      "szse": null,
+      "tencent_sh": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sh000001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2025-01-01",
+          "2025-12-31"
+        ],
+        "open_day_count": 243,
+        "first": "2025-01-02",
+        "last": "2025-12-31",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T21:41:14.873755+08:00"
+      },
+      "tencent_sz": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sz399001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2025-01-01",
+          "2025-12-31"
+        ],
+        "open_day_count": 243,
+        "first": "2025-01-02",
+        "last": "2025-12-31",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T21:41:16.506536+08:00"
+      },
+      "report_path": null
+    },
+    "y2026_ytd": {
+      "ok": true,
+      "network": {
+        "szse_live": "error: SZSE fetch failed for 2026-01: Server disconnected without sending a response.",
+        "szse_cache": "ok",
+        "tencent_sh": "ok",
+        "tencent_sz": "ok"
+      },
+      "admission": {
+        "trading_calendar": {
+          "status": "LAB_PASS_CANDIDATE_SECOND_SOURCE_OK",
+          "discuss_standalone_production_publish": "DISCUSS_ONLY",
+          "reason": "SZSE calendar open days match Tencent SH open-day series on the compared span; Tencent SH/SZ series also match. Official SSE API still unavailable; production publish remains gated on rights + operator approval.",
+          "blockers_for_production": [
+            "exchange_data_redistribution_rights_not_formally_signed_off",
+            "official_sse_machine_readable_calendar_still_missing",
+            "bj_special_session_identity_not_independently_proven",
+            "operator_explicit_approval_required_before_writing_production_data",
+            "this_run_used_szse_cache_because_live_endpoint_failed"
+          ]
+        }
+      },
+      "production_publish": {
+        "status": "NO_GO",
+        "dataset": "trading_calendar",
+        "may_discuss_standalone_publish": true,
+        "reason": "Even with second-source agreement, formal production write is blocked until rights sign-off and explicit user approval. Listing/status datasets remain out of scope."
+      },
+      "comparisons": {
+        "tencent_sh_vs_tencent_sz": {
+          "left": "tencent_sh",
+          "right": "tencent_sz",
+          "span": [
+            "2026-01-05",
+            "2026-07-21"
+          ],
+          "left_count": 131,
+          "right_count": 131,
+          "intersection": 131,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_sh_vs_tencent_sh": {
+          "left": "szse_sh_open",
+          "right": "tencent_sh",
+          "span": [
+            "2026-06-01",
+            "2026-07-21"
+          ],
+          "left_count": 36,
+          "right_count": 36,
+          "intersection": 36,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_weekend_open_rows": 0
+      },
+      "szse": {
+        "producer": "szse_month_list",
+        "mode": "cache_parquet",
+        "path": "/tmp/one-trading-m5-ref-lab-dWIXGI/reference/trading_calendar/calendar.parquet",
+        "rows": 153
+      },
+      "tencent_sh": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sh000001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2026-01-05",
+          "2026-07-21"
+        ],
+        "open_day_count": 131,
+        "first": "2026-01-05",
+        "last": "2026-07-21",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T21:41:24.773116+08:00"
+      },
+      "tencent_sz": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sz399001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2026-01-05",
+          "2026-07-21"
+        ],
+        "open_day_count": 131,
+        "first": "2026-01-05",
+        "last": "2026-07-21",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T21:41:26.424342+08:00"
+      },
+      "report_path": null
+    },
+    "y2026_ytd_nolive": {
+      "ok": true,
+      "network": {
+        "szse_cache": "ok",
+        "tencent_sh": "ok",
+        "tencent_sz": "ok"
+      },
+      "admission": {
+        "trading_calendar": {
+          "status": "LAB_PASS_CANDIDATE_SECOND_SOURCE_OK",
+          "discuss_standalone_production_publish": "DISCUSS_ONLY",
+          "reason": "SZSE calendar open days match Tencent SH open-day series on the compared span; Tencent SH/SZ series also match. Official SSE API still unavailable; production publish remains gated on rights + operator approval.",
+          "blockers_for_production": [
+            "exchange_data_redistribution_rights_not_formally_signed_off",
+            "official_sse_machine_readable_calendar_still_missing",
+            "bj_special_session_identity_not_independently_proven",
+            "operator_explicit_approval_required_before_writing_production_data",
+            "this_run_used_szse_cache_because_live_endpoint_failed"
+          ]
+        }
+      },
+      "production_publish": {
+        "status": "NO_GO",
+        "dataset": "trading_calendar",
+        "may_discuss_standalone_publish": true,
+        "reason": "Even with second-source agreement, formal production write is blocked until rights sign-off and explicit user approval. Listing/status datasets remain out of scope."
+      },
+      "comparisons": {
+        "tencent_sh_vs_tencent_sz": {
+          "left": "tencent_sh",
+          "right": "tencent_sz",
+          "span": [
+            "2026-01-05",
+            "2026-07-21"
+          ],
+          "left_count": 131,
+          "right_count": 131,
+          "intersection": 131,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_sh_vs_tencent_sh": {
+          "left": "szse_sh_open",
+          "right": "tencent_sh",
+          "span": [
+            "2026-06-01",
+            "2026-07-21"
+          ],
+          "left_count": 36,
+          "right_count": 36,
+          "intersection": 36,
+          "only_left_count": 0,
+          "only_right_count": 0,
+          "only_left": [],
+          "only_right": [],
+          "equal": true
+        },
+        "szse_weekend_open_rows": 0
+      },
+      "szse": {
+        "producer": "szse_month_list",
+        "mode": "cache_parquet",
+        "path": "/tmp/one-trading-m5-ref-lab-dWIXGI/reference/trading_calendar/calendar.parquet",
+        "rows": 153
+      },
+      "tencent_sh": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sh000001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2026-01-05",
+          "2026-07-21"
+        ],
+        "open_day_count": 131,
+        "first": "2026-01-05",
+        "last": "2026-07-21",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T21:41:37.663023+08:00"
+      },
+      "tencent_sz": {
+        "producer": "tencent_index_daily_open_days",
+        "producer_kind": "secondary_open_day_series",
+        "not_official_sse_api": true,
+        "code": "sz399001",
+        "endpoint": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "window": [
+          "2026-01-05",
+          "2026-07-21"
+        ],
+        "open_day_count": 131,
+        "first": "2026-01-05",
+        "last": "2026-07-21",
+        "rights_note": "Tencent public quote API used as Lab cross-check only; not a substitute for exchange-official calendar rights admission.",
+        "fetched_at": "2026-07-21T21:41:39.313605+08:00"
+      },
+      "report_path": null
+    }
+  },
+  "judgment": {
+    "official_sse_second_source": "NOT_AVAILABLE",
+    "proxy_second_source": "tencent_sh000001_open_days",
+    "dual_source_agreement_span": "2026-06-01..2026-07-21 equal open days (36)",
+    "tencent_sh_sz_identity": {
+      "2025": "243==243",
+      "2026_ytd": "131==131",
+      "2026_jun_jul": "36==36"
+    },
+    "discuss_standalone_trading_calendar_publish": "YES_WITH_GATES",
+    "production_publish_now": "NO_GO"
+  }
+}
