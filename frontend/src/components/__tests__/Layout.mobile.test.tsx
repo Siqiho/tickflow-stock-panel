@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Layout } from '../Layout'
@@ -22,6 +22,7 @@ const mockState = vi.hoisted(() => ({
     realtime_quotes_enabled: true,
     indices_nav_pinned: true,
     sidebar_index_symbols: ['000001.SH'],
+    realtime_watchlist_symbols: [] as string[],
     nav_order: [],
     nav_hidden: [],
   },
@@ -62,7 +63,7 @@ vi.mock('@/lib/api', () => ({
   api: {
     alertsList: vi.fn(async () => ({ total: 0 })),
     analysisMenus: vi.fn(async () => ({ items: [] })),
-    capabilities: vi.fn(async () => ({ label: 'None', features: {}, capabilities: {} })),
+    capabilities: vi.fn(async () => mockState.capabilities),
     indexQuotes: vi.fn(async () => ({
       rows: [{ symbol: '000001.SH', name: '上证指数', last_price: 3012.34, change_pct: 0.56 }],
     })),
@@ -74,6 +75,9 @@ vi.mock('@/lib/api', () => ({
 beforeEach(() => {
   mockState.toggleTheme.mockClear()
   mockState.toggleQuotes.mockClear()
+  mockState.capabilities.label = 'Pro'
+  mockState.preferences.realtime_quotes_enabled = true
+  mockState.preferences.realtime_watchlist_symbols = []
 })
 
 afterEach(() => {
@@ -93,6 +97,7 @@ function renderLayout() {
         <Routes>
           <Route element={<Layout />}>
             <Route path="/data" element={<div>数据内容</div>} />
+            <Route path="/watchlist" element={<div>自选内容</div>} />
           </Route>
         </Routes>
       </QueryClientProvider>
@@ -229,5 +234,19 @@ describe('Layout mobile navigation', () => {
 
     act(() => onChange?.({ matches: true } as MediaQueryListEvent))
     expect(screen.queryByRole('dialog', { name: '移动导航' })).not.toBeInTheDocument()
+  })
+
+  it('closes the menu when Free tier redirects an empty realtime watchlist', async () => {
+    mockState.capabilities.label = 'Free'
+    mockState.preferences.realtime_quotes_enabled = false
+    renderLayout()
+
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    const dialog = screen.getByRole('dialog', { name: '移动导航' })
+    fireEvent.click(within(dialog).getByRole('switch', { name: '实时行情开关' }))
+
+    await waitFor(() => expect(screen.getByText('自选内容')).toBeInTheDocument())
+    expect(screen.queryByRole('dialog', { name: '移动导航' })).not.toBeInTheDocument()
+    expect(mockState.toggleQuotes).not.toHaveBeenCalled()
   })
 })

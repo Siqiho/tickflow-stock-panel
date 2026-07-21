@@ -589,10 +589,10 @@ export function Layout() {
         queryFn: api.capabilities,
       })
       const freshTier = tierRank(fresh.label ?? '')
-      if (freshTier < 0) return
+      if (freshTier < 0) return 'blocked' as const
       if (freshTier === 0 && (prefs?.realtime_watchlist_symbols?.length ?? 0) === 0) {
         navigate('/watchlist')
-        return
+        return 'navigated' as const
       }
     }
     await toggleQuote.mutateAsync(enabled)
@@ -600,6 +600,7 @@ export function Layout() {
     if (enabled && isTrading) {
       api.intradayRefresh().catch(() => {})
     }
+    return 'toggled' as const
   }
 
   return (
@@ -728,7 +729,10 @@ export function Layout() {
                 realtimeModeLabel={realtimeModeLabel}
                 realtimeAllowed={realtimeAllowed}
                 isPending={toggleQuote.isPending}
-                onToggle={handleToggle}
+                onToggle={async enabled => {
+                  const outcome = await handleToggle(enabled)
+                  if (outcome === 'navigated') setMobileNavOpen(false)
+                }}
                 onSettings={() => {
                   setMobileNavOpen(false)
                   navigate('/settings?tab=monitoring')
