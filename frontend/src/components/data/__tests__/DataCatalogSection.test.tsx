@@ -83,6 +83,17 @@ describe('catalog presentation', () => {
     expect(screen.getAllByText('未知 / 未知')).toHaveLength(3)
   })
 
+  it('shows a backend ratio visibly when the expected symbol denominator is unknown', () => {
+    render(<CoverageBar coverage={[
+      { market: 'SH', symbol_count: 27, expected_symbol_count: null, ratio: 0.375 },
+    ]} />)
+
+    const shRow = screen.getByText('SH').closest('div')
+    expect(shRow).not.toBeNull()
+    expect(within(shRow!).getByText('27 / 未知')).toBeInTheDocument()
+    expect(within(shRow!).getByText('37.5%')).toBeInTheDocument()
+  })
+
   it('renders inline initial error and empty states without throwing', () => {
     const { rerender } = render(<DataCatalogSection error={new Error('catalog unavailable')} />)
     expect(screen.getByRole('alert')).toHaveTextContent('catalog unavailable')

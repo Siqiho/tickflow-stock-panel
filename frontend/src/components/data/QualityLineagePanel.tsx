@@ -1,4 +1,5 @@
 import { GitBranch } from 'lucide-react'
+import { useId } from 'react'
 import type { DatasetCatalogEntry } from '@/lib/api'
 import { QUALITY_LABELS } from './DatasetCatalogCard'
 
@@ -8,10 +9,11 @@ function valueOrUnknown(value: string | number | null): string {
 
 export function QualityLineagePanel({ entry }: { entry: DatasetCatalogEntry }) {
   const reasonCode = entry.descriptor.availability.reason_code
+  const headingId = useId()
 
   return (
-    <section aria-labelledby="quality-lineage-heading">
-      <h3 id="quality-lineage-heading" className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-secondary">
+    <section aria-labelledby={headingId}>
+      <h3 id={headingId} className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-secondary">
         <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
         质量与血缘
       </h3>

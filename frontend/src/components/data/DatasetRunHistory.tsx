@@ -1,4 +1,5 @@
 import { History } from 'lucide-react'
+import { useId } from 'react'
 import type { SyncRun } from '@/lib/api'
 import { QUALITY_LABELS } from './DatasetCatalogCard'
 
@@ -15,9 +16,11 @@ function timeOrUnknown(value: string | null): string {
 }
 
 export function DatasetRunHistory({ runs }: { runs: SyncRun[] }) {
+  const headingId = useId()
+
   return (
-    <section aria-labelledby="run-history-heading">
-      <h3 id="run-history-heading" className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-secondary">
+    <section aria-labelledby={headingId}>
+      <h3 id={headingId} className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-secondary">
         <History aria-hidden="true" className="h-3.5 w-3.5" />
         最近运行
       </h3>

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import { X } from 'lucide-react'
 import type { CatalogSchemaResponse, DatasetCatalogEntry, FieldContract, SyncRun } from '@/lib/api'
 import { DatasetRunHistory } from './DatasetRunHistory'
@@ -7,6 +7,26 @@ import { QualityLineagePanel } from './QualityLineagePanel'
 
 function metadataValue(value: string | null): string {
   return value ?? '未声明'
+}
+
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'area[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  'iframe',
+  'object',
+  'embed',
+  '[contenteditable="true"]',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',')
+
+function drawerFocusables(dialog: HTMLElement): HTMLElement[] {
+  return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((element) => (
+    element.tabIndex >= 0 && !element.closest('[hidden], [aria-hidden="true"]')
+  ))
 }
 
 function FieldTable({ fields }: { fields: FieldContract[] }) {
@@ -49,27 +69,75 @@ export function DatasetDetailDrawer({
   runs?: SyncRun[]
   onClose: () => void
 }) {
+  const dialogRef = useRef<HTMLElement>(null)
+  const drawerId = useId()
+  const isOpen = entry !== null
+
   useEffect(() => {
-    if (!entry) return undefined
+    if (!isOpen) return undefined
+
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const dialog = dialogRef.current
+    const initialFocus = dialog ? drawerFocusables(dialog)[0] ?? dialog : null
+    initialFocus?.focus()
+
+    return () => {
+      if (previouslyFocused?.isConnected) previouslyFocused.focus()
+    }
+  }, [isOpen])
+
+  useEffect(() => {
+    if (!isOpen) return undefined
+
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const dialog = dialogRef.current
+      if (!dialog) return
+      const focusables = drawerFocusables(dialog)
+      if (focusables.length === 0) {
+        event.preventDefault()
+        dialog.focus()
+        return
+      }
+
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      const active = document.activeElement
+      if (focusables.length === 1) {
+        event.preventDefault()
+        first.focus()
+      } else if (event.shiftKey && (active === first || !dialog.contains(active))) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+        event.preventDefault()
+        first.focus()
+      }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [entry, onClose])
+  }, [isOpen, onClose])
 
   if (!entry) return null
 
   const title = catalogDisplayTitle(entry)
-  const headingId = `dataset-detail-${entry.descriptor.dataset_id}`
+  const headingId = `${drawerId}-dataset-heading`
   const fields = schema?.fields ?? entry.descriptor.fields
 
   return (
     <div className="fixed inset-0 z-50 bg-foreground/20" aria-hidden={false}>
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={headingId}
+        tabIndex={-1}
         className="ml-auto flex h-full w-full max-w-3xl flex-col border-l border-border bg-surface shadow-xl"
       >
         <header className="flex items-start justify-between gap-4 border-b border-border px-4 py-4 sm:px-6">
@@ -80,7 +148,7 @@ export function DatasetDetailDrawer({
           <button
             type="button"
             onClick={onClose}
-            aria-label={`关闭${title}详情`}
+            aria-label={`关闭“${title}”详情`}
             className="rounded-btn p-2 text-secondary outline-none transition-colors hover:bg-elevated hover:text-foreground focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
           >
             <X aria-hidden="true" className="h-4 w-4" />

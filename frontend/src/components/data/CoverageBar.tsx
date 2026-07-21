@@ -24,8 +24,9 @@ export function CoverageBar({ coverage }: { coverage: MarketCoverage[] }) {
                 />
               )}
             </div>
-            <span className="font-mono tabular-nums text-secondary">
-              {item ? item.symbol_count.toLocaleString() : '未知'} / {item?.expected_symbol_count == null ? '未知' : item.expected_symbol_count.toLocaleString()}
+            <span className="flex flex-col items-end font-mono tabular-nums text-secondary">
+              <span>{item ? item.symbol_count.toLocaleString() : '未知'} / {item?.expected_symbol_count == null ? '未知' : item.expected_symbol_count.toLocaleString()}</span>
+              <span className="text-muted">{ratioText}</span>
             </span>
           </div>
         )
