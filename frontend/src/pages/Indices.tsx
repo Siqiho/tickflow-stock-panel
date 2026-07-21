@@ -3,6 +3,11 @@ import { useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, Loader2, Lock, RefreshCw, Search } from 'lucide-react'
 import { api, type IndexInstrument, type KlineRow, type MinuteKlineRow } from '@/lib/api'
+import {
+  INDEX_DAILY_CATALOG_DATASETS,
+  INDEX_INSTRUMENT_CATALOG_DATASETS,
+  invalidateIndexCatalogQueries,
+} from '@/lib/indexCatalogInvalidation'
 import { QK } from '@/lib/queryKeys'
 import { useCapabilities } from '@/lib/useSharedQueries'
 import { EChartsCandlestick, type OHLC } from '@/components/EChartsCandlestick'
@@ -155,18 +160,24 @@ export function Indices() {
 
   const syncInstruments = useMutation({
     mutationFn: api.syncIndexInstruments,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK.indexList })
-      qc.invalidateQueries({ queryKey: QK.indexQuotes })
+    onSuccess: async () => {
+      await Promise.all([
+        invalidateIndexCatalogQueries(qc, INDEX_INSTRUMENT_CATALOG_DATASETS),
+        qc.invalidateQueries({ queryKey: QK.indexList }),
+        qc.invalidateQueries({ queryKey: QK.indexQuotes }),
+      ])
     },
   })
 
   const syncDaily = useMutation({
     mutationFn: () => api.syncIndexDaily(365),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK.indexList })
-      qc.invalidateQueries({ queryKey: QK.indexQuotes })
-      qc.invalidateQueries({ queryKey: ['index-daily'] })
+    onSuccess: async () => {
+      await Promise.all([
+        invalidateIndexCatalogQueries(qc, INDEX_DAILY_CATALOG_DATASETS),
+        qc.invalidateQueries({ queryKey: QK.indexList }),
+        qc.invalidateQueries({ queryKey: QK.indexQuotes }),
+        qc.invalidateQueries({ queryKey: ['index-daily'] }),
+      ])
     },
   })
 

@@ -41,6 +41,10 @@ import { EditExtDialog } from '@/components/ext-data/EditExtDialog'
 import { ExtDataStatCard } from '@/components/ext-data/ExtDataStatCard'
 import { formatScheduleDatePart, formatScheduleTimePart, isToday } from '@/lib/format'
 import { api, type CatalogResponse, type DatasetCatalogEntry, type ExtDataConfig } from '@/lib/api'
+import {
+  INDEX_DAILY_CATALOG_DATASETS,
+  invalidateIndexCatalogQueries,
+} from '@/lib/indexCatalogInvalidation'
 import { QK } from '@/lib/queryKeys'
 import { useToggleRealtimeQuotes, useUpdateQuoteInterval } from '@/lib/useSharedMutations'
 import {
@@ -234,18 +238,8 @@ export function Data() {
   const syncIndexDaily = useMutation({
     mutationFn: () => api.syncIndexDaily(indexSyncDays),
     onSuccess: async () => {
-      const affectedCatalogKeys = ['index_instruments', 'etf_instruments', 'index_daily', 'index_enriched'].flatMap(
-        (datasetId) => [
-          QK.dataCatalogDataset(datasetId),
-          QK.dataCatalogSchema(datasetId),
-          QK.dataCatalogRuns(datasetId),
-        ],
-      )
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: QK.dataStatus, exact: true }),
-        queryClient.invalidateQueries({ queryKey: QK.dataCatalog, exact: true }),
-        queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(), exact: true }),
-        ...affectedCatalogKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey, exact: true })),
+        invalidateIndexCatalogQueries(queryClient, INDEX_DAILY_CATALOG_DATASETS),
         queryClient.invalidateQueries({ queryKey: QK.indexList, exact: true }),
         queryClient.invalidateQueries({ queryKey: QK.indexQuotes, exact: true }),
       ])

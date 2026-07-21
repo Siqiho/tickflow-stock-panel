@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+import polars as pl
 import pytest
 from fastapi import FastAPI
 
@@ -10,6 +11,7 @@ from app import main
 from app.api import data as data_api
 from app.api import indices as index_api
 from app.services.pipeline_jobs import JobStore
+from app.tickflow import policy
 from app.tickflow.capabilities import Cap, CapabilityLimits, CapabilitySet
 
 
@@ -101,13 +103,58 @@ def test_pipeline_refresh_failure_cannot_change_the_persisted_legacy_terminal(
     asyncio.run(scenario())
 
 
+def test_real_index_instrument_sync_defaults_to_persisting_index_and_etf(
+    monkeypatch,
+) -> None:
+    writes: list[str] = []
+
+    class Repo:
+        def save_index_instruments(self, frame) -> None:
+            assert frame["asset_type"].to_list() == ["index"]
+            writes.append("index_instruments")
+
+        def save_etf_instruments(self, frame) -> None:
+            assert frame["asset_type"].to_list() == ["etf"]
+            writes.append("etf_instruments")
+
+        def refresh_index_views(self) -> None:
+            writes.append("views")
+
+    def fetch(instrument_type, asset_type_label):
+        return pl.DataFrame(
+            {
+                "symbol": ["000001.SH" if instrument_type == "index" else "510300.SH"],
+                "name": [instrument_type],
+                "code": ["000001" if instrument_type == "index" else "510300"],
+                "asset_type": [asset_type_label],
+            }
+        )
+
+    monkeypatch.setattr(index_api.index_sync, "_fetch_instruments_by_type", fetch)
+    monkeypatch.setattr(policy, "detect_capabilities", lambda force=False: CapabilitySet({}))
+
+    assert index_api.index_sync.sync_index_instruments(Repo()) == 2
+    assert writes == ["index_instruments", "etf_instruments", "views"]
+
+
 def test_index_sync_refreshes_only_its_written_catalog_datasets(monkeypatch) -> None:
     scans: list[str | None] = []
-    instrument_calls: list[tuple[bool, bool]] = []
+    written_datasets: list[str] = []
     catalog = SimpleNamespace(
         refresh_after_mutation=lambda dataset_id=None: scans.append(dataset_id)
     )
-    repo = SimpleNamespace(etf_instruments_written=False)
+
+    class Repo:
+        def save_index_instruments(self, frame) -> None:
+            written_datasets.append("index_instruments")
+
+        def save_etf_instruments(self, frame) -> None:
+            written_datasets.append("etf_instruments")
+
+        def refresh_index_views(self) -> None:
+            return None
+
+    repo = Repo()
     request = SimpleNamespace(
         app=SimpleNamespace(
             state=SimpleNamespace(
@@ -118,31 +165,39 @@ def test_index_sync_refreshes_only_its_written_catalog_datasets(monkeypatch) -> 
         )
     )
 
-    def sync_instruments(value, pull_index=True, pull_etf=True):
-        instrument_calls.append((pull_index, pull_etf))
-        value.etf_instruments_written = pull_etf
-        return 2
+    def fetch(instrument_type, asset_type_label):
+        return pl.DataFrame(
+            {
+                "symbol": ["000001.SH" if instrument_type == "index" else "510300.SH"],
+                "name": [instrument_type],
+                "code": ["000001" if instrument_type == "index" else "510300"],
+                "asset_type": [asset_type_label],
+            }
+        )
 
-    monkeypatch.setattr(index_api.index_sync, "sync_index_instruments", sync_instruments)
+    def sync_daily(*args, **kwargs):
+        written_datasets.extend(["index_daily", "index_enriched"])
+        return 20
+
+    monkeypatch.setattr(index_api.index_sync, "_fetch_instruments_by_type", fetch)
+    monkeypatch.setattr(policy, "detect_capabilities", lambda force=False: CapabilitySet({}))
     monkeypatch.setattr(
         index_api.index_sync,
         "sync_and_persist_index_daily",
-        lambda *args, **kwargs: 20,
+        sync_daily,
     )
 
     assert index_api.sync_index_instruments(request) == {"status": "ok", "count": 2}
-    assert instrument_calls == [(True, True)]
-    assert repo.etf_instruments_written is True
-    assert scans == ["index_instruments", "etf_instruments"]
+    assert scans == written_datasets == ["index_instruments", "etf_instruments"]
     scans.clear()
+    written_datasets.clear()
 
     assert index_api.sync_index_daily(request, days=30) == {
         "status": "ok",
         "index_count": 2,
         "rows_written": 20,
     }
-    assert instrument_calls == [(True, True), (True, True)]
-    assert scans == [
+    assert scans == written_datasets == [
         "index_instruments",
         "etf_instruments",
         "index_daily",
