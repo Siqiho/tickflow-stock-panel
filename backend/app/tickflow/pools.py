@@ -1,8 +1,10 @@
 """标的池(Universe)定义(§6.3)。
 
 Phase 1 实现:
-  - 常用指数成份(沪深 300 / 中证 500 / 上证 50)用 TickFlow `quote.pool` 端点拉取并缓存
-  - 全 A 通过 instruments.batch 获取
+  - 常用指数成份(沪深 300 / 中证 500 / 上证 50):
+      * preferences.pool_provider=public 时走 free_sources.pools_public(中证 XLS/新浪 fallback)
+      * 否则 TickFlow `quote.pool` / universes
+  - 全 A 通过 instruments / TickFlow universe
   - 自选池 = 用户的 watchlist
 """
 from __future__ import annotations
@@ -36,7 +38,7 @@ def _find_universe_id(hints: list[str]) -> str | None:
     try:
         tf = get_client()
         unis = tf.universes.list()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning("universes.list failed: %s", e)
         return None
     for u in unis or []:
@@ -50,6 +52,14 @@ def _find_universe_id(hints: list[str]) -> str | None:
 
 def _pool_cache_path(pool_id: str) -> Path:
     return settings.data_dir / "pools" / f"{pool_id}.parquet"
+
+
+def _use_public_pools() -> bool:
+    try:
+        from app.services import preferences
+        return preferences.is_public_pool_provider()
+    except Exception:
+        return False
 
 
 def get_pool(pool_id: PoolId, refresh: bool = False) -> list[str]:
@@ -70,10 +80,22 @@ def get_pool(pool_id: PoolId, refresh: bool = False) -> list[str]:
 
 
 def _fetch_pool(pool_id: PoolId) -> list[str]:
-    """从 TickFlow 拉取池成份。
+    """拉取池成份: public(中证/新浪) 或 TickFlow universes。"""
+    # Public index constituents for CSI300/CSI500/SSE50
+    if pool_id in _POOL_NAME_HINTS and _use_public_pools():
+        try:
+            from app.services.free_sources.pools_public import (
+                fetch_pool_constituents,
+                write_pool_parquet,
+            )
 
-    实现:先用 universes.list 找到 universe id,再 quotes.get_by_universes 拉成份。
-    """
+            df = fetch_pool_constituents(pool_id)
+            if df is not None and not df.is_empty():
+                write_pool_parquet(df, settings.data_dir, pool_id)
+                return df["symbol"].to_list()
+        except Exception as e:
+            logger.warning("public pool %s failed, fallback TickFlow: %s", pool_id, e)
+
     tf = get_client()
 
     if pool_id in _POOL_NAME_HINTS:
@@ -85,7 +107,7 @@ def _fetch_pool(pool_id: PoolId) -> list[str]:
             df = tf.quotes.get_by_universes([uid], as_dataframe=True)
             if df is not None and len(df) > 0 and "symbol" in df.columns:
                 return df["symbol"].astype(str).tolist()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("fetch pool %s via universe %s failed: %s", pool_id, uid, e)
 
     if pool_id == "CN_Equity_A":
@@ -96,13 +118,13 @@ def _fetch_pool(pool_id: PoolId) -> list[str]:
                 df = tf.quotes.get_by_universes([uid], as_dataframe=True)
                 if df is not None and len(df) > 0 and "symbol" in df.columns:
                     return sorted(set(df["symbol"].astype(str).tolist()))
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning("fetch CN_Equity_A via universe %s failed: %s", uid, e)
 
         # fallback: 聚合申万一级行业 (覆盖度较低, 缺北交所/新股)
         try:
             unis = tf.universes.list()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("universes.list failed: %s", e)
             unis = []
         sw1_ids = []
@@ -116,7 +138,7 @@ def _fetch_pool(pool_id: PoolId) -> list[str]:
                 df = tf.quotes.get_by_universes(sw1_ids, as_dataframe=True)
                 if df is not None and "symbol" in df.columns:
                     return sorted(set(df["symbol"].astype(str).tolist()))
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning("aggregate SW1 fetch failed: %s", e)
 
     if pool_id == "CN_Index":
@@ -126,7 +148,7 @@ def _fetch_pool(pool_id: PoolId) -> list[str]:
             df = tf.quotes.get_by_universes(ids, as_dataframe=True)
             if df is not None and len(df) > 0 and "symbol" in df.columns:
                 return sorted(set(df["symbol"].astype(str).tolist()))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("fetch CN_Index via universe %s failed: %s", ids, e)
 
     return []

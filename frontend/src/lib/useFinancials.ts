@@ -7,6 +7,7 @@ export const FINANCIAL_QK = {
   income: (symbol?: string) => ['financials', 'income', symbol],
   balanceSheet: (symbol?: string) => ['financials', 'balance-sheet', symbol],
   cashFlow: (symbol?: string) => ['financials', 'cash-flow', symbol],
+  shares: (symbol?: string) => ['financials', 'shares', symbol],
 }
 
 export function useFinancialStatus() {
@@ -68,5 +69,14 @@ export function useFinancialSync() {
       qc.invalidateQueries({ queryKey: FINANCIAL_QK.status })
       qc.invalidateQueries({ queryKey: ['financials'] })
     },
+  })
+}
+
+export function useFinancialShares(symbol?: string) {
+  return useQuery({
+    queryKey: FINANCIAL_QK.shares(symbol),
+    queryFn: () => api.financialShares(symbol),
+    enabled: !!symbol,
+    staleTime: 60_000,
   })
 }

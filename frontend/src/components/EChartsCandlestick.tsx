@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useMemo } from 'react'
+import { useChartChrome, type ChartChrome } from '@/lib/theme'
 import * as echarts from 'echarts'
 import type { ECharts, EChartsOption } from 'echarts'
 
@@ -293,7 +294,7 @@ interface Props {
   activeIndicators?: string[]
 }
 
-const THEME = {
+const BASE_THEME = {
   bull: '#C74040',
   bear: '#2D9B65',
   bullAlpha: 'rgba(240,68,56,0.7)',
@@ -302,11 +303,43 @@ const THEME = {
   ma10: '#3B82F6',
   ma20: '#F97316',
   ma60: '#8B5CF6',
-  text: '#A1A1AA',
-  grid: 'rgba(255,255,255,0.04)',
-  border: '#27272A',
   bg: 'transparent',
 }
+
+type CandleTheme = typeof BASE_THEME & {
+  text: string
+  grid: string
+  border: string
+  tooltipBg: string
+  tooltipBorder: string
+  crosshair: string
+  infoBarBg: string
+  handle: string
+  labelBg: string
+}
+
+function withChrome(chrome: ChartChrome): CandleTheme {
+  return {
+    ...BASE_THEME,
+    text: chrome.text,
+    grid: chrome.grid,
+    border: chrome.border,
+    tooltipBg: chrome.tooltipBg,
+    tooltipBorder: chrome.tooltipBorder,
+    crosshair: chrome.crosshair,
+    infoBarBg: chrome.infoBarBg,
+    handle: chrome.handle,
+    labelBg: chrome.labelBg,
+  }
+}
+
+// 模块级可变引用：buildOption / 信息栏 HTML 闭包读取当前 chrome，避免把 THEME 传遍所有调用点
+let THEME: CandleTheme = withChrome({
+  text: '#A1A1AA', muted: '#8E8E96', grid: 'rgba(255,255,255,0.04)', border: '#27272A',
+  tooltipBg: 'rgba(39,39,42,0.92)', tooltipBorder: 'rgba(255,255,255,0.1)',
+  crosshair: 'rgba(255,255,255,0.2)', refLine: 'rgba(255,255,255,0.25)',
+  infoBarBg: 'rgba(39,39,42,0.6)', handle: '#52525B', labelBg: 'rgba(15,23,42,0.85)',
+})
 
 /** 可见蜡烛超过此数量时，涨停/炸板标签切换为小圆点。 */
 const COMPACT_THRESHOLD = 60
@@ -525,7 +558,7 @@ function buildOption(
           position: 'insideTop',
           distance: 8,
           color: '#DBEAFE',
-          backgroundColor: 'rgba(15,23,42,0.72)',
+          backgroundColor: THEME.labelBg,
           borderColor: 'rgba(59,130,246,0.35)',
           borderWidth: 1,
           borderRadius: 4,
@@ -551,7 +584,7 @@ function buildOption(
         formatter: line.label ?? '',
         position: 'insideEndTop' as const,
         color: line.color ?? THEME.text,
-        backgroundColor: 'rgba(15,23,42,0.72)',
+        backgroundColor: THEME.labelBg,
         borderRadius: 4,
         padding: [2, 6],
         fontSize: 10,
@@ -577,7 +610,7 @@ function buildOption(
         color: '#3B82F6',
         fontSize: 10,
         fontFamily: 'JetBrains Mono, monospace',
-        backgroundColor: 'rgba(24,24,27,0.85)',
+        backgroundColor: THEME.labelBg,
         borderColor: '#3B82F6',
         borderWidth: 1,
         padding: [1, 4],
@@ -695,7 +728,7 @@ function buildOption(
     axisPointer: {
       link: [{ xAxisIndex: 'all' }],
       label: {
-        backgroundColor: '#333',
+        backgroundColor: THEME.tooltipBg,
         fontFamily: 'JetBrains Mono, monospace',
         fontSize: 10,
       },
@@ -736,6 +769,8 @@ export function EChartsCandlestick({
   visibleBars = 60,
   activeIndicators = [],
 }: Props) {
+  const chrome = useChartChrome()
+  THEME = withChrome(chrome)
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<ECharts | null>(null)
   const dataRef = useRef(data)
@@ -853,7 +888,7 @@ export function EChartsCandlestick({
     }
 
     return html
-  }, [data, stockInfo, showMA, activeIndicators])
+  }, [data, stockInfo, showMA, activeIndicators, chrome])
   getInfoBarHTMLRef.current = getInfoBarHTML
 
   // data 变化时重置 infoIdx
@@ -1038,7 +1073,7 @@ export function EChartsCandlestick({
     if (infoEl) {
       infoEl.innerHTML = getInfoBarHTML()
     }
-  }, [data, markers, ranges, priceLines, linkedPrice, showMA, showMarkersProp, activeIndicators, chartHeight, dates, dateIndexMap, initialZoom, getInfoBarHTML])
+  }, [data, markers, ranges, priceLines, linkedPrice, showMA, showMarkersProp, activeIndicators, chartHeight, dates, dateIndexMap, initialZoom, getInfoBarHTML, chrome])
 
   // 渲染信息栏容器 (内容由 JS 直接写入)
   const initialHTML = useMemo(() => {
@@ -1088,7 +1123,7 @@ export function EChartsCandlestick({
     <div className="w-full">
       {/* 主图信息栏 — 内容由 JS 直接操作 innerHTML */}
       {showInfoBar && (
-        <div ref={infoBarRef} style={{ backgroundColor: 'rgba(39,39,42,0.6)' }}
+        <div ref={infoBarRef} style={{ backgroundColor: THEME.infoBarBg }}
           dangerouslySetInnerHTML={{ __html: initialHTML }} />
       )}
 

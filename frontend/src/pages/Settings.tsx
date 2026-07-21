@@ -5,13 +5,14 @@
  */
 import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { BarChart3, Key, Radio, SlidersHorizontal, Sparkles, Settings2, Zap } from 'lucide-react'
+import { BarChart3, Key, Radio, SlidersHorizontal, Sparkles, Settings2, Zap, ScrollText } from 'lucide-react'
 import { SettingsKeysPanel } from './settings/Keys'
 import { SettingsAIPanel } from './settings/AI'
 import { SettingsMonitoringPanel } from './settings/Monitoring'
 import { SettingsExtPagesPanel } from './settings/ExtPages'
 import { SettingsMenuSettingsPanel } from './settings/MenuSettings'
 import { SettingsSystemPanel } from './settings/System'
+import { SettingsRuntimeLogsPanel } from './settings/RuntimeLogs'
 import { SettingsCustomSignalsPanel } from './settings/CustomSignals'
 import { PageHeader } from '@/components/PageHeader'
 import { cn } from '@/lib/cn'
@@ -26,6 +27,7 @@ const TABS = [
   { key: 'signals',    label: '信号库',     icon: Zap,       panel: SettingsCustomSignalsPanel },
   { key: 'menus',      label: '菜单设置',   icon: SlidersHorizontal, panel: SettingsMenuSettingsPanel },
   { key: 'system',     label: '系统设置',   icon: Settings2, panel: SettingsSystemPanel },
+  { key: 'runtime-logs', label: '运行日志', icon: ScrollText, panel: SettingsRuntimeLogsPanel },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']

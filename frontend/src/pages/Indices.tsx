@@ -75,9 +75,15 @@ export function Indices() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [linkedPrice, setLinkedPrice] = useState<number | null>(null)
 
-  // 分时数据需 Pro+ (kline.minute.batch) 能力
+  // 分时查看：TickFlow 分钟能力或公开源单票/指数分时兜底
   const caps = useCapabilities()
-  const hasMinuteCap = !!caps.data?.capabilities?.['kline.minute.batch']
+  const minuteFeat = caps.data?.features?.minute ?? caps.data?.minute
+  const hasMinuteCap = !!(
+    minuteFeat?.view_available
+    || minuteFeat?.available
+    || caps.data?.capabilities?.['kline.minute.batch']
+    || caps.data?.capabilities?.['kline.minute.by_symbol']
+  )
 
   const list = useQuery({
     queryKey: QK.indexList,
@@ -112,10 +118,25 @@ export function Indices() {
     setSearchParams({ symbol })
   }
 
+  // Quotes for pinned board + current selection. Full 600+ list stays instrument names
+  // from data console; prices come from realtime/core or local daily fallback per symbol.
+  const quoteSymbols = useMemo(() => {
+    const set = new Set<string>()
+    for (const p of PINNED_INDEXES) set.add(p.symbol)
+    if (selected) set.add(selected)
+    // Keep first page of list priced from local daily so the desk list is not blank.
+    for (const r of (list.data?.results ?? []).slice(0, 40)) {
+      if (r.symbol) set.add(r.symbol)
+    }
+    return Array.from(set)
+  }, [list.data?.results, selected])
+
   const quotes = useQuery({
-    queryKey: QK.indexQuotes,
-    queryFn: () => api.indexQuotes(),
+    queryKey: [...QK.indexQuotes, quoteSymbols.join(',')],
+    queryFn: () => api.indexQuotes(quoteSymbols.length ? quoteSymbols : undefined),
     placeholderData: (prev) => prev,
+    staleTime: 5_000,
+    refetchInterval: 15_000,
   })
 
   const daily = useQuery({
@@ -174,10 +195,19 @@ export function Indices() {
   }, [selectedSymbol])
 
   useEffect(() => {
-    if ((!selectedDate || !chartRows.some(r => r.date === selectedDate)) && chartRows.length > 0 && daily.data?.symbol === selectedSymbol) {
-      setSelectedDate(chartRows[chartRows.length - 1].date)
+    if (!selectedSymbol || daily.data?.symbol !== selectedSymbol) return
+    if (selectedDate && chartRows.some(r => r.date === selectedDate)) return
+
+    const today = new Date().toISOString().slice(0, 10)
+    const lastDaily = chartRows.length > 0 ? chartRows[chartRows.length - 1].date : null
+    // Prefer today for the minute pane so public intraday can fill even when
+    // free-tier index daily parquet lags the latest trading session.
+    if (hasMinuteCap) {
+      setSelectedDate(today)
+      return
     }
-  }, [chartRows, daily.data?.symbol, selectedDate, selectedSymbol])
+    if (lastDaily) setSelectedDate(lastDaily)
+  }, [chartRows, daily.data?.symbol, selectedDate, selectedSymbol, hasMinuteCap])
   const renderIndexItem = (item: IndexInstrument) => {
     const q = quoteBySymbol.get(item.symbol)
     const pct = q?.change_pct ?? q?.pct
@@ -268,7 +298,15 @@ export function Indices() {
                 {selectedSymbol && <span className={`font-mono text-xs ${Number(selectedQuotePct ?? 0) >= 0 ? 'text-bull' : 'text-bear'}`}>{fmtPct(selectedQuotePct)}</span>}
               </div>
               <div className="mt-1 text-xs text-muted">
-                实时缓存 {quotes.data?.count ?? 0} 只指数 · 日K来源 {daily.data?.source ?? '--'}
+                行情 {quotes.data?.count ?? 0} 只{quotes.data?.source ? ` · ${
+                  quotes.data.source === 'realtime'
+                    ? '实时'
+                    : quotes.data.source === 'index_daily'
+                      ? '日K兜底'
+                      : quotes.data.source === 'mixed'
+                        ? `混合(实时${(quotes.data as any).realtime_count ?? '?'}+日K)`
+                        : quotes.data.source
+                }` : ''} · 日K来源 {daily.data?.source ?? '--'}
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs">
@@ -315,8 +353,8 @@ export function Indices() {
                 {!hasMinuteCap ? (
                   <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
                     <Lock className="h-5 w-5 text-muted" />
-                    <div className="text-xs text-secondary">分时数据权限需 Pro+</div>
-                    <div className="text-[10px] text-muted">升级套餐后可查看指数分时走势</div>
+                    <div className="text-xs text-secondary">暂无分时数据</div>
+                    <div className="text-[10px] text-muted">公开源或本地分钟数据暂不可用</div>
                   </div>
                 ) : (
                   <>

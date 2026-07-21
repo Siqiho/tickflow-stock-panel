@@ -99,6 +99,10 @@ def minute_availability(
       - available: provider has minute batch/by_symbol
       - disabled_by_user: has cap but user turned sync off
       - unavailable: no minute capability on current source/tier
+
+    Product note:
+      Even without TickFlow minute caps, single-symbol / index intraday view is
+      unlocked via free public sources (does NOT enable full-market minute sync).
     """
     has_batch = capset.has(Cap.KLINE_MINUTE_BATCH)
     has_by_symbol = capset.has(Cap.KLINE_MINUTE_BY_SYMBOL)
@@ -106,10 +110,13 @@ def minute_availability(
 
     if not has_any:
         return {
+            # view_available unlocks UI charts; available stays False so pipeline
+            # does not claim full-market minute sync.
             "available": False,
-            "status": "unavailable",
-            "reason": "当前数据源无分钟K权限（需 TickFlow Pro+ 或自定义分钟源）",
-            "reason_code": "no_capability",
+            "view_available": True,
+            "status": "public_fallback",
+            "reason": "全市场分钟同步需 TickFlow Pro+；单票/指数分时可使用公开源",
+            "reason_code": "public_fallback",
             "capability": {
                 "kline.minute.batch": has_batch,
                 "kline.minute.by_symbol": has_by_symbol,
@@ -117,12 +124,14 @@ def minute_availability(
             "user_enabled": user_enabled,
             "full_market_sync_allowed": False,
             "single_symbol_fallback": "free_public_intraday",
-            "fallback_hint": "可使用 /api/free/intraday/{symbol} 查看单票公开分时（不落全市场分钟库）",
+            "fallback_hint": "单票/指数分时走公开源（不落全市场分钟库）",
+            "source": "local_public",
         }
 
     if user_enabled is False:
         return {
             "available": True,
+            "view_available": True,
             "status": "disabled_by_user",
             "reason": "已有分钟能力，但用户关闭了自动同步",
             "reason_code": "user_disabled",
@@ -134,10 +143,12 @@ def minute_availability(
             "full_market_sync_allowed": has_batch,
             "single_symbol_fallback": None,
             "fallback_hint": None,
+            "source": "tickflow",
         }
 
     return {
         "available": True,
+        "view_available": True,
         "status": "available",
         "reason": None,
         "reason_code": "ok",
@@ -149,6 +160,7 @@ def minute_availability(
         "full_market_sync_allowed": has_batch,
         "single_symbol_fallback": None,
         "fallback_hint": None,
+        "source": "tickflow",
     }
 
 
@@ -170,21 +182,161 @@ def feature_availability(
     capset: CapabilitySet,
     *,
     minute_user_enabled: bool | None = None,
+    data_dir=None,
 ) -> dict:
-    """Compact feature matrix for /api/capabilities and UI."""
+    """Compact feature matrix for /api/capabilities and UI.
+
+    financial / adj_factor also become available when local public data exists
+    or the corresponding public provider preference is on.
+    """
+    from pathlib import Path as _Path
+
+    try:
+        from app.config import settings as _settings
+        from app.services import preferences as _prefs
+        from app.services.financial_normalize import (
+            local_adj_factor_ready,
+            local_financials_ready,
+        )
+        d = _Path(data_dir) if data_dir is not None else _Path(_settings.data_dir)
+        local_fin = local_financials_ready(d)
+        local_adj = local_adj_factor_ready(d)
+        pub_fin = _prefs.is_public_financial_provider()
+        pub_adj = _prefs.is_public_adj_factor_provider()
+    except Exception:
+        local_fin = local_adj = pub_fin = pub_adj = False
+
+    fin_ok = bool(capset.has(Cap.FINANCIAL) or pub_fin or local_fin)
+    adj_ok = bool(capset.has(Cap.ADJ_FACTOR) or pub_adj or local_adj)
+
+    if capset.has(Cap.FINANCIAL):
+        fin_reason = None
+        fin_code = "ok"
+        fin_source = "tickflow"
+    elif pub_fin or local_fin:
+        fin_reason = None
+        fin_code = "ok"
+        fin_source = "local_public"
+    else:
+        fin_reason = "当前档位无财务数据权限,且本地尚未同步财务表"
+        fin_code = "no_capability"
+        fin_source = "none"
+
+    if capset.has(Cap.ADJ_FACTOR):
+        adj_reason = None
+        adj_code = "ok"
+        adj_source = "tickflow"
+    elif pub_adj or local_adj:
+        adj_reason = None
+        adj_code = "ok"
+        adj_source = "local_public"
+    else:
+        adj_reason = "当前档位无复权因子权限,且本地尚未同步复权因子"
+        adj_code = "no_capability"
+        adj_source = "none"
+
+    # Depth / sealed: TickFlow Pro+ batch depth, else public L1 (bid1/ask1 vol)
+    has_depth_batch = capset.has(Cap.DEPTH5_BATCH)
+    has_depth_single = capset.has(Cap.DEPTH5)
+    if has_depth_batch or has_depth_single:
+        depth_ok = True
+        depth_reason = None
+        depth_code = "ok"
+        depth_source = "tickflow"
+        depth_status = "available"
+    else:
+        depth_ok = True  # public L1 unlocks sealed judgment
+        depth_reason = None
+        depth_code = "ok"
+        depth_source = "local_public"
+        depth_status = "public_fallback"
+
+    # Quote realtime: TickFlow free+/paid, else public full-market snapshot
+    has_quote = (
+        capset.has(Cap.QUOTE_BY_SYMBOL)
+        or capset.has(Cap.QUOTE_BATCH)
+        or capset.has(Cap.QUOTE_POOL)
+    )
+    try:
+        from app.services import preferences as _prefs_q
+        realtime_provider = _prefs_q.get_realtime_data_provider()
+    except Exception:
+        realtime_provider = "public"
+
+    if has_quote:
+        quote_ok = True
+        quote_reason = None
+        quote_code = "ok"
+        quote_source = "tickflow"
+        quote_status = "available"
+        quote_mode = "full_or_watchlist"
+    elif realtime_provider == "public":
+        quote_ok = True
+        quote_reason = None
+        quote_code = "ok"
+        quote_source = "local_public"
+        quote_status = "public_fallback"
+        quote_mode = "full_market_public"
+    else:
+        quote_ok = True
+        quote_reason = None
+        quote_code = "ok"
+        quote_source = "local_public"
+        quote_status = "public_fallback"
+        quote_mode = "watchlist_public"
+
+    minute_info = minute_availability(capset, user_enabled=minute_user_enabled)
+
     return {
         "daily": daily_availability(capset),
-        "minute": minute_availability(capset, user_enabled=minute_user_enabled),
+        "minute": minute_info,
         "adj_factor": {
-            "available": capset.has(Cap.ADJ_FACTOR),
-            "status": "available" if capset.has(Cap.ADJ_FACTOR) else "unavailable",
-            "reason": None if capset.has(Cap.ADJ_FACTOR) else "当前档位无复权因子权限",
-            "reason_code": "ok" if capset.has(Cap.ADJ_FACTOR) else "no_capability",
+            "available": adj_ok,
+            "status": "available" if adj_ok else "unavailable",
+            "reason": adj_reason,
+            "reason_code": adj_code,
+            "source": adj_source,
         },
         "financial": {
-            "available": capset.has(Cap.FINANCIAL),
-            "status": "available" if capset.has(Cap.FINANCIAL) else "unavailable",
-            "reason": None if capset.has(Cap.FINANCIAL) else "当前档位无财务数据权限",
-            "reason_code": "ok" if capset.has(Cap.FINANCIAL) else "no_capability",
+            "available": fin_ok,
+            "status": "available" if fin_ok else "unavailable",
+            "reason": fin_reason,
+            "reason_code": fin_code,
+            "source": fin_source,
+        },
+        "depth": {
+            "available": depth_ok,
+            "status": depth_status,
+            "reason": depth_reason,
+            "reason_code": depth_code,
+            "source": depth_source,
+            "capability": {
+                "depth5": has_depth_single,
+                "depth5.batch": has_depth_batch,
+            },
+            "fallback": None if has_depth_batch or has_depth_single else "public_l1",
+            "operation": "depth5" if has_depth_batch or has_depth_single else "sealed_l1",
+            "depth5_available": has_depth_batch or has_depth_single,
+        },
+        "quote": {
+            "available": quote_ok,
+            "status": quote_status,
+            "reason": quote_reason,
+            "reason_code": quote_code,
+            "source": quote_source,
+            "mode": quote_mode,
+            "operation": "quote" if has_quote else "quote_snapshot",
+            "capability": {
+                "quote.by_symbol": capset.has(Cap.QUOTE_BY_SYMBOL),
+                "quote.batch": capset.has(Cap.QUOTE_BATCH),
+                "quote.pool": capset.has(Cap.QUOTE_POOL),
+            },
+        },
+        "websocket": {
+            "available": capset.has(Cap.WEBSOCKET),
+            "status": "available" if capset.has(Cap.WEBSOCKET) else "unavailable",
+            "reason": None if capset.has(Cap.WEBSOCKET) else "WebSocket 需 TickFlow Expert，暂无公开源替代",
+            "reason_code": "ok" if capset.has(Cap.WEBSOCKET) else "no_capability",
+            "source": "tickflow" if capset.has(Cap.WEBSOCKET) else "none",
         },
     }

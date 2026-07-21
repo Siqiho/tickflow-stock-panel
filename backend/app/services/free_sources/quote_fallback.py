@@ -6,6 +6,14 @@ from typing import Iterable
 from app.services.free_sources.http_resilience import ResilientHttpClient, get_shared_client
 
 
+QUOTE_UNIT_VERSION = "cn_quote_v1"
+
+
+def _is_tencent_share_volume(code: str) -> bool:
+    """Tencent reports STAR Market volume in shares; other A-share quotes use lots."""
+    return code.lower().startswith("sh68")
+
+
 def _to_tencent_code(symbol: str) -> str:
     s = symbol.strip().upper()
     if "." in s:
@@ -61,6 +69,19 @@ def fetch_tencent_quotes(symbols: Iterable[str], client: ResilientHttpClient | N
         change_pct = None
         if last is not None and prev not in (None, 0):
             change_pct = (last - prev) / prev * 100
+        # Tencent L1 book: bid1 price/vol = 9/10, ask1 price/vol = 19/20
+        bid1 = f(9)
+        bid1_vol = f(10)
+        ask1 = f(19)
+        ask1_vol = f(20)
+        high = f(33) if len(parts) > 33 else None
+        low = f(34) if len(parts) > 34 else None
+        raw_amount = f(37) if len(parts) > 37 else None
+        raw_volume = f(6)
+        source_volume_unit = "share" if _is_tencent_share_volume(code) else "lot"
+        # Canonical daily/quote contract: volume=lots (100 shares), amount=CNY.
+        volume = raw_volume / 100 if raw_volume is not None and source_volume_unit == "share" else raw_volume
+        amount = raw_amount * 10_000 if raw_amount is not None else None
         out.append(
             {
                 "symbol": _from_tencent_code(code),
@@ -68,15 +89,21 @@ def fetch_tencent_quotes(symbols: Iterable[str], client: ResilientHttpClient | N
                 "last": last,
                 "prev_close": prev,
                 "open": f(5),
-                "high": f(33) if len(parts) > 33 else f(33) if False else (f(33) if len(parts) > 33 else None),
-                "low": f(34) if len(parts) > 34 else None,
-                "volume": f(6),
-                "amount": f(37) if len(parts) > 37 else None,
+                "high": high,
+                "low": low,
+                "volume": volume,
+                "amount": amount,
                 "change_pct": change_pct,
+                "bid1": bid1,
+                "bid1_vol": int(bid1_vol) if bid1_vol is not None else None,
+                "ask1": ask1,
+                "ask1_vol": int(ask1_vol) if ask1_vol is not None else None,
                 "source": "tencent",
+                "source_volume_unit": source_volume_unit,
+                "source_amount_unit": "ten_thousand_cny",
+                "unit_version": QUOTE_UNIT_VERSION,
             }
         )
-    # fix high/low indices carefully: Tencent format commonly uses 33 high / 34 low for A-shares
     return out
 
 
@@ -113,8 +140,10 @@ def fetch_sina_quotes(symbols: Iterable[str], client: ResilientHttpClient | None
         last = f(3)
         high = f(4)
         low = f(5)
-        volume = f(8)
+        raw_volume = f(8)
         amount = f(9)
+        # Sina reports volume in shares and amount in CNY.
+        volume = raw_volume / 100 if raw_volume is not None else None
         change_pct = None
         if last is not None and prev not in (None, 0):
             change_pct = (last - prev) / prev * 100
@@ -131,6 +160,9 @@ def fetch_sina_quotes(symbols: Iterable[str], client: ResilientHttpClient | None
                 "amount": amount,
                 "change_pct": change_pct,
                 "source": "sina",
+                "source_volume_unit": "share",
+                "source_amount_unit": "cny",
+                "unit_version": QUOTE_UNIT_VERSION,
             }
         )
     return out
@@ -145,3 +177,44 @@ def fetch_watchlist_quotes(symbols: list[str], client: ResilientHttpClient | Non
     except Exception:  # noqa: BLE001
         pass
     return fetch_sina_quotes(symbols, client=client)
+
+
+def fetch_public_market_quotes(
+    symbols: list[str],
+    *,
+    batch_size: int = 80,
+    pause_s: float = 0.08,
+    client: ResilientHttpClient | None = None,
+) -> list[dict]:
+    """Full-market (or large-universe) public quotes via Tencent/Sina batches.
+
+    Not a TickFlow pool SLA substitute, but enough to drive dashboard live
+    OHLCV/enriched without a paid key.
+    """
+    import time
+
+    client = client or get_shared_client()
+    syms = [str(s).strip().upper() for s in symbols if s]
+    # de-dupe preserve order
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for s in syms:
+        if s not in seen:
+            seen.add(s)
+            ordered.append(s)
+    if not ordered:
+        return []
+
+    out: list[dict] = []
+    bs = max(10, min(100, int(batch_size or 80)))
+    for i in range(0, len(ordered), bs):
+        chunk = ordered[i:i + bs]
+        if i > 0 and pause_s > 0:
+            time.sleep(pause_s)
+        try:
+            rows = fetch_watchlist_quotes(chunk, client=client)
+        except Exception:
+            rows = []
+        if rows:
+            out.extend(rows)
+    return out

@@ -161,10 +161,10 @@ function BubbleItem({ task, isLast, onPointerDown }: {
 
   // 状态配色
   const accent = isWorking
-    ? 'from-purple-500/25 to-fuchsia-500/20 text-purple-300 border-purple-300/40 shadow-[0_6px_24px_-10px_rgba(168,85,247,0.5)]'
+    ? 'from-purple-500/25 to-fuchsia-500/20 text-purple-700 dark:text-purple-300 border-purple-400/40 dark:border-purple-300/40 shadow-[0_6px_24px_-10px_rgba(168,85,247,0.5)]'
     : isError
-      ? 'from-red-500/20 to-red-500/10 text-red-300 border-red-300/40 shadow-[0_6px_20px_-10px_rgba(239,68,68,0.4)]'
-      : 'from-emerald-500/20 to-emerald-500/10 text-emerald-300 border-emerald-300/40 shadow-[0_6px_20px_-10px_rgba(16,185,129,0.35)]'
+      ? 'from-red-500/20 to-red-500/10 text-red-700 dark:text-red-300 border-red-400/40 dark:border-red-300/40 shadow-[0_6px_20px_-10px_rgba(239,68,68,0.4)]'
+      : 'from-emerald-500/20 to-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-400/40 dark:border-emerald-300/40 shadow-[0_6px_20px_-10px_rgba(16,185,129,0.35)]'
 
   return (
     <motion.div
@@ -207,11 +207,11 @@ function BubbleItem({ task, isLast, onPointerDown }: {
         {/* 状态后缀 */}
         <span className="shrink-0 text-[9px] leading-none">
           {isWorking ? (
-            <span className="text-purple-300/80">分析中</span>
+            <span className="text-purple-700 dark:text-purple-300/80">分析中</span>
           ) : isError ? (
-            <span className="text-red-300/80">失败</span>
+            <span className="text-red-700 dark:text-red-300/80">失败</span>
           ) : (
-            <span className="text-emerald-300/80">点击查看</span>
+            <span className="text-emerald-700 dark:text-emerald-300/80">点击查看</span>
           )}
         </span>
       </div>

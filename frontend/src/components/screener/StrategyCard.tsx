@@ -66,8 +66,8 @@ export function cardWrapCls(size: CardSize): string {
 const SRC_MAP: Record<string, string> = { builtin: '内置', custom: '自定义', ai: 'AI' }
 const BADGE_CLS_MAP: Record<string, string> = {
   builtin: 'bg-secondary/10 text-muted border-border',
-  ai: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
-  custom: 'bg-amber-400/10 text-amber-400 border-amber-400/30',
+  ai: 'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/30',
+  custom: 'bg-amber-400/10 text-amber-700 dark:text-amber-400 border-amber-400/30',
 }
 
 // ===== 策略卡片 =====

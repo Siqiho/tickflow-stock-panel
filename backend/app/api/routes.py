@@ -16,13 +16,60 @@ def _capabilities_payload(force: bool = False) -> dict:
     capset = detect_capabilities(force=force)
     minute_user_enabled = preferences.get_minute_sync_enabled()
     features = feature_availability(capset, minute_user_enabled=minute_user_enabled)
+    caps = capset.to_dict()
+    # Backward-compat: some UI still checks capabilities["financial"] key presence.
+    # When local/public financials are ready, expose a lightweight marker without
+    # claiming full TickFlow Expert limits.
+    if features.get("financial", {}).get("available") and "financial" not in caps:
+        caps["financial"] = {
+            "rpm": None,
+            "batch": None,
+            "subscribe": None,
+            "source": features["financial"].get("source", "local_public"),
+            "local": True,
+        }
+    if features.get("adj_factor", {}).get("available") and "adj_factor" not in caps:
+        caps["adj_factor"] = {
+            "rpm": None,
+            "batch": None,
+            "subscribe": None,
+            "source": features["adj_factor"].get("source", "local_public"),
+            "local": True,
+        }
+    # Single-symbol minute view via public source — marker for legacy UI checks.
+    minute_feat = features.get("minute") or {}
+    if minute_feat.get("view_available") and "kline.minute.batch" not in caps and "kline.minute.by_symbol" not in caps:
+        caps["kline.minute.by_symbol"] = {
+            "rpm": None,
+            "batch": 1,
+            "subscribe": None,
+            "source": minute_feat.get("source", "local_public"),
+            "local": True,
+            "view_only": True,
+            "full_market_sync": False,
+        }
+    quote_feat = features.get("quote") or {}
+    if quote_feat.get("available") and "quote.by_symbol" not in caps:
+        caps["quote.by_symbol"] = {
+            "rpm": None,
+            "batch": None,
+            "subscribe": None,
+            "source": quote_feat.get("source", "local_public"),
+            "local": True,
+            "mode": quote_feat.get("mode", "watchlist_public"),
+        }
     return {
         "label": tier_label(),
-        "capabilities": capset.to_dict(),
+        "capabilities": caps,
         "features": features,
         # convenience aliases for UI
         "daily": features["daily"],
         "minute": features["minute"],
+        "financial": features.get("financial"),
+        "adj_factor": features.get("adj_factor"),
+        "depth": features.get("depth"),
+        "quote": features.get("quote"),
+        "websocket": features.get("websocket"),
     }
 
 

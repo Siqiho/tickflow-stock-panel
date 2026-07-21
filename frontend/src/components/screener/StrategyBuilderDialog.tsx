@@ -264,7 +264,7 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
           <div className="grid grid-cols-[1fr_auto_1fr] items-center px-5 py-2.5 border-b border-border/50">
             {/* 左侧：Tab 切换 */}
             <div className="flex rounded-lg bg-elevated p-0.5 w-fit">
-              <button onClick={() => setTab('ai')} className={cn('px-3 py-1 rounded-md text-xs font-medium transition-all cursor-pointer', tab === 'ai' ? 'bg-amber-400/15 text-amber-400' : 'text-muted hover:text-foreground')}>
+              <button onClick={() => setTab('ai')} className={cn('px-3 py-1 rounded-md text-xs font-medium transition-all cursor-pointer', tab === 'ai' ? 'bg-amber-400/15 text-amber-700 dark:text-amber-400' : 'text-muted hover:text-foreground')}>
                 <Sparkles className="h-3 w-3 inline mr-1" />AI 生成
               </button>
               <button onClick={() => setTab('custom')} className={cn('px-3 py-1 rounded-md text-xs font-medium transition-all cursor-pointer', tab === 'custom' ? 'bg-accent/15 text-accent' : 'text-muted hover:text-foreground')}>
@@ -279,9 +279,9 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
             <div className="flex items-center justify-end gap-2">
               {tab === 'ai' && (
                 <div className="flex items-center gap-1">
-                  <span className={'w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ' + (step === 1 ? 'bg-amber-400/20 text-amber-400' : 'bg-emerald-400/20 text-emerald-400')}>1</span>
+                  <span className={'w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ' + (step === 1 ? 'bg-amber-400/20 text-amber-700 dark:text-amber-400' : 'bg-emerald-400/20 text-emerald-700 dark:text-emerald-400')}>1</span>
                   <span className="text-muted/20 text-[10px]">—</span>
-                  <span className={'w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ' + (step === 2 ? 'bg-amber-400/20 text-amber-400' : 'bg-border/50 text-muted')}>2</span>
+                  <span className={'w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ' + (step === 2 ? 'bg-amber-400/20 text-amber-700 dark:text-amber-400' : 'bg-border/50 text-muted')}>2</span>
                 </div>
               )}
               <button onClick={handleClose} className="p-1.5 rounded-lg hover:bg-elevated"><X className="h-4 w-4 text-muted" /></button>
@@ -292,8 +292,8 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
           <div className="px-5 py-2 border-b border-border/30 bg-elevated/30">
             {tab === 'ai' ? (
               <div className="flex items-center gap-2 text-[11px]">
-                <Sparkles className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-                <span className="text-amber-400/80">步骤 1 描述策略规则 → 步骤 2 预览代码 → 保存</span>
+                <Sparkles className="h-3.5 w-3.5 text-amber-700 dark:text-amber-400 shrink-0" />
+                <span className="text-amber-700 dark:text-amber-400">步骤 1 描述策略规则 → 步骤 2 预览代码 → 保存</span>
               </div>
             ) : (
               <div className="flex items-center gap-2 text-[11px]">
@@ -308,10 +308,10 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
             {tab === 'ai' ? (<>
             {aiStatus && !aiStatus.configured && (
               <div className="rounded-xl border border-amber-400/30 bg-amber-400/5 px-4 py-3 flex items-center gap-3">
-                <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
-                <div className="flex-1 text-xs text-amber-400/80">AI API Key 未配置，无法生成策略。填写的内容会自动保存。</div>
+                <AlertTriangle className="h-4 w-4 text-amber-700 dark:text-amber-400 shrink-0" />
+                <div className="flex-1 text-xs text-amber-700 dark:text-amber-400">AI API Key 未配置，无法生成策略。填写的内容会自动保存。</div>
                 <button onClick={() => { persist(); window.location.href = '/settings?tab=ai' }}
-                  className="h-7 px-3 rounded-lg bg-amber-400/15 border border-amber-400/30 text-amber-400 text-xs font-medium flex items-center gap-1.5 hover:bg-amber-400/20 shrink-0">
+                  className="h-7 px-3 rounded-lg bg-amber-400/15 border border-amber-400/30 text-amber-700 dark:text-amber-400 text-xs font-medium flex items-center gap-1.5 hover:bg-amber-400/20 shrink-0">
                   <Settings2 className="h-3 w-3" />去配置
                 </button>
               </div>
@@ -329,7 +329,7 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
                   <span className="text-[10px] text-muted/50 uppercase tracking-wider mb-1.5 block">选股方向</span>
                   <div className="flex gap-1">
                     {DIRECTIONS.map(d => (
-                      <button key={d.value} onClick={() => setDirection(d.value)} className={'px-2.5 py-1 rounded text-[11px] font-medium border transition-colors ' + (direction === d.value ? 'border-amber-400/40 bg-amber-400/10 text-amber-400' : 'border-border bg-base text-muted hover:border-amber-400/30')}>{d.label}</button>
+                      <button key={d.value} onClick={() => setDirection(d.value)} className={'px-2.5 py-1 rounded text-[11px] font-medium border transition-colors ' + (direction === d.value ? 'border-amber-400/40 bg-amber-400/10 text-amber-700 dark:text-amber-400' : 'border-border bg-base text-muted hover:border-amber-400/30')}>{d.label}</button>
                     ))}
                   </div>
                 </div>
@@ -341,7 +341,7 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
                 </div>
                 {error && <div className="text-[11px] text-danger bg-danger/10 border border-danger/20 rounded-lg px-3 py-2">{error}</div>}
                 <button onClick={handleGenerate} disabled={loading || !name.trim() || !rules.trim()}
-                  className="w-full h-10 rounded-xl bg-gradient-to-r from-amber-500/20 to-amber-500/10 border border-amber-400/30 text-amber-400 text-sm font-medium flex items-center justify-center gap-2 hover:from-amber-500/30 hover:to-amber-500/20 disabled:opacity-40 transition-all">
+                  className="w-full h-10 rounded-xl bg-gradient-to-r from-amber-500/20 to-amber-500/10 border border-amber-400/30 text-amber-700 dark:text-amber-400 text-sm font-medium flex items-center justify-center gap-2 hover:from-amber-500/30 hover:to-amber-500/20 disabled:opacity-40 transition-all">
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                   {loading ? 'AI 生成中...' : code ? '重新生成' : 'AI 生成策略'}
                 </button>
@@ -351,8 +351,8 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
                 {/* Tab 切换 */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-0.5">
-                    <button onClick={() => setPreviewTab('params')} className={'px-3 py-1 rounded text-xs font-medium transition-colors ' + (previewTab === 'params' ? 'bg-amber-400/15 text-amber-400' : 'text-muted hover:text-secondary')}>参数</button>
-                    <button onClick={() => setPreviewTab('code')} className={'px-3 py-1 rounded text-xs font-medium transition-colors ' + (previewTab === 'code' ? 'bg-amber-400/15 text-amber-400' : 'text-muted hover:text-secondary')}>代码</button>
+                    <button onClick={() => setPreviewTab('params')} className={'px-3 py-1 rounded text-xs font-medium transition-colors ' + (previewTab === 'params' ? 'bg-amber-400/15 text-amber-700 dark:text-amber-400' : 'text-muted hover:text-secondary')}>参数</button>
+                    <button onClick={() => setPreviewTab('code')} className={'px-3 py-1 rounded text-xs font-medium transition-colors ' + (previewTab === 'code' ? 'bg-amber-400/15 text-amber-700 dark:text-amber-400' : 'text-muted hover:text-secondary')}>代码</button>
                   </div>
                 </div>
 
@@ -383,9 +383,9 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
                             <div className="text-[10px] text-muted/50 uppercase tracking-wider">交易信号</div>
                             {entrySignals.length > 0 && (
                               <div className="flex items-center gap-2">
-                                <span className="text-[10px] text-emerald-400 w-10 shrink-0">买入</span>
+                                <span className="text-[10px] text-emerald-700 dark:text-emerald-400 w-10 shrink-0">买入</span>
                                 <div className="flex flex-wrap gap-0.5">
-                                  {entrySignals.map((s: string) => <span key={s} className="px-1.5 py-0.5 rounded bg-emerald-400/10 text-emerald-400 text-[10px] font-mono">{s}</span>)}
+                                  {entrySignals.map((s: string) => <span key={s} className="px-1.5 py-0.5 rounded bg-emerald-400/10 text-emerald-700 dark:text-emerald-400 text-[10px] font-mono">{s}</span>)}
                                 </div>
                               </div>
                             )}
@@ -434,7 +434,7 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
                     placeholder="调整策略逻辑，如：增加RSI超卖条件、要求今日放量、修改均线为30日..."
                     className="flex-1 h-9 px-3 rounded-lg bg-base border-0 ring-1 ring-border/30 text-sm text-foreground placeholder:text-muted/30 focus:outline-none focus:ring-2 focus:ring-accent/30" />
                   <button onClick={handleModify} disabled={loading || !instruction.trim()}
-                    className="h-9 px-4 rounded-lg bg-amber-400/15 border border-amber-400/30 text-amber-400 text-xs font-medium flex items-center gap-1.5 hover:bg-amber-400/20 disabled:opacity-40 transition-all">
+                    className="h-9 px-4 rounded-lg bg-amber-400/15 border border-amber-400/30 text-amber-700 dark:text-amber-400 text-xs font-medium flex items-center gap-1.5 hover:bg-amber-400/20 disabled:opacity-40 transition-all">
                     {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                     AI 修改
                   </button>
@@ -470,7 +470,7 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-medium text-foreground">快速模板</span>
                     <button onClick={() => { navigator.clipboard.writeText(CUSTOM_TEMPLATE); setCustomCopied(true); setTimeout(() => setCustomCopied(false), 2000) }}
-                      className={cn('inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all cursor-pointer', customCopied ? 'bg-emerald-400/10 text-emerald-400' : 'bg-elevated text-muted hover:text-foreground hover:bg-accent/10')}>
+                      className={cn('inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all cursor-pointer', customCopied ? 'bg-emerald-400/10 text-emerald-700 dark:text-emerald-400' : 'bg-elevated text-muted hover:text-foreground hover:bg-accent/10')}>
                       {customCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
                       {customCopied ? '已复制' : '复制模板'}
                     </button>

@@ -11,8 +11,8 @@ interface Props {
 
 const SOURCE_CLS: Record<string, string> = {
   builtin: 'bg-accent/10 text-accent border-accent/20',
-  custom: 'bg-amber-400/10 text-amber-400 border-amber-400/30',
-  ai: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  custom: 'bg-amber-400/10 text-amber-700 dark:text-amber-400 border-amber-400/30',
+  ai: 'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20',
   invalid: 'bg-danger/10 text-danger border-danger/20',
 }
 

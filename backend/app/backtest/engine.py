@@ -6,22 +6,19 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date
-from typing import Callable
+from typing import Callable, Literal
 
 logger = logging.getLogger(__name__)
-from typing import Literal
 
 import numpy as np
 import polars as pl
 
 from app.tickflow.repository import KlineRepository
-
-logger = logging.getLogger(__name__)
-
 
 # ================================================================
 # 数据结构

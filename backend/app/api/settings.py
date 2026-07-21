@@ -24,6 +24,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
+
+def _ai_xai_status() -> dict:
+    try:
+        from app.services import xai_oauth
+        return xai_oauth.status()
+    except Exception as e:
+        logger.warning("xai status failed: %s", e)
+        return {"auth_type": None, "has_oauth": False, "has_access_token": False, "expires_at": None, "expired": False}
+
 # 默认端点 —— endpoints.json 列表第一项,UI"当前使用"始终对齐此项。
 # 注意:Free 模式 SDK 实际走 free-api(免费数据通道),但 UI 显示统一用默认节点。
 DEFAULT_PAID_ENDPOINT = "https://api.tickflow.org"
@@ -40,7 +49,7 @@ def _sync_financial_scheduler_caps(app_state, capset) -> None:
         return
     try:
         fs.update_capabilities(capset)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logging.getLogger(__name__).warning("update financial_scheduler capabilities failed: %s", e)
 
 
@@ -77,6 +86,7 @@ def get_settings() -> dict:
         "ai_model": current_ai_model(),
         "ai_codex_command": current_codex_command(),
         "ai_user_agent": secrets_store.get_ai_config("ai_user_agent", settings.ai_user_agent),
+        "ai_xai": _ai_xai_status(),
     }
 
 
@@ -125,7 +135,8 @@ def save_tickflow_key(req: TickflowKeyIn, request: Request) -> dict:
     故自动切到默认付费端点(api.tickflow.org);free 档则清除自定义端点。
     """
     from app.tickflow.policy import (
-        base_tier_name, is_invalid_key,
+        base_tier_name,
+        is_invalid_key,
     )
 
     key = req.api_key.strip()
@@ -241,19 +252,34 @@ class AiSettingsIn(BaseModel):
 def save_ai_settings(req: AiSettingsIn) -> dict:
     """保存 AI 配置（全部持久化到 secrets.json）"""
     from app.config import settings
-    from app.services.ai_provider import ai_configured, current_ai_model, current_ai_provider, current_codex_command, normalize_codex_command
+    from app.services.ai_provider import (
+        XAI_API_BASE,
+        XAI_PROVIDER,
+        ai_configured,
+        current_ai_model,
+        current_ai_provider,
+        current_codex_command,
+        normalize_codex_command,
+    )
 
     updates: dict = {}
     if req.provider:
         updates["ai_provider"] = req.provider
         settings.ai_provider = req.provider
-    if req.base_url:
+    # xAI 官方端点固定；其他 provider 按用户填写
+    if req.provider == XAI_PROVIDER:
+        updates["ai_base_url"] = XAI_API_BASE
+        settings.ai_base_url = XAI_API_BASE
+    elif req.base_url:
         updates["ai_base_url"] = req.base_url
         settings.ai_base_url = req.base_url
     if req.api_key is not None:
         if req.api_key:
             updates["ai_api_key"] = req.api_key
             settings.ai_api_key = req.api_key
+            if req.provider == XAI_PROVIDER:
+                # 粘贴 Key 时切换为 api_key 模式（不立刻清 OAuth，避免误操作；调用优先 OAuth）
+                updates["ai_xai_auth_type"] = "api_key"
         else:
             secrets_store.clear("ai_api_key")
             settings.ai_api_key = ""
@@ -284,6 +310,7 @@ def save_ai_settings(req: AiSettingsIn) -> dict:
         "ai_model": current_ai_model(),
         "ai_codex_command": current_codex_command(),
         "ai_configured": ai_configured(provider),
+        "ai_xai": _ai_xai_status(),
     }
 
 
@@ -295,7 +322,17 @@ def clear_ai_settings() -> dict:
     """
     from app.config import settings
 
-    secrets_store.clear("ai_provider", "ai_base_url", "ai_api_key", "ai_model", "ai_codex_command")
+    secrets_store.clear(
+        "ai_provider",
+        "ai_base_url",
+        "ai_api_key",
+        "ai_model",
+        "ai_codex_command",
+        "ai_xai_access_token",
+        "ai_xai_refresh_token",
+        "ai_xai_expires_at",
+        "ai_xai_auth_type",
+    )
     # 同步重置运行时内存(provider 回默认值,其余置空)
     settings.ai_provider = "openai_compat"
     settings.ai_base_url = ""
@@ -304,6 +341,98 @@ def clear_ai_settings() -> dict:
     settings.ai_codex_command = "codex"
 
     return {"ok": True}
+
+
+# ===== xAI / Grok SuperGrok 登录 =====
+
+class XaiDeviceStartOut(BaseModel):
+    device_code: str
+    user_code: str
+    verification_uri: str
+    verification_uri_complete: str = ""
+    expires_in: int
+    interval: int
+
+
+@router.post("/ai/xai/device/start")
+def xai_device_start() -> dict:
+    """发起 xAI 设备码登录（SuperGrok 订阅 OAuth）。"""
+    from app.services import xai_oauth
+    try:
+        return xai_oauth.request_device_code()
+    except xai_oauth.XaiOAuthError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("xai device start failed")
+        raise HTTPException(status_code=502, detail=f"无法连接 xAI 认证服务: {e}") from e
+
+
+class XaiDevicePollIn(BaseModel):
+    device_code: str
+    interval: int | None = None
+    expires_in: int | None = None
+    model: str = "grok-4.5"
+
+
+@router.post("/ai/xai/device/poll")
+def xai_device_poll(req: XaiDevicePollIn) -> dict:
+    """单次探测设备码状态；前端按 interval 轮询本接口。"""
+    from app.config import settings
+    from app.services import xai_oauth
+    from app.services.ai_provider import (
+        XAI_API_BASE,
+        XAI_DEFAULT_MODEL,
+        XAI_PROVIDER,
+        ai_configured,
+        current_ai_model,
+    )
+
+    try:
+        result = xai_oauth.attempt_device_token(req.device_code)
+    except xai_oauth.XaiOAuthError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if result.get("status") != "authorized":
+        return {
+            "ok": False,
+            "status": "pending",
+            "slow_down": bool(result.get("slow_down")),
+        }
+
+    tokens = result["tokens"]
+    xai_oauth.save_oauth_tokens(tokens)
+    model = (req.model or "").strip() or XAI_DEFAULT_MODEL
+    secrets_store.save({
+        "ai_provider": XAI_PROVIDER,
+        "ai_base_url": XAI_API_BASE,
+        "ai_model": model,
+    })
+    settings.ai_provider = XAI_PROVIDER
+    settings.ai_base_url = XAI_API_BASE
+    settings.ai_model = model
+    settings.ai_api_key = ""
+
+    return {
+        "ok": True,
+        "status": "authorized",
+        "ai_provider": XAI_PROVIDER,
+        "ai_model": current_ai_model(),
+        "ai_configured": ai_configured(XAI_PROVIDER),
+        "ai_xai": xai_oauth.status(),
+    }
+
+
+@router.get("/ai/xai/status")
+def xai_status() -> dict:
+    return _ai_xai_status()
+
+
+@router.delete("/ai/xai/session")
+def xai_logout() -> dict:
+    """仅清除 xAI OAuth 会话，保留其它 AI 配置。"""
+    from app.services import xai_oauth
+    xai_oauth.clear_oauth_tokens()
+    return {"ok": True, "ai_xai": _ai_xai_status()}
 
 
 # ===== 偏好设置 =====
@@ -331,6 +460,8 @@ def get_preferences() -> dict:
         "minute_sync_days": preferences.get_minute_sync_days(),
         "daily_data_provider": preferences.get_daily_data_provider(),
         "adj_factor_provider": preferences.get_adj_factor_provider(),
+        "financial_provider": preferences.get_financial_provider(),
+        "pool_provider": preferences.get_pool_provider(),
         "minute_data_provider": preferences.get_minute_data_provider(),
         "realtime_data_provider": preferences.get_realtime_data_provider(),
         "realtime_watchlist_symbols": preferences.get_realtime_watchlist_symbols(),
@@ -338,6 +469,9 @@ def get_preferences() -> dict:
         "pipeline_pull_a_share": preferences.get_pipeline_pull_a_share(),
         "pipeline_pull_etf": preferences.get_pipeline_pull_etf(),
         "pipeline_pull_index": preferences.get_pipeline_pull_index(),
+        "pipeline_universe_scope": preferences.get_pipeline_universe_scope(),
+        "public_data_scope": preferences.get_public_data_scope(),
+        "financial_max_periods": preferences.get_financial_max_periods(),
         "pipeline_index_symbols": preferences.get_pipeline_index_symbols(),
         "pipeline_schedule": preferences.get_pipeline_schedule(),
         "instruments_schedule": preferences.get_instruments_schedule(),
@@ -449,12 +583,66 @@ class RealtimeQuoteScopePrefs(BaseModel):
     realtime_index_symbols: list[str] | None = None
 
 
+
+
+class AdjFactorProviderPrefs(BaseModel):
+    adj_factor_provider: str  # tickflow | public | sina | sina_qfq | free | same_as_daily
+
+
+@router.put("/preferences/adj-factor-provider")
+def update_adj_factor_provider(req: AdjFactorProviderPrefs) -> dict:
+    """设置除权因子数据源。public/sina* 使用免费新浪 qfq，不依赖 TickFlow ADJ_FACTOR。"""
+    from app.services import preferences
+    allowed = {"tickflow", "public", "sina", "sina_qfq", "free", "same_as_daily"}
+    val = (req.adj_factor_provider or "same_as_daily").strip().lower()
+    if val not in allowed:
+        raise HTTPException(status_code=400, detail=f"unsupported adj_factor_provider: {val}")
+    preferences.save({"adj_factor_provider": val})
+    return {"adj_factor_provider": preferences.get_adj_factor_provider()}
+
+
+
+
+class FinancialProviderPrefs(BaseModel):
+    financial_provider: str  # tickflow | public | eastmoney | em | free
+
+
+@router.put("/preferences/financial-provider")
+def update_financial_provider(req: FinancialProviderPrefs) -> dict:
+    """设置财务四表数据源。public/eastmoney 使用东财 HSF10，不依赖 TickFlow FINANCIAL。"""
+    from app.services import preferences
+    allowed = {"tickflow", "public", "eastmoney", "em", "free"}
+    val = (req.financial_provider or "tickflow").strip().lower()
+    if val not in allowed:
+        raise HTTPException(status_code=400, detail=f"unsupported financial_provider: {val}")
+    preferences.save({"financial_provider": val})
+    return {"financial_provider": preferences.get_financial_provider()}
+
+
+
+
+class PoolProviderPrefs(BaseModel):
+    pool_provider: str  # tickflow | public | csindex | sina | free
+
+
+@router.put("/preferences/pool-provider")
+def update_pool_provider(req: PoolProviderPrefs) -> dict:
+    """设置指数成分池数据源。public/csindex 使用中证官方 XLS(+新浪 fallback)。"""
+    from app.services import preferences
+    allowed = {"tickflow", "public", "csindex", "sina", "free"}
+    val = (req.pool_provider or "public").strip().lower()
+    if val not in allowed:
+        raise HTTPException(status_code=400, detail=f"unsupported pool_provider: {val}")
+    preferences.save({"pool_provider": val})
+    return {"pool_provider": preferences.get_pool_provider()}
+
+
 @router.put("/preferences/realtime-quotes")
 def update_realtime_quotes(req: RealtimeQuotesPrefs, request: Request) -> dict:
     """保存全局实时行情开关。
 
-    none 档无实时行情权限；free 档开启自选股实时；starter+ 开启全市场实时。
-    前端据此把开关置灰 / 回弹。
+    none/free 档开启自选股实时（公开源可兜底）；starter+ 开启全市场实时。
+    前端据此展示模式与限制。
     """
     from app.services import preferences
     qs = getattr(request.app.state, "quote_service", None)
@@ -572,6 +760,64 @@ class PipelineIndexSymbolsIn(BaseModel):
     symbols: str = ""
 
 
+
+
+class UniverseScopeIn(BaseModel):
+    """标的范围: ALL | CSI300 | CSI500 | SSE50 | WATCHLIST"""
+    scope: str
+
+
+@router.put("/preferences/pipeline-universe-scope")
+def update_pipeline_universe_scope(req: UniverseScopeIn) -> dict:
+    """盘后管道主标的范围（影响日K/管道 universe）。"""
+    from app.services import preferences
+    from app.services.universe_scope import SCOPE_LABELS
+    val = preferences.set_pipeline_universe_scope(req.scope)
+    return {
+        "pipeline_universe_scope": val,
+        "label": SCOPE_LABELS.get(val, val),
+    }
+
+
+@router.put("/preferences/public-data-scope")
+def update_public_data_scope(req: UniverseScopeIn) -> dict:
+    """public 复权/财务同步默认范围（默认 CSI300；可设 CSI800=300∪500）。"""
+    from app.services import preferences
+    from app.services.universe_scope import SCOPE_LABELS
+    val = preferences.set_public_data_scope(req.scope)
+    return {
+        "public_data_scope": val,
+        "label": SCOPE_LABELS.get(val, val),
+    }
+
+
+
+
+class FinancialMaxPeriodsIn(BaseModel):
+    financial_max_periods: int
+
+
+@router.put("/preferences/financial-max-periods")
+def update_financial_max_periods(req: FinancialMaxPeriodsIn) -> dict:
+    """public 财务拉取报告期数量 (4-40, 默认 12)。"""
+    from app.services import preferences
+    val = preferences.set_financial_max_periods(req.financial_max_periods)
+    return {"financial_max_periods": val}
+
+
+@router.get("/preferences/universe-scope-options")
+def universe_scope_options() -> dict:
+    """前端下拉选项。"""
+    from app.services.universe_scope import SCOPE_LABELS, VALID_SCOPES
+    return {
+        "items": [{"value": s, "label": SCOPE_LABELS.get(s, s)} for s in VALID_SCOPES],
+        "defaults": {
+            "pipeline_universe_scope": "ALL",
+            "public_data_scope": "CSI300",
+        },
+    }
+
+
 @router.put("/preferences/pipeline-index-symbols")
 def update_pipeline_index_symbols(req: PipelineIndexSymbolsIn) -> dict:
     """保存指数自定义拉取代码。"""
@@ -612,8 +858,7 @@ def update_feishu_webhook(req: FeishuWebhookPrefsIn) -> dict:
     - url: 传入空串表示清空配置; 非空则需为合法的飞书自定义机器人地址。
     - secret: 机器人启用了「签名校验」时填密钥, 留空表示不验签。
     """
-    from app.services import preferences
-    from app.services import webhook_adapter
+    from app.services import preferences, webhook_adapter
 
     url = (req.url or "").strip()
     if url and not webhook_adapter.is_valid_feishu_url(url):
@@ -963,11 +1208,7 @@ def update_limit_ladder_monitor(req: LimitLadderMonitorIn, request: Request) -> 
 
 @router.post("/preferences/limit-ladder-monitor/run")
 def run_limit_ladder_fix(request: Request) -> dict:
-    """立即手动修正一次真假板(拉取五档盘口 + 更新缓存)。需 Pro+。"""
-    from app.tickflow.capabilities import Cap
-    capset = request.app.state.capabilities
-    capset.require(Cap.DEPTH5_BATCH)  # 无能力抛 CapabilityDenied(403)
-
+    """立即手动修正一次真假板(TickFlow 五档或公开 L1 盘口 + 更新缓存)。"""
     depth_svc = getattr(request.app.state, "depth_service", None)
     if not depth_svc:
         raise HTTPException(status_code=503, detail="depth 服务未初始化")
@@ -980,10 +1221,7 @@ class DepthPollingIntervalIn(BaseModel):
 
 @router.put("/preferences/depth-polling-interval")
 def update_depth_polling_interval(req: DepthPollingIntervalIn, request: Request) -> dict:
-    """保存五档盘口盘中轮询间隔(秒)。需 Pro+。"""
-    from app.tickflow.capabilities import Cap
-    request.app.state.capabilities.require(Cap.DEPTH5_BATCH)
-
+    """保存五档盘口盘中轮询间隔(秒)。公开 L1 / TickFlow 均可用。"""
     from app.services import preferences
     interval = preferences.set_depth_polling_interval(req.interval)
     return {"depth_polling_interval": interval}
@@ -996,10 +1234,7 @@ class DepthFinalizeTimeIn(BaseModel):
 
 @router.put("/preferences/depth-finalize-time")
 def update_depth_finalize_time(req: DepthFinalizeTimeIn, request: Request) -> dict:
-    """保存盘后 sealed 定版时间(范围15:01~18:00)并立即 reschedule。需 Pro+。"""
-    from app.tickflow.capabilities import Cap
-    request.app.state.capabilities.require(Cap.DEPTH5_BATCH)
-
+    """保存盘后 sealed 定版时间(范围15:01~18:00)并立即 reschedule。"""
     from app.services import preferences
     sched = preferences.set_depth_finalize_time(req.hour, req.minute)
 
@@ -1049,7 +1284,7 @@ def update_review_schedule(req: ReviewScheduleIn, request: Request) -> dict:
     sched = preferences.set_review_schedule(req.enabled, req.hour, req.minute)
 
     # 动态操作 APScheduler job
-    from app.jobs.daily_pipeline import _register_review_job, REVIEW_JOB_ID
+    from app.jobs.daily_pipeline import REVIEW_JOB_ID, _register_review_job
     scheduler = getattr(request.app.state, "scheduler", None)
     if scheduler:
         if sched["enabled"]:

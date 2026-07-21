@@ -15,6 +15,7 @@ import { STAGE_LABELS } from '@/components/data/ActiveJobCard'
 import { cn } from '@/lib/cn'
 import { cnSignal } from '@/lib/signals'
 import { boardTag } from '@/components/stock-table/primitives'
+import { SectorFundFlowPanel } from '@/components/SectorFundFlowPanel'
 
 function n(v: number | null | undefined) {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
@@ -81,10 +82,10 @@ function SectionTitle({ icon: Icon, title, hint }: { icon: typeof Activity; titl
 
 // 看板监控中心小组件 — 显示前 10 条触发记录 + 更多按钮
 const _SOURCE_BADGE: Record<string, string> = {
-  strategy: 'bg-amber-400/10 text-amber-400',
+  strategy: 'bg-amber-400/10 text-amber-700 dark:text-amber-400',
   signal: 'bg-accent/10 text-accent',
-  price: 'bg-emerald-400/10 text-emerald-400',
-  market: 'bg-purple-500/10 text-purple-400',
+  price: 'bg-emerald-400/10 text-emerald-700 dark:text-emerald-400',
+  market: 'bg-purple-500/10 text-purple-700 dark:text-purple-400',
 }
 const _SOURCE_LABEL: Record<string, string> = {
   strategy: '策略', signal: '信号', price: '价格', market: '异动',
@@ -161,11 +162,11 @@ function MonitorWidget() {
               {/* 第二行: 策略类型走新格式, 其他走旧格式 */}
               {isStrategy ? (
                 <div className="mt-0.5 flex items-center gap-1.5">
-                  <span className={cn('text-[9px] font-medium', isNew ? 'text-danger' : 'text-emerald-400')}>
+                  <span className={cn('text-[9px] font-medium', isNew ? 'text-danger' : 'text-emerald-700 dark:text-emerald-400')}>
                     {isNew ? '进入' : '移出'}
                   </span>
                   <span className="text-[9px] text-muted">策略</span>
-                  <span className="text-[9px] font-medium text-amber-400">「{sname}」</span>
+                  <span className="text-[9px] font-medium text-amber-700 dark:text-amber-400">「{sname}」</span>
                   <span className="flex-1" />
                   <span className="text-[8px] text-muted/50 shrink-0 font-mono">
                     {ev.ts ? new Date(ev.ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
@@ -407,8 +408,8 @@ function StockList({ title, rows, mode }: { title: string; rows: MarketSnapshotR
                 </>
               ) : mode === 'active' ? (
                 <>
-                  {/* overview 的 turnover_rate 为小数制, 需 ×100 转百分数显示 */}
-                  <div className="font-mono text-[11px] text-accent">{fmtPrice(r.turnover_rate != null ? r.turnover_rate * 100 : null, 1)}%</div>
+                  {/* backend turnover_rate is already in percentage points. */}
+                  <div className="font-mono text-[11px] text-accent">{fmtPrice(r.turnover_rate, 1)}%</div>
                   <div className={`font-mono text-[9px] ${pctClass(r.change_pct)}`}>{fmtStockPct(r.change_pct)}</div>
                 </>
               ) : (
@@ -486,7 +487,12 @@ export function Dashboard() {
   const data = overview.data
   const caps = useCapabilities()
   const settings = useSettings()
-  const hasDepth = !!caps.data?.capabilities?.['depth5.batch']
+  const hasDepth = !!(
+    caps.data?.features?.depth?.available
+    || caps.data?.depth?.available
+    || caps.data?.capabilities?.['depth5.batch']
+    || caps.data?.capabilities?.['depth5']
+  )
   const sealedReady = !!data?.limit?.sealed_ready
   const isSealedDegrade = !hasDepth || !sealedReady
   // none 档(无 key / 无效 key): 不再阻断功能, 仅实时行情等扩展能力受限
@@ -731,6 +737,8 @@ export function Dashboard() {
             <HotRankCard title="概念热度" rank={data.concept_rank} configUrl="/concept-analysis" />
             <HotRankCard title="行业热度" rank={data.industry_rank} configUrl="/industry-analysis" />
           </div>
+
+          <SectorFundFlowPanel kind="both" top={6} />
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StockList title="涨幅榜" rows={data.top_gainers} mode="gain" />

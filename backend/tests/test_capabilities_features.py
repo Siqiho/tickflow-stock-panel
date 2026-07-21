@@ -26,5 +26,15 @@ def test_capabilities_includes_features(monkeypatch):
     body = r.json()
     assert "features" in body
     assert body["minute"]["available"] is False
-    assert body["minute"]["reason_code"] == "no_capability"
+    assert body["minute"]["view_available"] is True
+    assert body["minute"]["reason_code"] == "public_fallback"
     assert body["daily"]["available"] is True
+    assert body["depth"]["available"] is True
+    assert body["depth"]["operation"] == "sealed_l1"
+    assert body["depth"]["depth5_available"] is False
+    assert "depth5.batch" not in body["capabilities"]
+    assert body["quote"]["available"] is True
+    assert body["quote"]["operation"] == "quote_snapshot"
+    assert "quote.batch" not in body["capabilities"]
+    assert "quote.pool" not in body["capabilities"]
+    assert body["websocket"]["available"] is False

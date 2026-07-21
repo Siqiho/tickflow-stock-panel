@@ -16,7 +16,7 @@ interface Props {
   /** 信息条字段配置（由 StockPanel 提升，受控） */
   fields: ColumnConfig[]
   onFieldsChange: (fields: ColumnConfig[]) => void
-  /** 财务指标最新一期（来自 useFinancialMetrics，受 Cap.FINANCIAL 门控） */
+  /** 财务指标最新一期（来自 useFinancialMetrics，Expert Cap 或本地/public 财务可用时展示） */
   financialMetrics?: FinancialMetricRecord
   /** 加监控回调 (个股弹窗传入, 有值时渲染 RadioTower 图标) */
   onMonitor?: () => void

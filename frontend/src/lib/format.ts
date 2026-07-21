@@ -26,10 +26,13 @@ export function priceColorClass(v: number | null | undefined): string {
 
 export function fmtBigNum(v: number | null | undefined): string {
   if (v == null || Number.isNaN(v)) return '—'
-  if (v >= 1_000_000_000_000) return `${(v / 1_000_000_000_000).toFixed(2)}万亿`
-  if (v >= 100_000_000) return `${(v / 100_000_000).toFixed(2)}亿`
-  if (v >= 10_000) return `${(v / 10_000).toFixed(0)}万`
-  return v.toFixed(0)
+  // 资金流等场景会有负值：按绝对值选单位，再保留符号（与正数同一套 万/亿/万亿）
+  const sign = v < 0 ? '-' : ''
+  const abs = Math.abs(v)
+  if (abs >= 1_000_000_000_000) return `${sign}${(abs / 1_000_000_000_000).toFixed(2)}万亿`
+  if (abs >= 100_000_000) return `${sign}${(abs / 100_000_000).toFixed(2)}亿`
+  if (abs >= 10_000) return `${sign}${(abs / 10_000).toFixed(0)}万`
+  return `${sign}${abs.toFixed(0)}`
 }
 
 export function fmtDate(s: string | Date | null | undefined): string {

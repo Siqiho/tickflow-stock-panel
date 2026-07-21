@@ -238,7 +238,6 @@ class FactorBacktestService:
         import datetime as _dt
 
         all_dates = sorted(panel["date"].unique().to_list())
-        date_set = set(all_dates)
 
         if rebalance == "weekly":
             # 调仓日 = 每周一
@@ -288,14 +287,12 @@ class FactorBacktestService:
         next_returns = [None] * len(panel)
         for i in range(len(panel)):
             d = dates_col[i]
-            d_val = d if isinstance(d, _dt.date) else _dt.date.fromisoformat(str(d))
             if d not in rebalance_dates:
                 continue
             next_d = next_rebalance_map.get(d)
             if next_d is None:
                 continue
             next_d_str = str(next_d)[:10]
-            d_str = str(d)[:10]
             sym = symbol_col[i]
             next_close = price_map.get((next_d_str, sym))
             cur_close = close_col[i]

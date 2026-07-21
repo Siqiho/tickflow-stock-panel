@@ -345,9 +345,12 @@ def _safe_aggregate_etf_daily(repo) -> dict | None:
 
 
 def _safe_aggregate_adj_factor(repo) -> dict | None:
-    """adj_factor 视图统计,日期范围对齐日 K 覆盖区间。"""
+    """adj_factor 视图统计,日期范围对齐日 K 覆盖区间。
+
+    附加 public coverage：events / no_event / fetch_failed。
+    no_event 表示已核实无除权除息，复权恒等，计入 covered。
+    """
     try:
-        # 取日 K 的日期范围作为过滤条件
         dr = repo.execute_one(
             "SELECT min(date), max(date) FROM kline_daily"
         )
@@ -363,14 +366,61 @@ def _safe_aggregate_adj_factor(repo) -> dict | None:
             [str(d_min), str(d_max)],
         )
         if not row or not row[0]:
-            return None
-        return {
-            "rows": int(row[0]),
-            "symbols_covered": int(row[1]) if isinstance(row[1], (int, float)) else 0,
-            "earliest_date": str(d_min),
-            "latest_date": str(d_max),
-            "trading_days": int(row[2] or 0),
-        }
+            base = None
+        else:
+            base = {
+                "rows": int(row[0]),
+                "symbols_covered": int(row[1]) if isinstance(row[1], (int, float)) else 0,
+                "earliest_date": str(d_min),
+                "latest_date": str(d_max),
+                "trading_days": int(row[2] or 0),
+            }
+
+        try:
+            import polars as pl
+            from pathlib import Path
+            from app.services.free_sources.adj_factor_public import read_adj_coverage
+
+            data_dir = Path(repo.store.data_dir)
+            adj_path = data_dir / "adj_factor" / "all.parquet"
+            event_syms = 0
+            all_syms = 0
+            if adj_path.exists():
+                adf = pl.read_parquet(adj_path, columns=["symbol", "ex_factor"])
+                if not adf.is_empty():
+                    real = adf.filter((pl.col("ex_factor") - 1.0).abs() > 1e-12)
+                    event_syms = int(real["symbol"].n_unique()) if not real.is_empty() else 0
+                    all_syms = int(adf["symbol"].n_unique())
+            cov = read_adj_coverage(data_dir)
+            status_counts: dict[str, int] = {}
+            no_event_n = 0
+            if not cov.is_empty() and "status" in cov.columns:
+                for r in cov.group_by("status").len().to_dicts():
+                    status_counts[str(r["status"])] = int(r["len"])
+                no_event_n = int(status_counts.get("no_event", 0))
+            if base is None:
+                if all_syms == 0 and no_event_n == 0:
+                    return None
+                base = {
+                    "rows": 0,
+                    "symbols_covered": all_syms,
+                    "earliest_date": str(d_min),
+                    "latest_date": str(d_max),
+                    "trading_days": 0,
+                }
+            base["symbols_in_file"] = all_syms
+            base["symbols_with_events"] = event_syms
+            base["symbols_no_event"] = no_event_n
+            base["coverage_status"] = status_counts
+            base["symbols_covered_effective"] = (
+                int(event_syms + no_event_n)
+                if (event_syms or no_event_n)
+                else base.get("symbols_covered", 0)
+            )
+            return base
+        except Exception as e:  # noqa: BLE001
+            logger.debug("adj coverage enrich failed: %s", e)
+            return base
     except Exception as e:  # noqa: BLE001
         logger.debug("aggregate adj_factor failed: %s", e)
         return None

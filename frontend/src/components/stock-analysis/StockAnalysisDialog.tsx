@@ -96,8 +96,8 @@ export function StockAnalysisDialog({ task, mode, minimized }: Props) {
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500/20 to-blue-500/15 border border-sky-400/30 shrink-0">
                 {isHistory
-                  ? <History className="h-4.5 w-4.5 text-sky-300" />
-                  : <LineChart className="h-4.5 w-4.5 text-sky-300" />}
+                  ? <History className="h-4.5 w-4.5 text-sky-700 dark:text-sky-300" />
+                  : <LineChart className="h-4.5 w-4.5 text-sky-700 dark:text-sky-300" />}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
@@ -115,7 +115,7 @@ export function StockAnalysisDialog({ task, mode, minimized }: Props) {
                     </span>
                   ) : isWorking ? <span>正在读取行情与价位数据…</span> : null}
                   {phase === 'streaming' && (
-                    <span className="flex items-center gap-1 text-sky-300 shrink-0">
+                    <span className="flex items-center gap-1 text-sky-700 dark:text-sky-300 shrink-0">
                       <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />生成中
                     </span>
                   )}
@@ -153,7 +153,7 @@ export function StockAnalysisDialog({ task, mode, minimized }: Props) {
               <div className="flex flex-col items-center justify-center py-16 gap-3">
                 <div className="relative">
                   <div className="h-10 w-10 rounded-full bg-gradient-to-br from-sky-500/20 to-blue-500/15 border border-sky-400/30 flex items-center justify-center">
-                    <LineChart className="h-4.5 w-4.5 text-sky-300 animate-pulse" />
+                    <LineChart className="h-4.5 w-4.5 text-sky-700 dark:text-sky-300 animate-pulse" />
                   </div>
                   <Loader2 className="absolute -inset-1 h-12 w-12 text-sky-400/40 animate-spin" style={{ animationDuration: '3s' }} />
                 </div>
@@ -176,7 +176,7 @@ export function StockAnalysisDialog({ task, mode, minimized }: Props) {
                   </button>
                 )}
                 <button onClick={handleStartNew}
-                  className="mt-1 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-sky-500/15 border border-sky-400/30 text-xs text-sky-300 hover:bg-sky-500/20 transition-colors">
+                  className="mt-1 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-sky-500/15 border border-sky-400/30 text-xs text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 transition-colors">
                   <RefreshCw className="h-3.5 w-3.5" /> 重试
                 </button>
               </div>
@@ -214,7 +214,7 @@ export function StockAnalysisDialog({ task, mode, minimized }: Props) {
               {isHistory ? (
                 <button
                   onClick={handleStartNew}
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-gradient-to-r from-sky-500/20 to-blue-500/15 border border-sky-400/30 text-xs font-medium text-sky-300 hover:from-sky-500/30 hover:to-blue-500/20 transition-all shrink-0"
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-gradient-to-r from-sky-500/20 to-blue-500/15 border border-sky-400/30 text-xs font-medium text-sky-700 dark:text-sky-300 hover:from-sky-500/30 hover:to-blue-500/20 transition-all shrink-0"
                   title="以此关注点重新生成新报告"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />重新生成
@@ -223,7 +223,7 @@ export function StockAnalysisDialog({ task, mode, minimized }: Props) {
                 <button
                   onClick={handleStartNew}
                   disabled={isWorking}
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-gradient-to-r from-sky-500/20 to-blue-500/15 border border-sky-400/30 text-xs font-medium text-sky-300 hover:from-sky-500/30 hover:to-blue-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0"
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-gradient-to-r from-sky-500/20 to-blue-500/15 border border-sky-400/30 text-xs font-medium text-sky-700 dark:text-sky-300 hover:from-sky-500/30 hover:to-blue-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0"
                   title={focus.trim() ? '按关注重点重新分析' : '重新分析'}
                 >
                   {isWorking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : phase === 'done' ? <RefreshCw className="h-3.5 w-3.5" /> : <Send className="h-3.5 w-3.5" />}

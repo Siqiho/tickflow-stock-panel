@@ -103,14 +103,14 @@ export function StockAnalysis() {
                 title="查看个股日 K 详情"
                 className="group flex items-center gap-2 text-sm rounded-md px-1.5 py-0.5 -mx-1.5 hover:bg-elevated transition-colors"
               >
-                <span className="text-foreground font-medium group-hover:text-sky-300 transition-colors">{name || symbol}</span>
+                <span className="text-foreground font-medium group-hover:text-sky-700 dark:group-hover:text-sky-300 transition-colors">{name || symbol}</span>
                 <span className="text-[10px] font-mono text-muted">{symbol}</span>
                 <ExternalLink className="h-3 w-3 text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
               </button>
               <button
                 onClick={handleAnalyze}
                 disabled={checking}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-btn bg-gradient-to-r from-sky-500/25 to-blue-500/15 border border-sky-400/30 text-sky-300 text-xs font-medium hover:from-sky-500/35 hover:to-blue-500/25 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-btn bg-gradient-to-r from-sky-500/25 to-blue-500/15 border border-sky-400/30 text-sky-700 dark:text-sky-300 text-xs font-medium hover:from-sky-500/35 hover:to-blue-500/25 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {checking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                 AI 个股分析
@@ -251,7 +251,7 @@ function HistoryList({ symbol }: { symbol: string }) {
               <div className="flex items-center gap-2">
                 <span className="text-xs text-secondary">{fmtRelative(r.created_at)}</span>
                 {r.close && <span className="text-[10px] font-mono text-muted">价 {r.close.toFixed(2)}</span>}
-                {r.focus && <span className="text-[10px] text-sky-300/70 truncate">关注: {r.focus}</span>}
+                {r.focus && <span className="text-[10px] text-sky-700/80 dark:text-sky-300/70 truncate">关注: {r.focus}</span>}
               </div>
               <div className="mt-1 text-xs text-muted truncate">{r.summary || '点击查看完整报告'}</div>
             </button>
@@ -296,7 +296,7 @@ function ConfirmModal({ report, onView, onRedo, onClose }: {
             查看历史
           </button>
           <button onClick={onRedo}
-            className="flex-1 h-8 rounded-lg bg-gradient-to-r from-sky-500/20 to-blue-500/15 border border-sky-400/30 text-xs text-sky-300 hover:from-sky-500/30 transition-all">
+            className="flex-1 h-8 rounded-lg bg-gradient-to-r from-sky-500/20 to-blue-500/15 border border-sky-400/30 text-xs text-sky-700 dark:text-sky-300 hover:from-sky-500/30 transition-all">
             重新分析
           </button>
         </div>

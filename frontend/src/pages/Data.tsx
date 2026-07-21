@@ -75,7 +75,7 @@ export function Data() {
     enabled: !!activeJobId,
     refetchInterval: (q: any) => {
       const j = q.state.data
-      return j && (j.status === 'succeeded' || j.status === 'failed') ? false : 1_000
+      return j && (j.status === 'succeeded' || j.status === 'degraded' || j.status === 'failed') ? false : 1_000
     },
   })
 
@@ -190,12 +190,18 @@ export function Data() {
 
   const hasAdjCap = !!caps.data?.capabilities?.['adj_factor']
   const hasDailyBatchCap = !!caps.data?.capabilities?.['kline.daily.batch']
-  const hasMinuteCap = !!caps.data?.capabilities?.['kline.minute.batch']
+  const minuteFeat = caps.data?.features?.minute ?? caps.data?.minute
+  const hasMinuteCap = !!(
+    minuteFeat?.full_market_sync_allowed
+    || (caps.data?.capabilities?.['kline.minute.batch'] && !(caps.data?.capabilities?.['kline.minute.batch'] as any)?.view_only)
+  )
   const indexAuto = prefs.data?.pipeline_pull_index ?? true
   const etfAuto = prefs.data?.pipeline_pull_etf ?? false
+  const hasFinancialPublic = (prefs.data?.financial_provider || '') === 'public' || !!caps.data?.capabilities?.['financial']
   const pipelineSteps = [
     '日K',
     ...(hasAdjCap ? ['复权'] : []),
+    ...(hasFinancialPublic && (prefs.data?.financial_provider || '') === 'public' ? ['财务'] : []),
     '指标',
     ...(indexAuto ? ['指数'] : []),
     ...(etfAuto ? ['ETF'] : []),
@@ -214,7 +220,7 @@ export function Data() {
   void cardVisibleTick
 
   useEffect(() => {
-    if (job.data && (job.data.status === 'succeeded' || job.data.status === 'failed')) {
+    if (job.data && (job.data.status === 'succeeded' || job.data.status === 'degraded' || job.data.status === 'failed')) {
       qc.invalidateQueries({ queryKey: QK.dataStatus })
       qc.invalidateQueries({ queryKey: QK.pipelineJobs })
       const t = setTimeout(() => setActiveJobId(null), 5_000)
@@ -275,6 +281,7 @@ export function Data() {
     sync_daily: 'daily',
     extend_history: 'daily',
     sync_adj: 'adj_factor',
+    sync_financials: 'financials',
     compute_enriched: 'enriched',
     rebuild_enriched: 'enriched',
     sync_index: 'index_daily',
@@ -363,7 +370,7 @@ export function Data() {
         return (
           <StatCard
             title="除权因子"
-            hint="增量同步 · 全市场"
+            hint="增量同步 · TickFlow 或本地 public（按 public_data_scope）"
             stats={s?.adj_factor}
             loading={isLoading}
             active={activeCard === 'adj_factor'}
@@ -469,12 +476,25 @@ export function Data() {
         return (
           <StatCard
             title="财务数据"
-            hint="利润表 / 资负表 / 现金流 / 指标"
+            hint="利润表 / 资负表 / 现金流 / 股本 / 指标 · public 按 public_data_scope"
             stats={s?.financials ? { rows: s.financials.rows } : null}
             loading={isLoading}
+            active={activeCard === 'financials'}
+            done={doneStages.has('financials')}
+            skipped={skippedCards.has('financials')}
+            stagePct={activeCard === 'financials' ? (job.data?.stage_pct ?? 0) : 0}
             tierKey="financials"
             capLimits={caps.data?.capabilities}
             tierLabel={caps.data?.label}
+            localBadgeSuffix={
+              (prefs.data?.public_data_scope || 'CSI300')
+              + ` · ${prefs.data?.financial_max_periods ?? 12}期`
+            }
+            subLabel={
+              s?.financials
+                ? `${s.financials.symbols ?? s.financials.tables?.income?.symbols ?? '—'} 标的 · provider ${prefs.data?.financial_provider || '—'}`
+                : undefined
+            }
           />
         )
       default:

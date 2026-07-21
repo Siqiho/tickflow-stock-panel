@@ -1,4 +1,3 @@
-from app.services.free_sources.quote_fallback import fetch_watchlist_quotes
 """全局实时行情服务。
 
 集中管理全市场行情拉取 + enriched 缓存，供盘中选股、自选股等所有模块复用。
@@ -45,6 +44,7 @@ class QuoteService:
         "pro": 2.0,
         "starter": 3.0,
         "free": 6.0,
+        "none": 8.0,  # public watchlist fallback
     }
     DEFAULT_INTERVAL = 10.0
     MAX_INTERVAL = 60.0
@@ -109,11 +109,10 @@ class QuoteService:
     def enable(self) -> bool:
         """开启自动行情 (不立即启动线程，等下一个交易时段)。
 
-        none 档无实时行情权限,拒绝开启并返回 False;
-        free 档开启自选股实时,starter+ 开启全市场实时。返回值表示是否真正开启。
+        none/free 档开启自选股实时（公开源可兜底）; starter+ 开启全市场实时。返回值表示是否真正开启。
         """
         if not self.is_realtime_allowed():
-            logger.warning("实时行情开启被拒:当前档位(none)无实时行情权限")
+            logger.warning("实时行情开启被拒:当前模式不允许实时行情")
             return False
         self._enabled = True
         self._save_enabled(True)
@@ -133,14 +132,13 @@ class QuoteService:
     def boot_check(self) -> None:
         """启动时检查 preferences，若 enabled 则自动启动。
 
-        none 档无实时行情权限:即使 preferences 标记为 enabled,
-        也不启动,并同步 preferences 为关闭(避免 UI 误显示已开启)。
+        若 preferences 标记 enabled 且当前模式允许，则自动启动。
         """
         from app.services import preferences
         if not self.is_realtime_allowed():
             if preferences.get_realtime_quotes_enabled():
                 self._save_enabled(False)
-            logger.info("实时行情未启动:当前档位(none)无实时行情权限")
+            logger.info("实时行情未启动:当前模式不允许实时行情")
             return
         if preferences.get_realtime_quotes_enabled():
             self.start()
@@ -235,11 +233,20 @@ class QuoteService:
 
     @classmethod
     def realtime_mode(cls) -> str:
-        """当前实时行情模式: none / watchlist / full_market。"""
+        """当前实时行情模式: none / watchlist / full_market。
+
+        - realtime_data_provider=public: 全市场公开源快照（本地标的池分批）
+        - TickFlow starter+: 全市场付费 universes
+        - TickFlow free/none 且未选 public: 自选实时
+        """
+        try:
+            from app.services import preferences as _prefs
+            if _prefs.get_realtime_data_provider() == "public":
+                return "full_market"
+        except Exception:
+            pass
         tier = cls._current_tier()
-        if tier == "none":
-            return "none"
-        if tier == "free":
+        if tier in ("none", "free"):
             return "watchlist"
         return "full_market"
 
@@ -336,12 +343,21 @@ class QuoteService:
                 if self._is_trading_hours():
                     self._fetch_quotes()
                 else:
-                    logger.debug("非交易时段, 跳过行情轮询")
+                    # Off-hours: keep core index snapshots fresh for Indices/overview,
+                    # but skip expensive full-market stock batches.
+                    from app.services import preferences
+                    if preferences.get_realtime_pull_index():
+                        core = set(preferences.get_realtime_index_symbols() or self.CORE_INDEX_SYMBOLS)
+                        self._bootstrap_core_index_quotes(core)
+                    else:
+                        logger.debug("非交易时段, 跳过行情轮询")
             except Exception as e:  # noqa: BLE001
                 logger.warning("行情轮询异常: %s", e)
 
             waited = 0.0
-            while self._running and self._enabled and waited < self._interval:
+            # Off-hours poll less aggressively.
+            interval = self._interval if self._is_trading_hours() else max(self._interval, 60.0)
+            while self._running and self._enabled and waited < interval:
                 time.sleep(0.5)
                 waited += 0.5
 
@@ -352,63 +368,396 @@ class QuoteService:
             return
         self._fetch_full_market_quotes()
 
-    def _fetch_full_market_quotes(self) -> None:
-        """拉取全市场行情 → 写 daily + 计算 enriched + 更新缓存。"""
-        from app.tickflow.client import get_paid_realtime_client
+    def _bootstrap_core_index_quotes(self, core_index_symbols: set[str]) -> list[dict]:
+        """Fetch core indices first and publish cache immediately.
 
-        tf = get_paid_realtime_client()
-        if tf is None:
-            logger.warning("实时行情拉取失败:未配置付费服务器 API Key")
-            return
+        Full-market public batches can take 1-2+ minutes; the Indices page should
+        not wait on stock universe completion for 上证/深证/创业/科创.
+        """
+        if not core_index_symbols:
+            return []
+        try:
+            rows = self._fetch_public_quote_rows(
+                sorted(core_index_symbols), batch_size=20, pause_s=0.0
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("core index bootstrap failed: %s", e)
+            return []
+        records: list[dict] = []
+        for r in rows or []:
+            records.append(
+                {
+                    "symbol": r.get("symbol"),
+                    "name": r.get("name"),
+                    "last_price": r.get("last"),
+                    "prev_close": r.get("prev_close"),
+                    "open": r.get("open"),
+                    "high": r.get("high"),
+                    "low": r.get("low"),
+                    "volume": r.get("volume"),
+                    "amount": r.get("amount"),
+                    "change_pct": r.get("change_pct"),
+                    "change_amount": r.get("change_amount"),
+                    "source": r.get("source") or "public",
+                    "source_volume_unit": r.get("source_volume_unit"),
+                    "source_amount_unit": r.get("source_amount_unit"),
+                    "unit_version": r.get("unit_version"),
+                }
+            )
+        if not records:
+            return []
+        df = self._build_index_quotes(records)
+        with self._lock:
+            self._index_quotes_cache = df
+            self._index_symbol_count = int(df.height) if df is not None else 0
+            # mark freshness so /status and SSE consumers see a live pulse
+            self._fetch_time = time.perf_counter()
+            self._fetched_at = time.time() * 1000
+        try:
+            if self._repo and not df.is_empty():
+                snapshot = self._build_quote_snapshot(records)
+                if not snapshot.is_empty():
+                    self._repo.write_quote_snapshot_asset(
+                        "index",
+                        snapshot,
+                        metadata=self._snapshot_metadata("core_indices"),
+                    )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("core index quote snapshot write failed: %s", e)
+        logger.info("core index bootstrap: %d 只", len(records))
+        self._update_event.set()
+        return records
+
+    def _fetch_full_market_quotes(self) -> None:
+        """拉取全市场行情 → 写 daily + 计算 enriched + 更新缓存。
+
+        Source selection:
+          - preferences.realtime_data_provider=public → 腾讯/新浪分批快照（无需 TickFlow）
+          - else TickFlow paid universes (Starter+)
+        """
+        from app.services import preferences
+
         t0 = time.perf_counter()
         now_ts = time.perf_counter()
+        provider = preferences.get_realtime_data_provider()
 
         try:
-            from app.services import preferences
             all_index_symbols = set(self._repo.get_index_symbol_set()) if self._repo else set()
             core_index_symbols = set(preferences.get_realtime_index_symbols() or self.CORE_INDEX_SYMBOLS)
             all_index_symbols.update(core_index_symbols)
+            if preferences.get_realtime_pull_index() and core_index_symbols:
+                self._bootstrap_core_index_quotes(core_index_symbols)
             all_etf_symbols = set()
             if self._repo:
                 etf_inst = self._repo.get_etf_instruments()
                 if not etf_inst.is_empty() and "symbol" in etf_inst.columns:
                     all_etf_symbols = set(etf_inst["symbol"].cast(pl.Utf8).to_list())
 
-            universes: list[str] = []
-            if preferences.get_realtime_pull_stock():
-                universes.append("CN_Equity_A")
-            if preferences.get_realtime_pull_etf() and all_etf_symbols:
-                universes.append("CN_ETF")
-            if preferences.get_realtime_pull_index() and preferences.get_realtime_index_mode() == "all":
-                universes.append("CN_Index")
-
-            resp = []
-            if universes:
-                resp.extend(tf.quotes.get_by_universes(universes=universes) or [])
-            if preferences.get_realtime_pull_index() and preferences.get_realtime_index_mode() == "core":
-                resp.extend(tf.quotes.get(symbols=sorted(core_index_symbols)) or [])
+            if provider == "public":
+                records = self._fetch_public_full_market_records(
+                    all_index_symbols=all_index_symbols,
+                    core_index_symbols=core_index_symbols,
+                    all_etf_symbols=all_etf_symbols,
+                )
+            else:
+                records = self._fetch_tickflow_full_market_records(
+                    all_index_symbols=all_index_symbols,
+                    core_index_symbols=core_index_symbols,
+                    all_etf_symbols=all_etf_symbols,
+                )
         except Exception as e:  # noqa: BLE001
             logger.warning("行情拉取失败: %s", e)
             return
 
-        if not resp:
+        if not records:
             logger.warning("行情数据为空")
             return
 
-        # ---- 解析 API 响应 (临时变量, 用完丢弃) ----
+        index_records = [r for r in records if r.get("symbol") in all_index_symbols]
+        etf_records = [r for r in records if r.get("symbol") in all_etf_symbols]
+        stock_records = [
+            r for r in records
+            if r.get("symbol") not in all_index_symbols and r.get("symbol") not in all_etf_symbols
+        ]
+
+        # Public full-market batches can occasionally miss trailing index codes.
+        # Always top-up core indices with a dedicated small request.
+        if preferences.get_realtime_pull_index() and core_index_symbols:
+            have = {str(r.get("symbol") or "").upper() for r in index_records}
+            missing = [s for s in sorted(core_index_symbols) if s not in have]
+            if missing:
+                try:
+                    extra = self._fetch_public_quote_rows(missing, batch_size=20, pause_s=0.0)
+                    for r in extra or []:
+                        index_records.append(
+                            {
+                                "symbol": r.get("symbol"),
+                                "name": r.get("name"),
+                                "last_price": r.get("last"),
+                                "prev_close": r.get("prev_close"),
+                                "open": r.get("open"),
+                                "high": r.get("high"),
+                                "low": r.get("low"),
+                                "volume": r.get("volume"),
+                                "amount": r.get("amount"),
+                                "change_pct": r.get("change_pct"),
+                                "change_amount": r.get("change_amount"),
+                                "source": r.get("source") or "public",
+                                "source_volume_unit": r.get("source_volume_unit"),
+                                "source_amount_unit": r.get("source_amount_unit"),
+                                "unit_version": r.get("unit_version"),
+                            }
+                        )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("core index top-up failed: %s", e)
+
+        fetch_ms = (time.perf_counter() - t0) * 1000
+        fetched_at = time.time() * 1000
+
+        # ---- 更新元信息 ----
+        with self._lock:
+            self._fetch_time = now_ts
+            self._fetch_ms = fetch_ms
+            self._fetched_at = fetched_at
+            self._symbol_count = len(stock_records)
+            self._etf_symbol_count = len(etf_records)
+            if index_records:
+                self._index_quotes_cache = self._build_index_quotes(index_records)
+                self._index_symbol_count = len(index_records)
+            else:
+                # Keep previous index cache instead of wiping on a stock-only partial cycle.
+                self._index_symbol_count = (
+                    0 if self._index_quotes_cache is None or self._index_quotes_cache.is_empty()
+                    else int(self._index_quotes_cache.height)
+                )
+
+        logger.info("行情刷新: %d 只股票, %d 只ETF, %d 只指数, 耗时 %.0fms", len(stock_records), len(etf_records), len(index_records), fetch_ms)
+
+        is_public_snapshot = provider == "public" or self._records_are_public(records)
+
+        # Public intraday data is persisted only as quote_snapshot. Canonical
+        # daily partitions remain owned by the end-of-day pipeline.
+        daily_df = self._build_daily(stock_records)
+        if not daily_df.is_empty() and self._repo:
+            try:
+                if is_public_snapshot:
+                    self._repo.write_quote_snapshot_asset(
+                        "stock",
+                        self._build_quote_snapshot(stock_records),
+                        metadata=self._snapshot_metadata("full_market"),
+                    )
+                else:
+                    self._repo.flush_live_daily(daily_df)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("股票行情持久化失败: %s", e)
+
+        etf_daily_df = self._build_daily(etf_records)
+        if not etf_daily_df.is_empty() and self._repo:
+            try:
+                if is_public_snapshot:
+                    self._repo.write_quote_snapshot_asset(
+                        "etf",
+                        self._build_quote_snapshot(etf_records),
+                        metadata=self._snapshot_metadata("full_market"),
+                    )
+                else:
+                    self._repo.flush_live_daily_asset("etf", etf_daily_df)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("ETF 行情持久化失败: %s", e)
+
+        # Index live bar → independent kline_index_* (data console / Indices daily chart)
+        index_daily_df = self._build_daily(index_records)
+        if not index_daily_df.is_empty() and self._repo:
+            try:
+                if is_public_snapshot:
+                    self._repo.write_quote_snapshot_asset(
+                        "index",
+                        self._build_quote_snapshot(index_records),
+                        metadata=self._snapshot_metadata("full_market"),
+                    )
+                else:
+                    self._repo.flush_live_daily_asset("index", index_daily_df)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("指数行情持久化失败: %s", e)
+
+        # ---- 构建 API 直接值的补充表 (不写 daily, 只用于 enriched 计算) ----
+        quote_extra = self._build_quote_extra(stock_records)
+        etf_quote_extra = self._build_quote_extra(etf_records)
+
+        # ---- 增量计算 enriched + 写盘 + 更新缓存 ----
+        if not daily_df.is_empty() and self._repo:
+            self._flush_live_enriched(
+                daily_df,
+                quote_extra,
+                asset_type="stock",
+                persist=not is_public_snapshot,
+            )
+        if not etf_daily_df.is_empty() and self._repo:
+            self._flush_live_enriched(
+                etf_daily_df,
+                etf_quote_extra,
+                asset_type="etf",
+                persist=not is_public_snapshot,
+            )
+        if not index_daily_df.is_empty() and self._repo and not is_public_snapshot:
+            index_quote_extra = self._build_quote_extra(index_records)
+            self._flush_live_enriched(index_daily_df, index_quote_extra, asset_type="index")
+
+        # ---- 通知 SSE ----
+        self._update_event.set()
+
+        # ---- 策略监控 + 告警评估 ----
+        self._evaluate_monitors(daily_df, quote_extra)
+
+
+    def _fetch_tickflow_full_market_records(
+        self,
+        *,
+        all_index_symbols: set,
+        core_index_symbols: set,
+        all_etf_symbols: set,
+    ) -> list[dict]:
+        from app.services import preferences
+        from app.tickflow.client import get_paid_realtime_client
+
+        tf = get_paid_realtime_client()
+        if tf is None:
+            logger.warning("TickFlow 全市场实时不可用(无付费 Key)，回退公开源")
+            return self._fetch_public_full_market_records(
+                all_index_symbols=all_index_symbols,
+                core_index_symbols=core_index_symbols,
+                all_etf_symbols=all_etf_symbols,
+            )
+
+        universes: list[str] = []
+        if preferences.get_realtime_pull_stock():
+            universes.append("CN_Equity_A")
+        if preferences.get_realtime_pull_etf() and all_etf_symbols:
+            universes.append("CN_ETF")
+        if preferences.get_realtime_pull_index() and preferences.get_realtime_index_mode() == "all":
+            universes.append("CN_Index")
+
+        resp = []
+        if universes:
+            resp.extend(tf.quotes.get_by_universes(universes=universes) or [])
+        if preferences.get_realtime_pull_index() and preferences.get_realtime_index_mode() == "core":
+            resp.extend(tf.quotes.get(symbols=sorted(core_index_symbols)) or [])
+        return self._normalize_quote_records(resp)
+
+    def _fetch_public_full_market_records(
+        self,
+        *,
+        all_index_symbols: set,
+        core_index_symbols: set,
+        all_etf_symbols: set,
+    ) -> list[dict]:
+        """Public full-market snapshot from local universe + Tencent/Sina batches."""
+        from app.services import preferences
+        from app.services.universe_scope import resolve_symbols
+
+        symbols: list[str] = []
+        # Indices first so a slow/partial full-market cycle still prices the board.
+        if preferences.get_realtime_pull_index():
+            if preferences.get_realtime_index_mode() == "all" and all_index_symbols:
+                symbols.extend(sorted(all_index_symbols))
+            else:
+                symbols.extend(sorted(core_index_symbols))
+        if preferences.get_realtime_pull_stock():
+            stock_syms: list[str] = []
+            try:
+                stock_syms = resolve_symbols(
+                    "ALL",
+                    data_dir=self._repo.store.data_dir if self._repo else None,
+                    default="ALL",
+                    refresh_pools_if_missing=False,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("resolve ALL symbols failed: %s", e)
+                stock_syms = []
+            if not stock_syms:
+                try:
+                    scope = preferences.get_public_data_scope()
+                    stock_syms = resolve_symbols(
+                        scope,
+                        data_dir=self._repo.store.data_dir if self._repo else None,
+                        default=scope,
+                        refresh_pools_if_missing=True,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("resolve public scope symbols failed: %s", e)
+                    stock_syms = []
+            # Must extend — never replace; indices were prepended above.
+            if stock_syms:
+                symbols.extend(stock_syms)
+
+        if preferences.get_realtime_pull_etf() and all_etf_symbols:
+            symbols.extend(sorted(all_etf_symbols))
+
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for s in symbols:
+            su = str(s).strip().upper()
+            if su and su not in seen:
+                seen.add(su)
+                ordered.append(su)
+
+        if not ordered:
+            logger.warning("公开源全市场: 本地标的池为空")
+            return []
+
+        rows = self._fetch_public_quote_rows(ordered, batch_size=80, pause_s=0.05)
+        logger.info("公开源全市场行情: 请求 %d 只, 返回 %d 只", len(ordered), len(rows))
+        fake_resp = []
+        for r in rows:
+            fake_resp.append(
+                {
+                    "symbol": r.get("symbol"),
+                    "name": r.get("name"),
+                    "last_price": r.get("last"),
+                    "prev_close": r.get("prev_close"),
+                    "open": r.get("open"),
+                    "high": r.get("high"),
+                    "low": r.get("low"),
+                    "volume": r.get("volume"),
+                    "amount": r.get("amount"),
+                    "ext": {
+                        "change_pct": r.get("change_pct"),
+                        "name": r.get("name"),
+                    },
+                    "source": r.get("source") or "public",
+                    "source_volume_unit": r.get("source_volume_unit"),
+                    "source_amount_unit": r.get("source_amount_unit"),
+                    "unit_version": r.get("unit_version"),
+                }
+            )
+        return self._normalize_quote_records(fake_resp)
+
+    @staticmethod
+    def _normalize_quote_records(resp: list) -> list[dict]:
         records = []
-        for q in resp:
+        for q in resp or []:
+            if not isinstance(q, dict):
+                continue
             ext = q.get("ext") or {}
             last_price = q.get("last_price")
             prev_close = q.get("prev_close")
             change_amount = ext.get("change_amount")
             change_pct = ext.get("change_pct")
             if change_amount is None and last_price is not None and prev_close is not None:
-                change_amount = float(last_price) - float(prev_close)
+                try:
+                    change_amount = float(last_price) - float(prev_close)
+                except (TypeError, ValueError):
+                    change_amount = None
             if change_pct is None and change_amount is not None and prev_close not in (None, 0):
-                change_pct = float(change_amount) / float(prev_close) * 100
+                try:
+                    change_pct = float(change_amount) / float(prev_close) * 100
+                except (TypeError, ValueError):
+                    change_pct = None
+            sym = q.get("symbol")
+            if not sym:
+                continue
             records.append({
-                "symbol": q.get("symbol"),
+                "symbol": sym,
                 "name": q.get("name") or ext.get("name"),
                 "last_price": last_price,
                 "prev_close": prev_close,
@@ -423,60 +772,12 @@ class QuoteService:
                 "turnover_rate": ext.get("turnover_rate"),
                 "timestamp": q.get("timestamp"),
                 "session": q.get("session"),
+                "source": q.get("source"),
+                "source_volume_unit": q.get("source_volume_unit"),
+                "source_amount_unit": q.get("source_amount_unit"),
+                "unit_version": q.get("unit_version"),
             })
-
-        index_records = [r for r in records if r.get("symbol") in all_index_symbols]
-        etf_records = [r for r in records if r.get("symbol") in all_etf_symbols]
-        stock_records = [
-            r for r in records
-            if r.get("symbol") not in all_index_symbols and r.get("symbol") not in all_etf_symbols
-        ]
-
-        fetch_ms = (time.perf_counter() - t0) * 1000
-        fetched_at = time.time() * 1000
-
-        # ---- 更新元信息 ----
-        with self._lock:
-            self._fetch_time = now_ts
-            self._fetch_ms = fetch_ms
-            self._fetched_at = fetched_at
-            self._symbol_count = len(stock_records)
-            self._index_symbol_count = len(index_records)
-            self._etf_symbol_count = len(etf_records)
-            self._index_quotes_cache = self._build_index_quotes(index_records)
-
-        logger.info("行情刷新: %d 只股票, %d 只ETF, %d 只指数, 耗时 %.0fms", len(stock_records), len(etf_records), len(index_records), fetch_ms)
-
-        # ---- 写 kline_daily (不复权原始价格, 只有 OHLCV) ----
-        daily_df = self._build_daily(stock_records)
-        if not daily_df.is_empty() and self._repo:
-            try:
-                self._repo.flush_live_daily(daily_df)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("日K写盘失败: %s", e)
-
-        etf_daily_df = self._build_daily(etf_records)
-        if not etf_daily_df.is_empty() and self._repo:
-            try:
-                self._repo.flush_live_daily_asset("etf", etf_daily_df)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("ETF 日K写盘失败: %s", e)
-
-        # ---- 构建 API 直接值的补充表 (不写 daily, 只用于 enriched 计算) ----
-        quote_extra = self._build_quote_extra(stock_records)
-        etf_quote_extra = self._build_quote_extra(etf_records)
-
-        # ---- 增量计算 enriched + 写盘 + 更新缓存 ----
-        if not daily_df.is_empty() and self._repo:
-            self._flush_live_enriched(daily_df, quote_extra, asset_type="stock")
-        if not etf_daily_df.is_empty() and self._repo:
-            self._flush_live_enriched(etf_daily_df, etf_quote_extra, asset_type="etf")
-
-        # ---- 通知 SSE ----
-        self._update_event.set()
-
-        # ---- 策略监控 + 告警评估 ----
-        self._evaluate_monitors(daily_df, quote_extra)
+        return records
 
     def _fetch_watchlist_quotes(self) -> None:
         """Watchlist realtime: TickFlow paid/free key when available, else public fallback."""
@@ -502,7 +803,7 @@ class QuoteService:
 
         if not resp:
             try:
-                free_rows = fetch_watchlist_quotes(list(symbols))
+                free_rows = self._fetch_public_quote_rows(list(symbols), batch_size=80, pause_s=0.0)
             except Exception as e:  # noqa: BLE001
                 logger.warning("free quote fallback failed: %s", e)
                 free_rows = []
@@ -524,6 +825,9 @@ class QuoteService:
                             "name": r.get("name"),
                         },
                         "source": r.get("source"),
+                        "source_volume_unit": r.get("source_volume_unit"),
+                        "source_amount_unit": r.get("source_amount_unit"),
+                        "unit_version": r.get("unit_version"),
                     }
                 )
             if resp:
@@ -533,34 +837,7 @@ class QuoteService:
             logger.warning("自选实时行情数据为空")
             return
 
-        records = []
-        for q in resp:
-            ext = q.get("ext") or {}
-            last_price = q.get("last_price")
-            prev_close = q.get("prev_close")
-            change_amount = ext.get("change_amount")
-            change_pct = ext.get("change_pct")
-            if change_amount is None and last_price is not None and prev_close is not None:
-                change_amount = float(last_price) - float(prev_close)
-            if change_pct is None and change_amount is not None and prev_close not in (None, 0):
-                change_pct = float(change_amount) / float(prev_close) * 100
-            records.append({
-                "symbol": q.get("symbol"),
-                "name": q.get("name") or ext.get("name"),
-                "last_price": last_price,
-                "prev_close": prev_close,
-                "open": q.get("open"),
-                "high": q.get("high"),
-                "low": q.get("low"),
-                "volume": q.get("volume"),
-                "amount": q.get("amount"),
-                "change_pct": change_pct,
-                "change_amount": change_amount,
-                "amplitude": ext.get("amplitude"),
-                "turnover_rate": ext.get("turnover_rate"),
-                "timestamp": q.get("timestamp"),
-                "session": q.get("session"),
-            })
+        records = self._normalize_quote_records(resp)
 
         fetch_ms = (time.perf_counter() - t0) * 1000
         fetched_at = time.time() * 1000
@@ -578,11 +855,25 @@ class QuoteService:
         daily_df = self._build_daily(records)
         quote_extra = self._build_quote_extra(records)
         if not daily_df.is_empty() and self._repo:
+            is_public_snapshot = self._records_are_public(records)
             try:
-                self._repo.merge_live_daily_asset("stock", daily_df)
+                if is_public_snapshot:
+                    self._repo.write_quote_snapshot_asset(
+                        "stock",
+                        self._build_quote_snapshot(records),
+                        metadata=self._snapshot_metadata("watchlist"),
+                    )
+                else:
+                    self._repo.merge_live_daily_asset("stock", daily_df)
             except Exception as e:  # noqa: BLE001
-                logger.warning("自选实时日K写盘失败: %s", e)
-            self._flush_live_enriched(daily_df, quote_extra, asset_type="stock", merge=True)
+                logger.warning("自选实时行情持久化失败: %s", e)
+            self._flush_live_enriched(
+                daily_df,
+                quote_extra,
+                asset_type="stock",
+                merge=True,
+                persist=not is_public_snapshot,
+            )
 
         self._update_event.set()
         self._evaluate_monitors(daily_df, quote_extra)
@@ -628,6 +919,65 @@ class QuoteService:
         return result
 
     @staticmethod
+    def _fetch_public_quote_rows(
+        symbols: list[str],
+        *,
+        batch_size: int,
+        pause_s: float,
+    ) -> list[dict]:
+        from app.data_providers.registry import get_provider
+
+        provider = get_provider("public")
+        frame = provider.get_quote_snapshot(symbols, batch_size=batch_size, pause_s=pause_s)
+        return frame.to_dicts() if frame is not None and not frame.is_empty() else []
+
+    @classmethod
+    def _build_quote_snapshot(cls, records: list[dict]) -> pl.DataFrame:
+        """Build a lineage-rich intraday snapshot using canonical quote units."""
+        daily = cls._build_daily(records)
+        if daily.is_empty():
+            return daily
+        raw = pl.DataFrame(records)
+        metadata_cols = [
+            c
+            for c in (
+                "symbol",
+                "name",
+                "prev_close",
+                "change_pct",
+                "change_amount",
+                "source",
+                "source_volume_unit",
+                "source_amount_unit",
+                "unit_version",
+                "timestamp",
+                "session",
+            )
+            if c in raw.columns
+        ]
+        if "symbol" not in metadata_cols:
+            return daily
+        metadata = raw.select(metadata_cols).unique(subset=["symbol"], keep="last")
+        return daily.join(metadata, on="symbol", how="left")
+
+    @staticmethod
+    def _snapshot_metadata(scope: str) -> dict:
+        return {
+            "fetched_at": datetime.now().astimezone().isoformat(),
+            "scope": scope,
+            "quality_status": "intraday_partial",
+        }
+
+    @staticmethod
+    def _records_are_public(records: list[dict]) -> bool:
+        sources = {
+            str(r.get("source") or "").strip().lower()
+            for r in records
+            if isinstance(r, dict)
+        }
+        return bool(sources) and sources.issubset({"public", "tencent", "sina"})
+
+    @staticmethod
     def _build_quote_extra(records: list[dict]) -> pl.DataFrame:
         """构建 API 直接提供的补充字段 (不写 daily, 只传给 enriched 计算)。
 
@@ -645,30 +995,93 @@ class QuoteService:
         return df.select(keep)
 
     @staticmethod
+    def _as_percent_change(v: float | None, *, last: float | None = None, prev: float | None = None) -> float | None:
+        """Normalize change ratio/percent to percentage points.
+
+        Public Tencent/Sina path already emits percent (e.g. 1.17 / -0.48).
+        TickFlow path historically emitted fractions (0.0117). Always prefer
+        recomputing from last/prev when both are present so unit cannot drift.
+        """
+        if last is not None and prev not in (None, 0):
+            try:
+                return (float(last) - float(prev)) / float(prev) * 100.0
+            except (TypeError, ValueError, ZeroDivisionError):
+                pass
+        if v is None:
+            return None
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            return None
+        # Heuristic only when prices missing: |x|<=1 is almost always a fraction
+        # for single-day index moves; |x|>1 is already percentage points.
+        if abs(x) <= 1.0:
+            return x * 100.0
+        return x
+
+    @staticmethod
     def _build_index_quotes(records: list[dict]) -> pl.DataFrame:
         """构建指数实时行情缓存，不落股票 parquet。
 
-        注意: API 返回的 change_pct/amplitude 是小数 (0.0366 = 3.66%),
-        统一转成百分比输出, 与 _fallback_index_quotes_from_daily 口径一致
-        (前端指数侧不×100, 直接 toFixed(2)% 展示)。
+        Output change_pct/amplitude are percentage points (1.17 = +1.17%),
+        matching _fallback_index_quotes_from_daily and Indices page fmtPct.
         """
         if not records:
             return pl.DataFrame()
-        df = pl.DataFrame(records)
-        keep = [c for c in [
-            "symbol", "name", "last_price", "prev_close", "open", "high", "low",
-            "volume", "amount", "change_pct", "change_amount", "amplitude", "timestamp", "session",
-        ] if c in df.columns]
-        if not keep or "symbol" not in keep:
+        rows: list[dict] = []
+        for r in records:
+            if not isinstance(r, dict) or not r.get("symbol"):
+                continue
+            last = r.get("last_price")
+            prev = r.get("prev_close")
+            try:
+                last_f = float(last) if last is not None else None
+            except (TypeError, ValueError):
+                last_f = None
+            try:
+                prev_f = float(prev) if prev is not None else None
+            except (TypeError, ValueError):
+                prev_f = None
+            change_amount = r.get("change_amount")
+            if change_amount is None and last_f is not None and prev_f is not None:
+                change_amount = last_f - prev_f
+            change_pct = QuoteService._as_percent_change(
+                r.get("change_pct"), last=last_f, prev=prev_f
+            )
+            amp = r.get("amplitude")
+            if amp is not None and last_f is not None and prev_f not in (None, 0):
+                # amplitude: prefer (high-low)/prev if OHLC present
+                try:
+                    hi = float(r["high"]) if r.get("high") is not None else None
+                    lo = float(r["low"]) if r.get("low") is not None else None
+                    if hi is not None and lo is not None and prev_f:
+                        amp = (hi - lo) / prev_f * 100.0
+                    else:
+                        amp = QuoteService._as_percent_change(amp)
+                except (TypeError, ValueError, ZeroDivisionError):
+                    amp = QuoteService._as_percent_change(amp)
+            elif amp is not None:
+                amp = QuoteService._as_percent_change(amp)
+            rows.append({
+                "symbol": r.get("symbol"),
+                "name": r.get("name"),
+                "last_price": last_f,
+                "prev_close": prev_f,
+                "open": r.get("open"),
+                "high": r.get("high"),
+                "low": r.get("low"),
+                "volume": r.get("volume"),
+                "amount": r.get("amount"),
+                "change_pct": change_pct,
+                "change_amount": change_amount,
+                "amplitude": amp,
+                "timestamp": r.get("timestamp"),
+                "session": r.get("session"),
+                "close": last_f,
+            })
+        if not rows:
             return pl.DataFrame()
-        df = df.select(keep)
-        # change_pct / amplitude: 小数 → 百分比 (统一指数展示口径)
-        for col in ("change_pct", "amplitude"):
-            if col in df.columns:
-                df = df.with_columns((pl.col(col).cast(pl.Float64) * 100).alias(col))
-        if "last_price" in df.columns and "close" not in df.columns:
-            df = df.with_columns(pl.col("last_price").alias("close"))
-        return df
+        return pl.DataFrame(rows)
 
     @staticmethod
     def _is_trading_hours() -> bool:
@@ -861,7 +1274,14 @@ class QuoteService:
     # enriched 增量计算
     # ================================================================
 
-    def _flush_live_enriched(self, daily_df: pl.DataFrame, quote_extra: pl.DataFrame = None, asset_type: str = "stock", merge: bool = False) -> None:
+    def _flush_live_enriched(
+        self,
+        daily_df: pl.DataFrame,
+        quote_extra: pl.DataFrame | None = None,
+        asset_type: str = "stock",
+        merge: bool = False,
+        persist: bool = True,
+    ) -> None:
         """增量计算今天的 enriched: 用昨天的递推状态 + 今天 OHLCV → 只算今天 5500 行。
 
         quote_extra: API 直接提供的补充字段 (prev_close, change_pct 等),
@@ -946,8 +1366,10 @@ class QuoteService:
             if enriched_today.is_empty():
                 return
 
-            # ---- 写盘 + 更新缓存 ----
-            if merge:
+            # Public intraday snapshots are published to the live cache only.
+            if not persist:
+                self._repo.publish_live_enriched_asset(asset_type, enriched_today, merge=merge)
+            elif merge:
                 self._repo.merge_live_enriched_asset(asset_type, enriched_today)
             else:
                 self._repo.flush_live_enriched_asset(asset_type, enriched_today)

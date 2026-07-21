@@ -1,0 +1,55 @@
+"""Crash-safe local artifact writers."""
+from __future__ import annotations
+
+import os
+import json
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import polars as pl
+
+
+def atomic_write_parquet(df: pl.DataFrame, target: Path) -> None:
+    """Write a Parquet file beside its target and publish it with os.replace."""
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.tmp-{uuid.uuid4().hex}")
+    try:
+        df.write_parquet(tmp)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def atomic_write_json(value: Any, target: Path, *, indent: int | None = None) -> None:
+    """Write a complete UTF-8 JSON document and atomically publish it."""
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.tmp-{uuid.uuid4().hex}")
+    try:
+        with tmp.open("w", encoding="utf-8") as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=indent, default=str)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def write_lineage_record(
+    data_dir: Path,
+    dataset: str,
+    record: dict[str, Any],
+    *,
+    run_id: str | None = None,
+) -> Path:
+    """Persist one immutable provenance sidecar for a produced data artifact."""
+    payload = dict(record)
+    payload.setdefault("fetched_at", datetime.now().astimezone().isoformat())
+    ds = str(payload.get("date") or "unknown")
+    rid = run_id or uuid.uuid4().hex
+    target = Path(data_dir) / "lineage" / dataset / f"date={ds}" / f"{rid}.json"
+    atomic_write_json(payload, target, indent=2)
+    return target

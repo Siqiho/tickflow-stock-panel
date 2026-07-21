@@ -131,7 +131,7 @@ export function DatePicker({
             exit={{ opacity: 0, y: -4, scale: 0.97 }}
             transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
             className={`absolute ${align === 'left' ? 'left-0' : 'right-0'} top-full mt-1.5 z-50 w-[260px] rounded-card border border-border
-              bg-surface shadow-[0_8px_30px_rgba(0,0,0,0.4)] p-3`}
+              bg-surface shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.4)] p-3`}
           >
             {/* 月份导航 */}
             <div className="flex items-center justify-between mb-2">

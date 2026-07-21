@@ -11,7 +11,6 @@ import polars as pl
 from fastapi import APIRouter, Request
 
 from app.services.ext_data import ExtConfig, ExtConfigStore
-from app.services.screener import ScreenerService
 
 router = APIRouter(prefix="/api/overview", tags=["overview"])
 

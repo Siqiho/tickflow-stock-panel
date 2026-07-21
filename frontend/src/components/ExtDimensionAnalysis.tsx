@@ -287,7 +287,7 @@ export function ExtDimensionAnalysis({
       <div className="px-8 py-6 space-y-6 max-w-7xl">
         <section className={`relative overflow-hidden rounded-2xl border border-border bg-surface p-6 ${accentClass}`}>
           <div className="relative z-10 max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] text-secondary">
+            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-elevated/60 px-3 py-1 text-[11px] text-secondary">
               <Layers3 className="h-3.5 w-3.5" />
               扩展数据驱动 · 菜单可配置 · 列动态渲染
             </div>
@@ -296,8 +296,8 @@ export function ExtDimensionAnalysis({
               页面按分析菜单配置读取扩展数据源，使用分组字段生成榜单，并严格按照 detail_columns 渲染明细列。
             </p>
           </div>
-          <div className="absolute right-8 top-6 hidden h-28 w-28 rounded-full border border-white/10 bg-white/[0.03] lg:flex items-center justify-center">
-            <BarChart3 className="h-12 w-12 text-white/20" />
+          <div className="absolute right-8 top-6 hidden h-28 w-28 rounded-full border border-border bg-elevated/40 lg:flex items-center justify-center">
+            <BarChart3 className="h-12 w-12 text-muted/40" />
           </div>
         </section>
 

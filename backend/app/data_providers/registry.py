@@ -7,9 +7,11 @@ implicit default. Callers must pass an explicit custom source name.
 from __future__ import annotations
 
 from app.data_providers.tickflow_provider import TickFlowProvider
+from app.data_providers.public_provider import PublicProvider
 
 _PROVIDERS = {
     "tickflow": TickFlowProvider,
+    "public": PublicProvider,
 }
 
 
@@ -41,4 +43,4 @@ def list_provider_names() -> list[str]:
     from app.data_providers.custom import names as custom_names
 
     load_custom_all()
-    return ["tickflow", *sorted(custom_names())]
+    return ["tickflow", "public", *sorted(custom_names())]

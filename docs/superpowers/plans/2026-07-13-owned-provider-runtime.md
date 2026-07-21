@@ -22,7 +22,7 @@
 - index、ETF、financial、instruments、depth 和 WebSocket 第一阶段继续走现有 TickFlow 专用路径；只迁移 A 股 stock 的 daily、adj_factor、minute、realtime。
 - minute 只有 `frequency="1m"` 才能声明、解析、返回和写盘；不得把 5m 数据混入现有分钟表。
 - 自动测试只用 fake client、MockTransport 和 `tmp_path`，不访问真实 Provider 网络，不写真实 `data/`。
-- 实施前按全局规则在 `/Users/simon/备份/codex/<新时间戳目录>/` 备份项目、diff、未跟踪清单和 HEAD，并附 `README【codex】.md`。
+- 实施前按全局规则在 `/Users/simon/备份/codex/<新时间戳目录>/` 备份项目、diff、未跟踪清单和 HEAD，并附 `README.md`。
 - 当前工作树存在用户改动；每个提交只暂存当前任务列出的文件，不覆盖或提交无关品牌、AI、打包和依赖改动。
 - 所有测试命令从 `backend/` 执行；所有 `git add` / `git commit` 命令先回到 `/Users/simon/Trading/one-trading`。若目标文件已含用户改动，使用隔离 worktree 和精确补丁合入，不能把用户原有 hunks 一并提交。
 - 每项生产代码执行 RED -> GREEN -> refactor；原有 19 个测试和存储核心测试必须持续通过。

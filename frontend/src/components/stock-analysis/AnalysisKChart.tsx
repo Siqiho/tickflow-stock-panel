@@ -1,4 +1,5 @@
 import { useEffect, useRef, useMemo, useState } from 'react'
+import { useChartChrome, type ChartChrome } from '@/lib/theme'
 import * as echarts from 'echarts'
 import type { ECharts, EChartsOption } from 'echarts'
 import type { KlineRow, LevelSeries } from '@/lib/api'
@@ -19,14 +20,31 @@ import type { KlineRow, LevelSeries } from '@/lib/api'
  */
 
 // ===== 配色(与主图一致的红涨绿跌,深色背景) =====
-const THEME = {
+const BASE_THEME = {
   bull: '#C74040',
   bear: '#2D9B65',
-  text: '#A1A1AA',
-  grid: 'rgba(255,255,255,0.04)',
   volUp: 'rgba(240,68,56,0.5)',
   volDown: 'rgba(18,183,106,0.5)',
 }
+
+type AKTheme = typeof BASE_THEME & { text: string; grid: string; handle: string; labelBg: string }
+
+function withChrome(chrome: ChartChrome): AKTheme {
+  return {
+    ...BASE_THEME,
+    text: chrome.text,
+    grid: chrome.grid,
+    handle: chrome.handle,
+    labelBg: chrome.labelBg,
+  }
+}
+
+let THEME: AKTheme = withChrome({
+  text: '#A1A1AA', muted: '#8E8E96', grid: 'rgba(255,255,255,0.04)', border: '#27272A',
+  tooltipBg: 'rgba(39,39,42,0.92)', tooltipBorder: 'rgba(255,255,255,0.1)',
+  crosshair: 'rgba(255,255,255,0.2)', refLine: 'rgba(255,255,255,0.25)',
+  infoBarBg: 'rgba(39,39,42,0.6)', handle: '#52525B', labelBg: 'rgba(15,23,42,0.85)',
+})
 
 // ===== 价位类型(与后端 levels.py 的 LEVEL_TYPES 对齐) =====
 export type LevelType = 'sr' | 'pivot' | 'extreme' | 'boll' | 'keltner_s' | 'keltner_m' | 'keltner_l' | 'atr_stop' | 'gap' | 'fib' | 'round'
@@ -121,6 +139,8 @@ export function AnalysisKChart({
   height = 460,
   className,
 }: Props) {
+  const chrome = useChartChrome()
+  THEME = withChrome(chrome)
   const chartRef = useRef<HTMLDivElement>(null)
   const chartInstRef = useRef<ECharts | null>(null)
   const [activeTypes, setActiveTypes] = useState<Set<LevelType>>(new Set(defaultLevelTypes))
@@ -177,7 +197,7 @@ export function AnalysisKChart({
     }
 
     return { dates, candle, vols, dateIndex, zoomStart, alignedSeries }
-  }, [rows, series, seriesDates])
+  }, [rows, series, seriesDates, chrome])
 
   // 构建 option
   const buildOption = (): EChartsOption => {
@@ -243,7 +263,7 @@ export function AnalysisKChart({
           show: true,
           formatter: () => `${p.label} ${p.value.toFixed(2)}`,
           color: p.color, fontSize: 9, fontFamily: 'JetBrains Mono, monospace',
-          backgroundColor: 'rgba(15,23,42,0.85)', padding: [1, 4], borderRadius: 2,
+          backgroundColor: THEME.labelBg, padding: [1, 4], borderRadius: 2,
           distance: 6,
         },
       })
@@ -270,7 +290,7 @@ export function AnalysisKChart({
           show: true,
           formatter: () => `${lastVal!.toFixed(2)}`,
           color: def.color, fontSize: 9, fontFamily: 'JetBrains Mono, monospace',
-          backgroundColor: 'rgba(15,23,42,0.85)', padding: [1, 4], borderRadius: 2,
+          backgroundColor: THEME.labelBg, padding: [1, 4], borderRadius: 2,
           distance: 6,
         } : undefined,
       })
@@ -312,7 +332,7 @@ export function AnalysisKChart({
         { type: 'inside', xAxisIndex: [0, 1], start: zoomStart, end: 100 },
         { type: 'slider', xAxisIndex: [0, 1], bottom: sliderBottom, height: SLIDER_H, start: zoomStart, end: 100,
           borderColor: 'transparent', fillerColor: 'rgba(255,255,255,0.06)',
-          handleStyle: { color: '#52525B' }, textStyle: { color: THEME.text, fontSize: 10 } },
+          handleStyle: { color: THEME.handle }, textStyle: { color: THEME.text, fontSize: 10 } },
       ],
       // 不弹 hover tooltip(用户要求);但保留十字线 axisPointer 作为缩放/定位参照
       tooltip: { show: false },
@@ -335,7 +355,7 @@ export function AnalysisKChart({
     }
     chartInstRef.current.setOption(buildOption(), true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, levels, series, seriesDates, activeTypes, pivotRank, markers, ranges, height])
+  }, [rows, levels, series, seriesDates, activeTypes, pivotRank, markers, ranges, height, chrome])
 
   // resize
   useEffect(() => {
@@ -399,7 +419,7 @@ export function AnalysisKChart({
                   title={r === 1 ? 'P + R1/S1(3 个)' : r === 2 ? '到 R2/S2(5 个)' : '全档 R3/S3(7 个)'}
                   className={`h-6 px-2 rounded-md text-[10px] font-mono border transition-all ${
                     pivotRank === r
-                      ? 'bg-[#8B5CF6]/15 border-[#8B5CF6]/40 text-[#c4b5fd]'
+                      ? 'bg-violet-500/15 border-violet-500/40 text-violet-700 dark:text-[#c4b5fd]'
                       : 'text-muted bg-base/40 border-border/30 hover:border-border/60'
                   }`}
                 >

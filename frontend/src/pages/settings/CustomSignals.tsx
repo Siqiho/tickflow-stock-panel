@@ -119,11 +119,11 @@ export function SettingsCustomSignalsPanel() {
                   key={tab.key}
                   type="button"
                   onClick={() => setActiveSection(tab.key)}
-                  className={`rounded-btn px-4 py-3 text-left transition-colors ${active ? 'bg-amber-500/15 text-amber-300 shadow-sm' : 'text-secondary hover:bg-elevated hover:text-foreground'}`}
+                  className={`rounded-btn px-4 py-3 text-left transition-colors ${active ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300 shadow-sm' : 'text-secondary hover:bg-elevated hover:text-foreground'}`}
                 >
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm font-medium">{tab.label}</span>
-                    <span className={`rounded px-2 py-0.5 text-[11px] ${active ? 'bg-amber-400/15 text-amber-300' : 'bg-elevated text-muted'}`}>{tab.count}</span>
+                    <span className={`rounded px-2 py-0.5 text-[11px] ${active ? 'bg-amber-400/15 text-amber-800 dark:text-amber-300' : 'bg-elevated text-muted'}`}>{tab.count}</span>
                   </div>
                   <div className="mt-1 text-[11px] text-muted">{tab.hint}</div>
                 </button>

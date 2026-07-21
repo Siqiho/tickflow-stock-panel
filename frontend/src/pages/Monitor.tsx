@@ -25,10 +25,10 @@ const SEVERITY_CONFIG: Record<string, { bar: string; icon: any; iconCls: string 
   critical: { bar: 'bg-danger',           icon: Flame,       iconCls: 'text-danger' },
 }
 const SOURCE_BADGE_STYLE: Record<string, string> = {
-  strategy: 'bg-amber-400/10 text-amber-400 border-amber-400/20',
+  strategy: 'bg-amber-400/10 text-amber-700 dark:text-amber-400 border-amber-400/20',
   signal:   'bg-accent/10 text-accent border-accent/20',
-  price:    'bg-emerald-400/10 text-emerald-400 border-emerald-400/20',
-  market:   'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  price:    'bg-emerald-400/10 text-emerald-700 dark:text-emerald-400 border-emerald-400/20',
+  market:   'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20',
 }
 
 /**
@@ -44,9 +44,9 @@ function renderMessage(source: string, message: string) {
   return (
     <>
       <span className="text-foreground/80">{pre}</span>
-      <span className="text-amber-400 font-medium">{strategyName}</span>
+      <span className="text-amber-700 dark:text-amber-400 font-medium">{strategyName}</span>
       <span className="text-foreground/80">{mid}</span>
-      <span className={direction === '新入选' ? 'text-emerald-400 font-medium' : 'text-danger font-medium'}>{direction}</span>
+      <span className={direction === '新入选' ? 'text-emerald-700 dark:text-emerald-400 font-medium' : 'text-danger font-medium'}>{direction}</span>
       <span className="text-foreground/80">{post}</span>
     </>
   )
@@ -317,11 +317,11 @@ function AlertsList({ alertsQuery, confirmClear, setConfirmClear, total, enterTs
                           </span>
                         </div>
                         <div className="mt-1 flex items-center gap-1.5">
-                          <span className={cn('text-[11px] font-medium', isNew ? 'text-danger' : 'text-emerald-400')}>
+                          <span className={cn('text-[11px] font-medium', isNew ? 'text-danger' : 'text-emerald-700 dark:text-emerald-400')}>
                             {isNew ? '进入' : '移出'}
                           </span>
                           <span className="text-[11px] text-foreground/80">策略</span>
-                          <span className="text-[11px] font-medium text-amber-400">「{sname}」</span>
+                          <span className="text-[11px] font-medium text-amber-700 dark:text-amber-400">「{sname}」</span>
                         </div>
                       </>
                     )

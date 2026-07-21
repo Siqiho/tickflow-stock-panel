@@ -8,7 +8,7 @@ import { isExpertOrAbove } from '@/lib/capability-labels'
 /**
  * 五档盘口 sealed(真假涨停) 配置内容(纯内容, 无外框, 由父级 Card 包裹)。
  *
- * - 轮询间隔: Pro 10~120s / Expert 3~300s
+ * - 轮询间隔: 公开源约 15~180s / Pro 10~120s / Expert 3~300s
  * - 盘后定版时间: 15:01~18:00, 默认 15:02
  * - disabled 时(监控关闭)输入框禁用
  */
@@ -18,7 +18,12 @@ export function DepthConfigContent({ disabled }: { disabled?: boolean }) {
   const prefs = usePreferences()
   const caps = useCapabilities()
 
-  const hasDepth = !!caps.data?.capabilities?.['depth5.batch']
+  const hasDepth = !!(
+    caps.data?.features?.depth?.available
+    || caps.data?.depth?.available
+    || caps.data?.capabilities?.['depth5.batch']
+    || caps.data?.capabilities?.['depth5']
+  )
   const tierLabel = caps.data?.label ?? ''
   const range = isExpertOrAbove(tierLabel) ? { lo: 3, hi: 300 } : { lo: 10, hi: 120 }
 
@@ -49,7 +54,7 @@ export function DepthConfigContent({ disabled }: { disabled?: boolean }) {
   if (!hasDepth) {
     return (
       <p className="text-xs text-muted leading-relaxed">
-        真假涨停判定依赖五档盘口实时快照,需 <span className="text-accent">Pro 及以上套餐</span>。
+        真假涨停判定依赖盘口实时快照（公开源 L1 买卖一量，或 TickFlow 五档）。
         升级后连板梯队将自动区分真封板(显示封单量)与假涨停(归入炸板)。
       </p>
     )

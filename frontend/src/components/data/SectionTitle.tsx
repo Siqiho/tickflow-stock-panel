@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle, Loader2, AlertCircle } from 'lucide-react'
+import { CheckCircle2, XCircle, Loader2, AlertCircle, AlertTriangle } from 'lucide-react'
 import { formatDuration } from '@/lib/format'
 
 export function SectionTitle({ icon: Icon, children }: { icon: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
@@ -13,10 +13,11 @@ export function SectionTitle({ icon: Icon, children }: { icon: React.ComponentTy
 export function HistoryRow({ job, onClick }: { job: any; onClick: () => void }) {
   const statusIcon = {
     succeeded: { icon: CheckCircle2, color: 'text-bear' },
+    degraded:  { icon: AlertTriangle, color: 'text-warning' },
     failed:    { icon: XCircle, color: 'text-danger' },
     running:   { icon: Loader2, color: 'text-accent', spinning: true },
     pending:   { icon: Loader2, color: 'text-muted', spinning: true },
-  }[job.status as 'succeeded'] ?? { icon: AlertCircle, color: 'text-muted' }
+  }[job.status as 'succeeded' | 'degraded' | 'failed' | 'running' | 'pending'] ?? { icon: AlertCircle, color: 'text-muted' }
   const Icon = statusIcon.icon
 
   return (

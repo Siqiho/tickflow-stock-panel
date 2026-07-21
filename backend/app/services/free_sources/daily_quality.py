@@ -1,12 +1,13 @@
 """Daily quality checks over local kline partitions."""
 from __future__ import annotations
 
-import json
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import polars as pl
+
+from app.services.atomic_io import atomic_write_json
 
 
 def _latest_partition_date(kline_dir: Path) -> str | None:
@@ -85,6 +86,87 @@ def run_daily_quality_check(data_dir: Path | str, date: str | None = None) -> di
         if bad:
             issues.append({"code": "high_lt_low", "count": bad, "message": f"{bad} rows high < low"})
 
+    # Canonical unit contract: volume=lots (100 shares), amount=CNY. For a
+    # liquid daily bar, amount / (volume * 100 * close) should stay near 1.
+    unit_cols = {"symbol", "close", "high", "low", "volume", "amount"}
+    if unit_cols.issubset(df.columns):
+        valid = df.filter(
+            (pl.col("close") > 0)
+            & (pl.col("volume") > 0)
+            & (pl.col("amount") > 0)
+        ).with_columns(
+            (pl.col("amount") / (pl.col("volume") * 100 * pl.col("close"))).alias("_unit_ratio"),
+            (pl.col("amount") / (pl.col("volume") * 100)).alias("_vwap"),
+            pl.when(pl.col("symbol").str.starts_with("68"))
+            .then(pl.lit("STAR"))
+            .when(pl.col("symbol").str.ends_with(".BJ"))
+            .then(pl.lit("BJ"))
+            .when(pl.col("symbol").str.ends_with(".SH"))
+            .then(pl.lit("SH"))
+            .when(pl.col("symbol").str.ends_with(".SZ"))
+            .then(pl.lit("SZ"))
+            .otherwise(pl.lit("OTHER"))
+            .alias("_market"),
+        )
+        if valid.height:
+            ratio_stats = valid.select(
+                pl.col("_unit_ratio").median().alias("median"),
+                pl.col("_unit_ratio").quantile(0.1).alias("p10"),
+                pl.col("_unit_ratio").quantile(0.9).alias("p90"),
+            ).row(0, named=True)
+            metrics["amount_volume_price_ratio"] = {
+                key: float(value) if value is not None else None
+                for key, value in ratio_stats.items()
+            }
+            median_ratio = float(ratio_stats["median"] or 0)
+            if median_ratio < 0.001:
+                issues.append(
+                    {
+                        "code": "amount_unit_mismatch",
+                        "message": (
+                            "median amount/(volume*100*close) is "
+                            f"{median_ratio:.6g}; amount may still be in ten-thousand CNY"
+                        ),
+                    }
+                )
+            elif not 0.2 <= median_ratio <= 5.0:
+                issues.append(
+                    {
+                        "code": "amount_volume_unit_mismatch",
+                        "message": f"median amount/volume/price ratio out of range: {median_ratio:.6g}",
+                    }
+                )
+
+            market_metrics: dict[str, dict[str, float | int]] = {}
+            for market_df in valid.partition_by("_market", maintain_order=True):
+                market = str(market_df["_market"][0])
+                market_median = float(market_df["_unit_ratio"].median() or 0)
+                market_metrics[market] = {"rows": market_df.height, "median": market_median}
+                if market_df.height >= 3 and not 0.2 <= market_median <= 5.0:
+                    issues.append(
+                        {
+                            "code": "market_unit_mismatch",
+                            "market": market,
+                            "count": market_df.height,
+                            "message": f"{market} median unit ratio out of range: {market_median:.6g}",
+                        }
+                    )
+            metrics["amount_volume_price_ratio_by_market"] = market_metrics
+
+            bad_vwap = valid.filter(
+                (pl.col("_vwap") < pl.col("low") * 0.2)
+                | (pl.col("_vwap") > pl.col("high") * 5.0)
+            ).height
+            metrics["vwap_price_mismatch_rows"] = bad_vwap
+            if bad_vwap / valid.height > 0.01:
+                issues.append(
+                    {
+                        "code": "vwap_price_mismatch",
+                        "count": bad_vwap,
+                        "message": f"{bad_vwap}/{valid.height} rows have VWAP far outside daily price range",
+                    }
+                )
+
     # Coverage vs instruments
     inst = data_dir / "instruments" / "instruments.parquet"
     if inst.exists() and "symbol" in df.columns:
@@ -116,6 +198,21 @@ def run_daily_quality_check(data_dir: Path | str, date: str | None = None) -> di
                         "guess": "volume_lot_100shares" if 50 < ratio < 150 else "unknown",
                     }
 
+    enriched_part = data_dir / "kline_daily_enriched" / f"date={target}" / "part.parquet"
+    if enriched_part.exists():
+        enriched = pl.read_parquet(enriched_part)
+        if "turnover_rate" in enriched.columns and enriched.schema["turnover_rate"] != pl.Null:
+            extreme_turnover = enriched.filter(pl.col("turnover_rate").cast(pl.Float64) > 100).height
+            metrics["turnover_rate_over_100"] = extreme_turnover
+            if extreme_turnover:
+                issues.append(
+                    {
+                        "code": "turnover_unit_mismatch",
+                        "count": extreme_turnover,
+                        "message": f"{extreme_turnover} rows have turnover_rate above 100 percentage points",
+                    }
+                )
+
     report = {
         "ok": len(issues) == 0,
         "date": target,
@@ -132,4 +229,4 @@ def _write_report(data_dir: Path, report: dict) -> None:
     out_dir = data_dir / "user_data"
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "daily_quality_latest.json"
-    path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(report, path, indent=2)

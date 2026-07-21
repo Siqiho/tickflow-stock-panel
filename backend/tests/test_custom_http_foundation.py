@@ -84,11 +84,8 @@ def test_custom_sources_api_lists_without_selecting(monkeypatch, tmp_path: Path)
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     from app.config import settings
 
-    # force settings data_dir for this process if mutable
-    try:
-        object.__setattr__(settings, "data_dir", tmp_path)
-    except Exception:
-        settings.data_dir = tmp_path  # type: ignore[misc]
+    # monkeypatch restores this process-global setting after the test.
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
 
     from app.api import custom_sources
 

@@ -24,10 +24,22 @@ def _get_quote_service(request: Request):
 
 
 def _fallback_index_quotes_from_daily(request: Request, symbols: list[str] | None = None) -> list[dict]:
-    """实时指数缓存为空时，从本地指数日 K 取最近收盘价作为兜底。"""
+    """实时指数缓存为空时，从本地指数日 K 取最近收盘价作为兜底。
+
+    未指定 symbols 时只回核心/偏好指数，避免把全市场 600+ 指数日K误标成“实时缓存”。
+    """
     repo = getattr(request.app.state, "repo", None)
     if not repo:
         return []
+
+    if not symbols:
+        try:
+            from app.services import preferences as _prefs
+            symbols = list(_prefs.get_realtime_index_symbols() or [])
+        except Exception:  # noqa: BLE001
+            symbols = []
+        if not symbols:
+            symbols = ["000001.SH", "399001.SZ", "399006.SZ", "000680.SH"]
 
     params: list[str] = []
     symbol_filter = ""
@@ -98,18 +110,56 @@ def index_quotes(
     request: Request,
     symbols: str | None = Query(None, description="逗号分隔的指数 symbol 列表"),
 ):
-    """返回实时指数行情缓存，不触发 TickFlow 请求。"""
-    symbol_list = [s.strip() for s in symbols.split(",") if s.strip()] if symbols else None
+    """返回指数行情：优先实时缓存，缺的用本地 index 日K 兜底。
+
+    - 未传 symbols: 仅核心/偏好指数（避免 600+ 全表被标成实时缓存）
+    - 传入 symbols: 实时命中 + 本地日K补齐，source 可为 mixed
+    """
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
+    if not symbol_list:
+        try:
+            from app.services import preferences as _prefs
+            symbol_list = [str(s).strip().upper() for s in (_prefs.get_realtime_index_symbols() or []) if s]
+        except Exception:  # noqa: BLE001
+            symbol_list = []
+        if not symbol_list:
+            symbol_list = ["000001.SH", "399001.SZ", "399006.SZ", "000680.SH"]
+
     qs = _get_quote_service(request)
-    if not qs:
-        rows = _fallback_index_quotes_from_daily(request, symbol_list)
-        return {"rows": rows, "count": len(rows), "source": "index_daily"}
-    df = qs.get_index_quotes(symbol_list)
-    rows = df.to_dicts() if not df.is_empty() else []
-    if not rows:
-        rows = _fallback_index_quotes_from_daily(request, symbol_list)
-        return {"rows": rows, "count": len(rows), "source": "index_daily"}
-    return {"rows": rows, "count": len(rows), "source": "realtime"}
+    realtime_rows: list[dict] = []
+    if qs:
+        df = qs.get_index_quotes(symbol_list)
+        realtime_rows = df.to_dicts() if df is not None and not df.is_empty() else []
+        for r in realtime_rows:
+            r.setdefault("source", "realtime")
+
+    have = {str(r.get("symbol") or "").upper() for r in realtime_rows}
+    missing = [s for s in symbol_list if s not in have]
+    daily_rows: list[dict] = []
+    if missing:
+        daily_rows = _fallback_index_quotes_from_daily(request, missing)
+        for r in daily_rows:
+            r["source"] = "index_daily"
+
+    # Preserve request order
+    by_sym = {str(r.get("symbol") or "").upper(): r for r in (realtime_rows + daily_rows)}
+    rows = [by_sym[s] for s in symbol_list if s in by_sym]
+
+    if realtime_rows and daily_rows:
+        source = "mixed"
+    elif realtime_rows:
+        source = "realtime"
+    elif daily_rows:
+        source = "index_daily"
+    else:
+        source = "none"
+    return {
+        "rows": rows,
+        "count": len(rows),
+        "source": source,
+        "realtime_count": len(realtime_rows),
+        "daily_count": len(daily_rows),
+    }
 
 
 @router.get("/stream")

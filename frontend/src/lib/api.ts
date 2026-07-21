@@ -4,23 +4,112 @@
 // Prod:同源(FastAPI 托管前端 dist)
 
 import { toast } from '@/components/Toast'
+import { logApiCall } from '@/lib/runtimeLogger'
 
 const BASE = ''
+
+function summarizeRequestBody(body: BodyInit | null | undefined): unknown {
+  if (body == null) return undefined
+  if (typeof body !== 'string') {
+    if (typeof FormData !== 'undefined' && body instanceof FormData) return { type: 'FormData' }
+    return { type: typeof body }
+  }
+  if (body.length > 800) return body.slice(0, 800) + '…'
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(parsed || {})) {
+      const key = k.toLowerCase()
+      if (key.includes('password') || key.includes('secret') || key.includes('token') || key.includes('api_key')) {
+        out[k] = '***'
+      } else {
+        out[k] = v
+      }
+    }
+    return out
+  } catch {
+    return body
+  }
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const isFormData = init?.body instanceof FormData
   const headers: Record<string, string> = {}
   if (!isFormData) headers['Content-Type'] = 'application/json'
-  const res = await fetch(`${BASE}${path}`, { ...init, headers })
-  if (!res.ok) {
-    let detail = ''
-    try { const j = JSON.parse(await res.text()); detail = j.detail ?? j.message ?? '' } catch { /* ignore */ }
-    const msg = detail || `${res.status} ${res.statusText}`
-    // 401 (未登录/会话过期) 不弹 toast — 由全局认证拦截器统一跳登录页, 避免刷屏
-    if (res.status !== 401) toast(msg, 'error')
-    throw new Error(msg)
+  const method = (init?.method || 'GET').toUpperCase()
+  const started = performance.now()
+  const reqBody = method === 'GET' || method === 'HEAD' ? undefined : summarizeRequestBody(init?.body ?? null)
+  try {
+    const res = await fetch(`${BASE}${path}`, { ...init, headers })
+    const duration_ms = performance.now() - started
+    if (!res.ok) {
+      let detail = ''
+      try { const j = JSON.parse(await res.text()); detail = j.detail ?? j.message ?? '' } catch { /* ignore */ }
+      const msg = detail || `${res.status} ${res.statusText}`
+      logApiCall({
+        method,
+        path,
+        status: res.status,
+        ok: false,
+        duration_ms,
+        requestBody: reqBody,
+        error: msg,
+      })
+      // 401 (未登录/会话过期) 不弹 toast — 由全局认证拦截器统一跳登录页, 避免刷屏
+      if (res.status !== 401) toast(msg, 'error')
+      throw new Error(msg)
+    }
+    logApiCall({
+      method,
+      path,
+      status: res.status,
+      ok: true,
+      duration_ms,
+      requestBody: reqBody,
+    })
+    return res.json() as Promise<T>
+  } catch (err) {
+    const duration_ms = performance.now() - started
+    // 已在 !res.ok 分支记录过的 Error 不再重复
+    if (!(err instanceof Error && (err as any)._apiLogged)) {
+      // network failures only
+      if (!(err instanceof Error && err.message && !err.message.includes(' '))) {
+        /* fallthrough */
+      }
+    }
+    // 仅对真正的网络异常补一条(非我们 throw 的业务 Error)
+    if (err instanceof TypeError) {
+      logApiCall({
+        method,
+        path,
+        ok: false,
+        duration_ms,
+        requestBody: reqBody,
+        error: err.message,
+      })
+    }
+    throw err
   }
-  return res.json() as Promise<T>
+}
+
+
+// ===== Runtime logs =====
+export interface RuntimeLogItem {
+  id: string
+  ts: string
+  source: string
+  level: string
+  category: string
+  message: string
+  process_id?: string
+  logger?: string
+  session_id?: string
+  path?: string
+  method?: string
+  status?: number
+  duration_ms?: number
+  detail?: Record<string, unknown>
+  change?: Record<string, unknown>
 }
 
 // ===== Capabilities =====
@@ -28,6 +117,7 @@ export interface CapabilityLimits {
   rpm: number | null
   batch: number | null
   subscribe: number | null
+  view_only?: boolean
 }
 
 export type FeatureAvailability = {
@@ -40,23 +130,39 @@ export type FeatureAvailability = {
   full_market_sync_allowed?: boolean
   single_symbol_fallback?: string | null
   fallback_hint?: string | null
+  view_available?: boolean
+  source?: string
+  mode?: string
+  fallback?: string | null
 }
 
 export type CapabilitiesResponse = {
   label: string
-  capabilities: Record<string, CapabilityLimits>
+  capabilities: Record<string, CapabilityLimits & { source?: string; local?: boolean }>
   features?: {
     daily?: FeatureAvailability
     minute?: FeatureAvailability
-    adj_factor?: FeatureAvailability
-    financial?: FeatureAvailability
+    adj_factor?: FeatureAvailability & { source?: string }
+    financial?: FeatureAvailability & { source?: string }
+    depth?: FeatureAvailability
+    quote?: FeatureAvailability
+    websocket?: FeatureAvailability
   }
   daily?: FeatureAvailability
   minute?: FeatureAvailability
+  /** convenience mirrors of features.* for UI */
+  financial?: FeatureAvailability & { source?: string }
+  adj_factor?: FeatureAvailability & { source?: string }
+  depth?: FeatureAvailability
+  quote?: FeatureAvailability
+  websocket?: FeatureAvailability
 }
 
 // ===== Financials =====
 export interface FinancialStatus {
+  provider?: string
+  local_ready?: boolean
+
   available: boolean
   tables: Record<string, { rows: number; symbols: number }>
   last_sync: Record<string, string>
@@ -111,6 +217,15 @@ export interface FinancialBalanceSheetRecord {
   total_equity?: number | null
   equity_attributable?: number | null
   [key: string]: any
+}
+
+export interface FinancialSharesRecord {
+  symbol?: string
+  period_end: string
+  announce_date?: string | null
+  total_shares?: number | null
+  float_shares?: number | null
+  source?: string | null
 }
 
 export interface FinancialCashFlowRecord {
@@ -670,6 +785,13 @@ export interface SettingsState {
   ai_model: string
   ai_codex_command?: string
   ai_user_agent: string
+  ai_xai?: {
+    auth_type?: string | null
+    has_oauth?: boolean
+    has_access_token?: boolean
+    expires_at?: number | null
+    expired?: boolean
+  }
 }
 
 /** 保存 TickFlow Key 的响应(先探后存) */
@@ -692,6 +814,8 @@ export interface Preferences {
   minute_sync_days: number
   daily_data_provider?: string
   adj_factor_provider?: string
+  financial_provider?: string
+  pool_provider?: string
   minute_data_provider?: string
   realtime_data_provider?: string
   realtime_watchlist_symbols?: string[]
@@ -703,6 +827,9 @@ export interface Preferences {
   pipeline_pull_a_share: boolean
   pipeline_pull_etf: boolean
   pipeline_pull_index: boolean
+  pipeline_universe_scope?: string
+  public_data_scope?: string
+  financial_max_periods?: number
   pipeline_index_symbols: string
   pipeline_schedule: { hour: number; minute: number }
   instruments_schedule: { hour: number; minute: number }
@@ -781,7 +908,7 @@ export const api = {
 
   /** 保存 AI 配置 */
   saveAiSettings: (ai: { provider?: string; base_url?: string; api_key?: string; model?: string; codex_command?: string; user_agent?: string }) =>
-    request<{ ok: boolean; ai_provider?: string; ai_model?: string; ai_codex_command?: string; ai_configured?: boolean }>('/api/settings/ai', {
+    request<{ ok: boolean; ai_provider?: string; ai_model?: string; ai_codex_command?: string; ai_configured?: boolean; ai_xai?: SettingsState['ai_xai'] }>('/api/settings/ai', {
       method: 'POST',
       body: JSON.stringify(ai),
     }),
@@ -790,11 +917,58 @@ export const api = {
   clearAiSettings: () =>
     request<{ ok: boolean }>('/api/settings/ai', { method: 'DELETE' }),
 
+  /** xAI SuperGrok 设备码登录 — 发起 */
+  xaiDeviceStart: () =>
+    request<{
+      device_code: string
+      user_code: string
+      verification_uri: string
+      verification_uri_complete?: string
+      expires_in: number
+      interval: number
+    }>('/api/settings/ai/xai/device/start', { method: 'POST' }),
+
+  /** xAI SuperGrok 设备码登录 — 轮询完成 */
+  xaiDevicePoll: (body: { device_code: string; interval?: number; expires_in?: number; model?: string }) =>
+    request<{
+      ok: boolean
+      status?: 'pending' | 'authorized'
+      slow_down?: boolean
+      ai_provider?: string
+      ai_model?: string
+      ai_configured?: boolean
+      ai_xai?: SettingsState['ai_xai']
+    }>(
+      '/api/settings/ai/xai/device/poll',
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+
+  xaiStatus: () =>
+    request<NonNullable<SettingsState['ai_xai']>>('/api/settings/ai/xai/status'),
+
+  xaiLogout: () =>
+    request<{ ok: boolean; ai_xai?: SettingsState['ai_xai'] }>('/api/settings/ai/xai/session', { method: 'DELETE' }),
+
   preferences: () => request<Preferences>('/api/settings/preferences'),
   updateMinuteSync: (enabled: boolean, days: number) =>
     request<Preferences>('/api/settings/preferences/minute-sync', {
       method: 'PUT',
       body: JSON.stringify({ minute_sync_enabled: enabled, minute_sync_days: days }),
+    }),
+  updatePipelineUniverseScope: (scope: string) =>
+    request<{ pipeline_universe_scope: string; label?: string }>('/api/settings/preferences/pipeline-universe-scope', {
+      method: 'PUT',
+      body: JSON.stringify({ scope }),
+    }),
+  updatePublicDataScope: (scope: string) =>
+    request<{ public_data_scope: string; label?: string }>('/api/settings/preferences/public-data-scope', {
+      method: 'PUT',
+      body: JSON.stringify({ scope }),
+    }),
+  updateFinancialMaxPeriods: (financial_max_periods: number) =>
+    request<{ financial_max_periods: number }>('/api/settings/preferences/financial-max-periods', {
+      method: 'PUT',
+      body: JSON.stringify({ financial_max_periods }),
     }),
   updatePipelinePullTypes: (cfg: Partial<Pick<Preferences, 'pipeline_pull_a_share' | 'pipeline_pull_etf' | 'pipeline_pull_index'>>) =>
     request<{
@@ -851,7 +1025,7 @@ export const api = {
     ),
   intradayRefresh: () => request<{ status: string }>('/api/intraday/refresh', { method: 'POST' }),
   indexQuotes: (symbols?: string[]) =>
-    request<{ rows: IndexQuote[]; count: number }>(
+    request<{ rows: IndexQuote[]; count: number; source?: string }>(
       `/api/intraday/indices${symbols?.length ? `?symbols=${encodeURIComponent(symbols.join(','))}` : ''}`,
     ),
   updateRealtimeMonitorConfig: (cfg: {
@@ -966,6 +1140,48 @@ export const api = {
 
   capabilities: () => request<CapabilitiesResponse>('/api/capabilities'),
   version: () => request<{ version: string }>('/api/data/version'),
+
+  // ===== 运行日志 =====
+  runtimeLogsStatus: () =>
+    request<{
+      configured: boolean
+      process_id: string
+      log_dir: string | null
+      buffer_size: number
+      buffer_capacity: number
+      latest_ts: string | null
+      files: Record<string, { path: string; size_bytes: number; mtime: string } | null>
+    }>('/api/runtime-logs/status'),
+  runtimeLogs: (params?: {
+    source?: string
+    level?: string
+    category?: string
+    q?: string
+    limit?: number
+    after_id?: string
+  }) => {
+    const sp = new URLSearchParams()
+    if (params?.source) sp.set('source', params.source)
+    if (params?.level) sp.set('level', params.level)
+    if (params?.category) sp.set('category', params.category)
+    if (params?.q) sp.set('q', params.q)
+    if (params?.limit != null) sp.set('limit', String(params.limit))
+    if (params?.after_id) sp.set('after_id', params.after_id)
+    const qs = sp.toString()
+    return request<{
+      events: RuntimeLogItem[]
+      count: number
+      process_id: string
+      log_dir: string | null
+      latest_ts: string | null
+    }>(`/api/runtime-logs${qs ? `?${qs}` : ''}`)
+  },
+  clearRuntimeLogs: (keepFiles = false) =>
+    request<{ ok: boolean; truncated_files: string[] }>(
+      `/api/runtime-logs?keep_files=${keepFiles ? 'true' : 'false'}`,
+      { method: 'DELETE' },
+    ),
+
   redetectCapabilities: () =>
     request<CapabilitiesResponse>('/api/capabilities/redetect', { method: 'POST' }),
 
@@ -1238,6 +1454,68 @@ export const api = {
       },
     ),
 
+
+  // ===== 筹码分布（本地日K近似） =====
+  stockChips: (symbol: string, days = 120, bins = 80) =>
+    request<ChipDistributionResponse>(
+      `/api/free/chips/${encodeURIComponent(symbol)}?days=${days}&bins=${bins}`,
+    ),
+
+  // ===== 主力资金流（行业/概念板块） =====
+  fundFlowBoards: (top = 30) =>
+    request<FundFlowListResponse>(`/api/free/fund-flow/boards?top=${top}`),
+  fundFlowBoardsRefresh: () =>
+    request<FundFlowListResponse>('/api/free/fund-flow/boards/refresh', { method: 'POST' }),
+  fundFlowConcepts: (top = 30) =>
+    request<FundFlowListResponse>(`/api/free/fund-flow/concepts?top=${top}`),
+  fundFlowConceptsRefresh: () =>
+    request<FundFlowListResponse>('/api/free/fund-flow/concepts/refresh', { method: 'POST' }),
+  fundFlowStock: (symbol: string, limit = 60) =>
+    request<{ ok: boolean; symbol: string; rows: any[]; count: number; cached?: boolean }>(
+      `/api/free/fund-flow/stock/${encodeURIComponent(symbol)}?limit=${limit}`,
+    ),
+  fundFlowStockRefresh: (symbol: string) =>
+    request<{ ok: boolean; symbol: string; rows: number; source?: string }>(
+      `/api/free/fund-flow/stock/${encodeURIComponent(symbol)}/refresh`,
+      { method: 'POST' },
+    ),
+
+  /** 行业 Top 流入/流出日线历史回补（东财 dataapi 排名 + flowlens daykline） */
+  fundFlowBoardsHistoryRefresh: (topN = 20, limit = 60) =>
+    request<FundFlowHistoryRefreshResponse>(
+      `/api/free/fund-flow/boards/history/refresh?top_n=${topN}&limit=${limit}`,
+      { method: 'POST' },
+    ),
+  /** 概念 Top 流入/流出日线历史回补（东财 dataapi 排名 + daykline） */
+  fundFlowConceptsHistoryRefresh: (topN = 20, limit = 60) =>
+    request<FundFlowHistoryRefreshResponse>(
+      `/api/free/fund-flow/concepts/history/refresh?top_n=${topN}&limit=${limit}`,
+      { method: 'POST' },
+    ),
+  fundFlowBoardHistory: (
+    code: string,
+    opts?: { kind?: 'board' | 'concept'; limit?: number; refresh?: boolean },
+  ) => {
+    const kind = opts?.kind ?? 'board'
+    const limit = opts?.limit ?? 120
+    const refresh = opts?.refresh ? 'true' : 'false'
+    return request<FundFlowBoardHistoryResponse>(
+      `/api/free/fund-flow/board/${encodeURIComponent(code)}/history?kind=${kind}&limit=${limit}&refresh=${refresh}`,
+    )
+  },
+  fundFlowBoardIntraday: (
+    code: string,
+    opts?: { kind?: 'board' | 'concept'; refresh?: boolean; tradeDate?: string },
+  ) => {
+    const kind = opts?.kind ?? 'board'
+    const refresh = opts?.refresh ? 'true' : 'false'
+    const qs = new URLSearchParams({ kind, refresh })
+    if (opts?.tradeDate) qs.set('trade_date', opts.tradeDate)
+    return request<FundFlowBoardIntradayResponse>(
+      `/api/free/fund-flow/board/${encodeURIComponent(code)}/intraday?${qs.toString()}`,
+    )
+  },
+
   // ===== 扩展数据 =====
   extDataList: () =>
     request<{ items: ExtDataConfig[] }>('/api/ext-data'),
@@ -1371,6 +1649,11 @@ export const api = {
   financialCashFlow: (symbol?: string) =>
     request<{ data: FinancialCashFlowRecord[] }>(
       `/api/financials/cash-flow${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`,
+    ),
+
+  financialShares: (symbol?: string) =>
+    request<{ data: FinancialSharesRecord[] }>(
+      `/api/financials/shares${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`,
     ),
 
   /** 触发财务数据同步(后台异步执行,接口立即返回 started 状态) */
@@ -1704,7 +1987,7 @@ export const api = {
 // ===== Pipeline =====
 export interface PipelineJob {
   id: string
-  status: 'pending' | 'running' | 'succeeded' | 'failed'
+  status: 'pending' | 'running' | 'succeeded' | 'degraded' | 'failed'
   stage: string
   progress: number          // 0-100 整体进度
   stage_pct: number         // 0-100 当前阶段内进度
@@ -1729,6 +2012,12 @@ export interface PipelineJob {
       fallback_hint?: string | null
     }
     skipped_stages?: string[]
+    quality?: {
+      ok: boolean
+      date?: string | null
+      issues?: Array<{ code: string; message?: string; count?: number; market?: string }>
+      metrics?: Record<string, unknown>
+    } | null
   } | null
   error: string | null
 }
@@ -1763,7 +2052,7 @@ export interface DataStatus {
   minute: TableStats | null
   adj_factor: TableStats | null
   instruments: InstrumentsStats | null
-  financials: { rows: number; tables: Record<string, { rows: number; symbols: number }> } | null
+  financials: { rows: number; symbols?: number; tables?: Record<string, { rows: number; symbols: number }> } | null
   storage: {
     daily_files: number
     daily_size_mb: number
@@ -1806,6 +2095,130 @@ export interface EnrichedField {
   name: string
   type: string
   desc: string
+}
+
+
+// ===== 主力资金流（东财公开接口缓存） =====
+export interface ChipCostRange {
+  low_price: number
+  high_price: number
+  concentration: number
+}
+
+export interface ChipBinItem {
+  price: number
+  vol: number
+  ratio: number
+}
+
+export interface ChipDistribution {
+  symbol: string
+  days: number
+  bins: number
+  current: number
+  avg_cost: number
+  median_cost: number
+  profit_ratio: number
+  min_price: number
+  max_price: number
+  sum_vol: number
+  cost70: ChipCostRange
+  cost90: ChipCostRange
+  items: ChipBinItem[]
+  method?: string
+  disclaimer?: string
+  source?: string
+}
+
+export interface ChipDistributionResponse {
+  ok: boolean
+  data: ChipDistribution
+}
+
+export interface FundFlowItem {
+  code?: string | null
+  name: string
+  main_net: number | null
+  change_pct?: number | null
+  rank?: number | null
+  as_of?: string | null
+  kind?: string | null
+  source?: string | null
+  unit_amount?: string | null
+}
+
+export interface FundFlowListResponse {
+  ok: boolean
+  items: FundFlowItem[]
+  count: number
+  cached?: boolean
+  rows?: number
+  source?: string
+}
+
+export interface FundFlowHistoryPoint {
+  code?: string
+  name?: string
+  date: string
+  main_net: number | null
+  small_net?: number | null
+  med_net?: number | null
+  large_net?: number | null
+  super_net?: number | null
+  main_net_pct?: number | null
+  source?: string | null
+  unit_amount?: string | null
+}
+
+export interface FundFlowIntradayPoint {
+  code?: string
+  name?: string
+  timestamp?: string
+  time?: string
+  date?: string
+  main_net: number | null
+  small_net?: number | null
+  med_net?: number | null
+  large_net?: number | null
+  super_net?: number | null
+  source?: string | null
+  unit_amount?: string | null
+}
+
+export interface FundFlowHistoryRefreshResponse {
+  ok: boolean
+  kind: string
+  ranking_count: number
+  selected: number
+  history_codes: string[]
+  history_points: number
+  failed?: Array<{ code: string; error: string }>
+  source?: string
+}
+
+export interface FundFlowBoardHistoryResponse {
+  ok: boolean
+  code: string
+  kind: string
+  rows: FundFlowHistoryPoint[]
+  count: number
+  cached?: boolean
+  source?: string
+  warning?: string
+}
+
+export interface FundFlowBoardIntradayResponse {
+  ok: boolean
+  code: string
+  kind: string
+  name?: string
+  trade_date?: string
+  updated_time?: string
+  points: FundFlowIntradayPoint[]
+  count: number
+  cached?: boolean
+  source?: string
+  warning?: string
 }
 
 // ===== 扩展数据 =====

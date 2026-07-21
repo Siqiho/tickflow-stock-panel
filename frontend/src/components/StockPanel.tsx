@@ -3,6 +3,7 @@ import { type KlineRow, type FinancialMetricRecord } from '@/lib/api'
 import { StockInfoBar } from '@/components/StockInfoBar'
 import { StockDailyKChart, getDefaultRange, type StockDailyKChartResult } from '@/components/StockDailyKChart'
 import { StockIntradayChart } from '@/components/StockIntradayChart'
+import { ChipDistributionPanel } from '@/components/ChipDistributionPanel'
 import { useFinancialMetrics } from '@/lib/useFinancials'
 import { useCapabilities } from '@/lib/useSharedQueries'
 import type { ChartMarker, ChartPriceLine, ChartRange } from '@/components/EChartsCandlestick'
@@ -17,6 +18,8 @@ interface Props {
   symbol: string
   height?: number
   showIntraday?: boolean
+  /** 显示筹码分布侧栏（本地日K近似筹码峰） */
+  showChips?: boolean
   className?: string
   /** 当用户点击蜡烛选中日期时回调（用于外部自动开启分时图）。 */
   onSelectDate?: (date: string) => void
@@ -40,6 +43,7 @@ export function StockPanel({
   symbol,
   height = 520,
   showIntraday = true,
+  showChips = false,
   className,
   onSelectDate,
   dateRange: externalDateRange,
@@ -64,10 +68,13 @@ export function StockPanel({
     saveInfoFields(next)
   }, [])
 
-  // 财务指标：仅当信息条配置含可见的财务字段且用户具备 FINANCIAL 能力 (Expert) 时才请求
-  // 无能力时跳过请求, 避免后端抛 CapabilityDenied (403) 导致 free/starter 档弹错误提示
+  // 财务指标：信息条含财务字段，且 TickFlow Expert 或本地/public 财务可用时才请求
   const { data: caps } = useCapabilities()
-  const hasFinancialCap = !!caps?.capabilities?.['financial']
+  const hasFinancialCap = Boolean(
+    caps?.features?.financial?.available
+    || caps?.financial?.available
+    || caps?.capabilities?.['financial'] != null
+  )
   const hasFinanceField = useMemo(
     () => fields.some(f => f.visible && f.source.type === 'builtin'
       && ['eps', 'bps', 'roe', 'pe_ttm', 'pb', 'gross_margin', 'net_margin', 'debt_ratio', 'revenue_yoy', 'net_income_yoy'].includes(f.source.key)),
@@ -99,11 +106,12 @@ export function StockPanel({
     setDailyResult(null)
   }, [symbol])
 
-  // 当分时开启、无选中日期时，自动选中最新日期
+  // 当分时开启、无选中日期时：优先今天（公开分时只稳供当日），否则最新日K日期
   useEffect(() => {
-    if (showIntraday && !selectedDate && rows.length > 0) {
-      setSelectedDate(rows[rows.length - 1].date)
-    }
+    if (!showIntraday || selectedDate || rows.length === 0) return
+    const today = new Date().toISOString().slice(0, 10)
+    const hasToday = rows.some(r => r.date === today)
+    setSelectedDate(hasToday ? today : rows[rows.length - 1].date)
   }, [showIntraday, selectedDate, rows])
 
   const selectedIdx = selectedDate ? rows.findIndex(r => r.date === selectedDate) : -1
@@ -146,7 +154,7 @@ export function StockPanel({
           linkedPrice={linkedPrice}
           onDateClick={handleDateClick}
           onDataChange={setDailyResult}
-          visibleBars={showIntraday ? 40 : 60}
+          visibleBars={(showIntraday || showChips) ? 40 : 60}
           extColumns={extColumns}
         />
 
@@ -158,6 +166,15 @@ export function StockPanel({
             prevClose={prevClose}
             onPriceHover={setLinkedPrice}
             className="flex-1 min-w-0 border-l border-border pl-3"
+          />
+        )}
+
+        {showChips && (
+          <ChipDistributionPanel
+            symbol={symbol}
+            height={height}
+            linkedPrice={linkedPrice}
+            className="w-[17.5rem] shrink-0 border-l border-border pl-3"
           />
         )}
       </div>

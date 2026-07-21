@@ -2,11 +2,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import threading
 from datetime import date, datetime, timezone
-from functools import reduce
 from typing import Any
 
 import httpx
@@ -14,7 +11,6 @@ import httpx
 from app.services.ext_data import (
     ExtConfig,
     ExtConfigStore,
-    PullConfig,
     rows_to_parquet,
 )
 

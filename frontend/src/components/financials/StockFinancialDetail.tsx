@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { CalendarDays, TrendingUp, FileText, Wallet, Activity, Sparkles, AlertTriangle, Loader2 } from 'lucide-react'
+import { CalendarDays, TrendingUp, FileText, Wallet, Activity, Sparkles, AlertTriangle, Loader2, PieChart } from 'lucide-react'
 import {
   useFinancialMetrics,
   useFinancialIncome,
   useFinancialBalanceSheet,
   useFinancialCashFlow,
+  useFinancialShares,
 } from '@/lib/useFinancials'
 import { fmtPrice, fmtBigNum, fmtDate } from '@/lib/format'
 import { Skeleton } from '@/components/data/Skeleton'
@@ -17,13 +18,14 @@ interface Props {
   name: string
 }
 
-type TabKey = 'metrics' | 'income' | 'balance_sheet' | 'cash_flow'
+type TabKey = 'metrics' | 'income' | 'balance_sheet' | 'cash_flow' | 'shares'
 
 const TABS: { key: TabKey; label: string; icon: typeof TrendingUp }[] = [
   { key: 'metrics', label: '核心指标', icon: TrendingUp },
   { key: 'income', label: '利润表', icon: FileText },
   { key: 'balance_sheet', label: '资产负债表', icon: Wallet },
   { key: 'cash_flow', label: '现金流量表', icon: Activity },
+  { key: 'shares', label: '股本', icon: PieChart },
 ]
 
 // 字段定义:键 → (中文名, 格式化类型)
@@ -86,6 +88,12 @@ const FIELD_DEFS: Record<TabKey, FieldDef[]> = {
     { label: '归母所有者权益', fmt: 'amount', key: 'equity_attributable' } as any,
     { label: '未分配利润', fmt: 'amount', key: 'retained_earnings' } as any,
     { label: '少数股东权益', fmt: 'amount', key: 'minority_interest' } as any,
+    { label: '实收资本(或股本)', fmt: 'amount', key: 'share_capital' } as any,
+    { label: '资本公积', fmt: 'amount', key: 'capital_reserve' } as any,
+  ],
+  shares: [
+    { label: '总股本', fmt: 'amount', key: 'total_shares' } as any,
+    { label: '流通股本', fmt: 'amount', key: 'float_shares' } as any,
   ],
   cash_flow: [
     { label: '经营活动现金流净额', fmt: 'amount', key: 'net_operating_cash_flow' } as any,
@@ -148,12 +156,14 @@ export function StockFinancialDetail({ symbol, name }: Props) {
   const income = useFinancialIncome(symbol)
   const balance = useFinancialBalanceSheet(symbol)
   const cashFlow = useFinancialCashFlow(symbol)
+  const shares = useFinancialShares(symbol)
 
   const queryMap = {
     metrics: metrics,
     income: income,
     balance_sheet: balance,
     cash_flow: cashFlow,
+    shares: shares,
   } as const
 
   const current = queryMap[tab]
@@ -179,7 +189,7 @@ export function StockFinancialDetail({ symbol, name }: Props) {
           <button
             onClick={handleAiClick}
             disabled={checking}
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-btn text-[11px] font-medium border border-purple-400/30 bg-purple-400/10 text-purple-300 hover:bg-purple-400/20 hover:border-purple-400/40 transition-all shrink-0 disabled:opacity-50"
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-btn text-[11px] font-medium border border-purple-400/30 bg-purple-400/10 text-purple-700 dark:text-purple-300 hover:bg-purple-400/20 hover:border-purple-400/40 transition-all shrink-0 disabled:opacity-50"
             title="AI 财务分析"
           >
             {checking ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
@@ -221,6 +231,11 @@ export function StockFinancialDetail({ symbol, name }: Props) {
 
       {/* 表格内容 */}
       <div className="p-4">
+        {tab === 'shares' && (
+          <div className="mb-3 rounded-btn border border-border/60 bg-elevated/30 px-3 py-2 text-[11px] leading-relaxed text-secondary">
+            本地 public 股本为 instruments 截面快照（非 TickFlow 历史时序）。总股本/流通股本取最新标的档案，报告期显示为档案 as_of。
+          </div>
+        )}
         {current.isLoading ? (
           <div className="space-y-2">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -247,7 +262,7 @@ export function StockFinancialDetail({ symbol, name }: Props) {
                 )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-0">
                   {fieldDefs.map((def: any) => {
-                    const val = row[def.key]
+                    const val = (row as Record<string, any>)[def.key]
                     return (
                       <div
                         key={def.key}
@@ -286,14 +301,14 @@ export function StockFinancialDetail({ symbol, name }: Props) {
             >
               <div className="flex items-start gap-3">
                 <div className="shrink-0 h-10 w-10 rounded-full bg-purple-400/12 flex items-center justify-center">
-                  <AlertTriangle className="h-5 w-5 text-purple-300" />
+                  <AlertTriangle className="h-5 w-5 text-purple-700 dark:text-purple-300" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <h3 className="text-sm font-semibold text-foreground mb-1.5">该个股已有分析报告</h3>
                   <p className="text-xs text-secondary leading-relaxed">
                     <span className="font-medium text-foreground">{name}</span>
                     <span className="font-mono text-muted"> {symbol}</span> 在
-                    <span className="text-purple-300 font-medium"> {fmtReportTime(confirmReport.created_at)} </span>
+                    <span className="text-purple-700 dark:text-purple-300 font-medium"> {fmtReportTime(confirmReport.created_at)} </span>
                     已生成过 AI 财务分析报告。
                   </p>
                   <p className="mt-2 text-[11px] text-muted">

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { RefreshCw, Lock, Loader2, X, Search, FileText, Database, Clock, CheckCircle2, Hourglass, Lightbulb, ExternalLink } from 'lucide-react'
+import { RefreshCw, Lock, Loader2, X, Search, FileText, Database, Clock, CheckCircle2, Hourglass, Lightbulb } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
 import { useCapabilities } from '@/lib/useSharedQueries'
@@ -17,6 +17,7 @@ const TABLE_LABELS: Record<string, string> = {
   income: '利润表',
   balance_sheet: '资产负债表',
   cash_flow: '现金流量表',
+  shares: '股本(截面)',
 }
 
 const TABLE_ICON: Record<string, typeof FileText> = {
@@ -24,12 +25,20 @@ const TABLE_ICON: Record<string, typeof FileText> = {
   income: FileText,
   balance_sheet: FileText,
   cash_flow: FileText,
+  shares: Database,
 }
 
 export function Financials() {
   const { data: caps } = useCapabilities()
-  const hasFinancial = caps?.capabilities?.['financial'] != null
   const { data: status, isLoading } = useFinancialStatus()
+  // Prefer structured features.financial / status.available; fall back to capability key
+  // so local public financials unlock the page without Expert TickFlow Cap.
+  const hasFinancial = Boolean(
+    status?.available
+    || caps?.features?.financial?.available
+    || caps?.financial?.available
+    || caps?.capabilities?.['financial'] != null
+  )
   const syncMut = useFinancialSync()
   // 同步进行中 = 服务端真值(status.syncing)或本地乐观态(请求已发出待确认)。
   // 乐观窗口:点击后到 invalidate 触发的 refetch 返回之间,status.syncing 暂为 false,
@@ -60,34 +69,24 @@ export function Financials() {
   if (!hasFinancial) {
     return (
       <>
-        <PageHeader title="财务分析" subtitle="利润表 / 资负表 / 现金流 / 关键指标 / AI分析 · Expert" />
+        <PageHeader title="财务分析" subtitle="利润表 / 资负表 / 现金流 / 关键指标 / AI分析" />
         <div className="px-8 py-10">
           <div className="mx-auto max-w-md rounded-card border border-warning/30 bg-warning/[0.04] p-8 text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-warning/10">
               <Lock className="h-6 w-6 text-warning" />
             </div>
-            <h3 className="mt-4 text-base font-semibold text-foreground">需要 Expert 套餐</h3>
+            <h3 className="mt-4 text-base font-semibold text-foreground">财务数据尚未就绪</h3>
             <p className="mt-2 text-xs leading-relaxed text-secondary">
-              财务数据接口仅 Expert 套餐可用。升级后此页自动显示财务数据面板。
+              需要 TickFlow Expert，或已同步本地 public 财务表（按 public_data_scope，现默认中证800）后使用。
             </p>
-            {/* 当前财务数据源(TickFlow)需付费,后续将接入免费数据源;期间欢迎在 issues 推荐免费源 */}
             <div className="mt-5 rounded-btn border border-accent/25 bg-accent/[0.05] px-3.5 py-3 text-left">
               <div className="flex items-center gap-1.5 text-xs font-medium text-accent">
                 <Lightbulb className="h-3.5 w-3.5 shrink-0" />
-                关于数据源
+                如何启用
               </div>
               <p className="mt-1.5 text-[11px] leading-relaxed text-secondary">
-                当前财务数据源需付费,后续会接入免费数据源。如你常用某个免费财务数据源,欢迎在 Issues 中多多推荐哈 ~
+                数据台将 financial_provider 设为 public 并同步财务表后会自动放开；也可使用 TickFlow Expert 官方财务接口。
               </p>
-              <a
-                href="https://github.com/shy3130/tickflow-stock-panel/issues"
-                target="_blank"
-                rel="noreferrer"
-                className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-accent hover:underline"
-              >
-                前往 Issues 推荐
-                <ExternalLink className="h-3 w-3" />
-              </a>
             </div>
           </div>
         </div>
@@ -110,7 +109,7 @@ export function Financials() {
             toast('财务数据正在同步中,请稍候', 'success')
           } else if (r.synced?.reason === 'no FINANCIAL capability') {
             // 能力未就绪:通常发生在升级/刷新 Key 后调度器状态未同步 —— 提示用户检查 Key
-            toast('财务数据能力未就绪,请检查 API Key 或刷新页面后重试', 'error')
+            toast('财务数据能力未就绪：请确认已同步本地财务表，或检查 TickFlow Expert Key', 'error')
           } else {
             toast(`同步未能开始${r.synced?.reason ? `:${r.synced.reason}` : ''}`, 'error')
           }
@@ -128,11 +127,12 @@ export function Financials() {
 
   const tables = status?.tables ?? {}
   const available = status?.available ?? false
+  const dataProvider = status?.provider || (caps?.features?.financial?.source ?? '')
   const lastSync = status?.last_sync ?? {}
   // 本次同步进度: 仅当 syncStartedAt 存在且 syncing 时, 按 last_sync 时间戳判断
   const isFullSync = syncing && syncStartedAt && !syncSingleTable  // 全量同步
   const isSingleSync = syncing && syncStartedAt && !!syncSingleTable  // 单表同步
-  const TABLE_ORDER = ['metrics', 'income', 'balance_sheet', 'cash_flow'] as const
+  const TABLE_ORDER = ['metrics', 'income', 'balance_sheet', 'cash_flow', 'shares'] as const
   const tableDoneThisRound = (key: string): boolean => {
     if (!syncStartedAt || !syncing) return false
     // 单表同步: 只判断这一张表是否完成
@@ -157,7 +157,11 @@ export function Financials() {
     <>
       <PageHeader
         title="财务分析"
-        subtitle="利润表 / 资负表 / 现金流 / 关键指标 / AI分析 · Expert"
+        subtitle={
+          dataProvider
+            ? `利润表 / 资负表 / 现金流 / 股本 / 关键指标 · ${dataProvider}`
+            : '利润表 / 资负表 / 现金流 / 股本 / 关键指标 / AI分析'
+        }
         right={
           <div className="flex items-center gap-2">
             <LastStockChip stock={lastStock} onSelect={pick} />
@@ -165,7 +169,7 @@ export function Financials() {
               <span className="text-xs text-accent/80 flex items-center gap-1.5">
                 <Loader2 className="w-3 h-3 animate-spin" />
                 {isFullSync
-                  ? `已同步 ${syncedCount}/4 张表…`
+                  ? `已同步 ${syncedCount}/${TABLE_ORDER.length} 张表…`
                   : isSingleSync
                     ? `同步${TABLE_LABELS[syncSingleTable!] ?? syncSingleTable}…`
                     : '同步中…'}
@@ -190,14 +194,14 @@ export function Financials() {
         {syncing && (
           <div className="flex items-center gap-2 rounded-card border border-accent/30 bg-accent/[0.06] px-3 py-2 text-xs text-accent">
             <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
-            正在从 TickFlow 拉取财务数据，请稍候…
+            正在同步财务数据，请稍候…
           </div>
         )}
 
         {/* 同步状态卡片 —— 始终显示,反映本地财务数据概况 */}
         {!isLoading && available && (
           <div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
               {Object.entries(TABLE_LABELS).map(([key, label]) => {
                 const info = tables[key]
                 const TIcon = TABLE_ICON[key] ?? Database
@@ -272,7 +276,7 @@ export function Financials() {
           <div className="rounded-card border border-dashed border-border bg-surface px-6 py-14 text-center">
             <Database className="mx-auto h-8 w-8 text-muted" />
             <div className="mt-3 text-sm text-secondary">暂无财务数据</div>
-            <div className="mt-1 text-xs text-muted">点击右上角"全部同步"从 TickFlow 拉取</div>
+            <div className="mt-1 text-xs text-muted">点击右上角"全部同步"拉取/刷新财务数据</div>
           </div>
         ) : (
           <>

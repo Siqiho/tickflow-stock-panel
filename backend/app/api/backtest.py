@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import queue
 import threading
 from dataclasses import asdict
 from datetime import date, timedelta
@@ -18,7 +17,6 @@ from app.services.backtest import (
     BacktestConfig,
     BacktestService,
     VectorbtUnavailable,
-    is_available,
 )
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])

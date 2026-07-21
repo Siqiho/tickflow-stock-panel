@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, RefreshCw, Clock } from 'lucide-react'
+import { X, RefreshCw, Clock, ChartColumn } from 'lucide-react'
 import { api } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { cnSignal } from '@/lib/signals'
@@ -32,14 +32,15 @@ const PRESETS: { label: string; months: number }[] = [
 ]
 
 function boardTag(symbol: string): { label: string; color: string } | null {
-  if (/^(300|301)/.test(symbol)) return { label: '创', color: 'text-[#f97316] bg-[#f97316]/12 border-[#f97316]/25' }
-  if (/^688/.test(symbol))       return { label: '科', color: 'text-purple-400 bg-purple-400/12 border-purple-400/25' }
-  if (/^[48]/.test(symbol))      return { label: '北', color: 'text-cyan-400 bg-cyan-400/12 border-cyan-400/25' }
+  if (/^(300|301)/.test(symbol)) return { label: '创', color: 'text-orange-700 dark:text-[#f97316] bg-orange-500/12 border-orange-500/25' }
+  if (/^688/.test(symbol))       return { label: '科', color: 'text-cyan-700 dark:text-cyan-400 bg-cyan-500/12 border-cyan-500/25' }
+  if (/^[48]/.test(symbol) || /\.BJ$/.test(symbol)) return { label: '北', color: 'text-purple-700 dark:text-purple-400 bg-purple-500/12 border-purple-500/25' }
   return null
 }
 
 export function StockPreviewDialog({ symbol, name, onClose, triggerInfo }: Props) {
   const [showIntraday, setShowIntraday] = useState(false)
+  const [showChips, setShowChips] = useState(false)
   const [dateRange, setDateRange] = useState(getDefaultRange)
   const [showMonitorEditor, setShowMonitorEditor] = useState(false)
   const qc = useQueryClient()
@@ -75,6 +76,9 @@ export function StockPreviewDialog({ symbol, name, onClose, triggerInfo }: Props
     if (showIntraday) {
       qc.invalidateQueries({ queryKey: ['kline-minute', symbol!] })
     }
+    if (showChips) {
+      qc.invalidateQueries({ queryKey: ['stock-chips', symbol!] })
+    }
   }
 
   return (
@@ -97,7 +101,7 @@ export function StockPreviewDialog({ symbol, name, onClose, triggerInfo }: Props
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.97, y: 8 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="relative w-[92vw] max-w-[1100px] max-h-[95vh] rounded-card border border-border bg-base shadow-2xl overflow-hidden flex flex-col"
+            className={`relative w-[92vw] max-h-[95vh] rounded-card border border-border bg-base shadow-2xl overflow-hidden flex flex-col ${showIntraday || showChips ? 'max-w-[1280px]' : 'max-w-[1100px]'}`}
           >
             {/* 顶栏 */}
             <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
@@ -168,6 +172,19 @@ export function StockPreviewDialog({ symbol, name, onClose, triggerInfo }: Props
                   分时
                 </button>
 
+                <button
+                  onClick={() => setShowChips((v) => !v)}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors ${
+                    showChips
+                      ? 'bg-accent/15 text-accent border border-accent/30'
+                      : 'bg-elevated text-secondary border border-border hover:border-accent/30'
+                  }`}
+                  title="本地日K近似筹码分布（非交易所官方）"
+                >
+                  <ChartColumn className="h-3 w-3" />
+                  筹码
+                </button>
+
                 <span className="text-muted/20 mx-0.5">|</span>
 
                 {/* 刷新 */}
@@ -236,6 +253,7 @@ export function StockPreviewDialog({ symbol, name, onClose, triggerInfo }: Props
                 symbol={symbol}
                 height={420}
                 showIntraday={showIntraday}
+                showChips={showChips}
                 onSelectDate={() => { if (!showIntraday) setShowIntraday(true) }}
                 dateRange={dateRange}
                 onMonitor={() => setShowMonitorEditor(true)}

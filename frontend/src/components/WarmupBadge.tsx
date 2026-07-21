@@ -81,7 +81,7 @@ export function WarmupBadge() {
                 <div className="mb-1.5 font-medium text-foreground">为什么开头几个月可能没有交易?</div>
                 <p className="text-muted">
                   技术指标 (MA / MACD / RSI 等) 需要历史数据才能算出。系统会自动在回测起点之前多取约
-                  <span className="font-medium text-amber-300"> 120 天 (≈4 个月)</span> 数据做预热。
+                  <span className="font-medium text-amber-700 dark:text-amber-300"> 120 天 (≈4 个月)</span> 数据做预热。
                 </p>
                 <p className="mt-1.5 text-muted">
                   若本地数据恰好从回测起点才开始, 开头几个月指标算不出、信号不触发,

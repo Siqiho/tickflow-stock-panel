@@ -42,16 +42,18 @@ import {
   RadioTower,
   CheckCircle2,
   BookOpenCheck,
-  ExternalLink,
+  Moon,
+  Sun,
 } from 'lucide-react'
 import { Logo } from './Logo'
 import { api, type IndexQuote } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { setCurrentTotal as setAlertTotal, useUnreadAlerts } from '@/lib/monitorBadge'
+import { useRuntimeRouteLogger } from '@/lib/runtimeLogger'
+import { useTheme, useThemeSync } from '@/lib/theme'
 
 // 品牌色 — 只用于 logo / brand 区域,不影响功能语义色
 const BRAND = '#8B5CF6'
-const TICKFLOW_REGISTER_URL = 'https://tickflow.org/auth/register?ref=V3KDKGXPEA'
 
 const CORE_INDEXES = [
   { symbol: '000001.SH', name: '上证指数' },
@@ -197,7 +199,7 @@ function TierBadge({ label, hasKey }: { label: string; hasKey?: boolean }) {
       <div className="relative overflow-hidden rounded-lg border border-blue-400/20 bg-gradient-to-br from-blue-500/[0.12] via-surface to-surface px-3 py-2 transition-all hover:border-blue-400/35 hover:from-blue-500/[0.16]">
         <div className="absolute -right-5 -top-6 h-14 w-14 rounded-full bg-blue-500/10 blur-2xl" />
         <div className="relative flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-400/10 text-blue-300 ring-1 ring-blue-400/20">
+          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-400/10 text-blue-500 dark:text-blue-300 ring-1 ring-blue-400/20">
             <Key className="h-3.5 w-3.5" />
           </div>
           <div className="min-w-0 flex-1">
@@ -218,7 +220,7 @@ function TierBadge({ label, hasKey }: { label: string; hasKey?: boolean }) {
           >
             <span className="truncate" style={t.labelTextStyle}>{displayLabel}</span>
           </span>
-          <Settings className="h-3 w-3 shrink-0 text-muted group-hover:text-blue-300 transition-colors" />
+          <Settings className="h-3 w-3 shrink-0 text-muted group-hover:text-blue-500 dark:group-hover:text-blue-300 transition-colors" />
         </div>
 
       </div>
@@ -236,7 +238,7 @@ function AIConfigBadge({ configured, model }: { configured?: boolean; model?: st
       <div className="relative overflow-hidden rounded-lg border border-purple-400/20 bg-gradient-to-br from-purple-500/[0.12] via-surface to-surface px-3 py-2 transition-all hover:border-purple-400/35 hover:from-purple-500/[0.16]">
         <div className="absolute -right-5 -top-6 h-14 w-14 rounded-full bg-purple-500/10 blur-2xl" />
         <div className="relative flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-purple-400/10 text-purple-300 ring-1 ring-purple-400/20">
+          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-purple-400/10 text-purple-500 dark:text-purple-300 ring-1 ring-purple-400/20">
             <Sparkles className="h-3.5 w-3.5" />
           </div>
           <div className="min-w-0 flex-1">
@@ -248,7 +250,7 @@ function AIConfigBadge({ configured, model }: { configured?: boolean; model?: st
               {configured ? (model || '已接入模型') : '接入策略生成模型'}
             </div>
           </div>
-          <Settings className="h-3 w-3 text-muted group-hover:text-purple-300 transition-colors" />
+          <Settings className="h-3 w-3 text-muted group-hover:text-purple-500 dark:group-hover:text-purple-300 transition-colors" />
         </div>
       </div>
     </NavLink>
@@ -256,6 +258,10 @@ function AIConfigBadge({ configured, model }: { configured?: boolean; model?: st
 }
 
 export function Layout() {
+  useRuntimeRouteLogger()
+  useThemeSync()
+  const { theme, isDark, toggleTheme } = useTheme()
+
   // ===== 共享 hooks (替代内联 useQuery) =====
   const { data: caps } = useCapabilities()
   const { data: settingsState } = useSettings()
@@ -315,9 +321,11 @@ export function Layout() {
   const isRunning = quoteStatus?.running ?? false
   const isTrading = quoteStatus?.is_trading_hours ?? false
   const tier = tierRank(caps?.label ?? '')
-  const isNoneTier = tier < 0
-  const isWatchlistMode = tier === 0
+  // none/free: 自选实时（公开源可兜底）；starter+: 全市场
+  const isWatchlistMode = tier <= 0
   const realtimeModeLabel = isWatchlistMode ? '自选股' : '全市场'
+  const quoteFeat = caps?.features?.quote ?? caps?.quote
+  const realtimeAllowed = quoteFeat?.available ?? (caps ? caps.capabilities?.['quote.by_symbol'] != null : true)
 
   // 轮询触发记录总数 → 更新监控中心徽标 (每 15 秒)
   const alertsTotalQuery = useQuery({
@@ -391,8 +399,8 @@ export function Layout() {
               className="font-mono font-bold text-[13px] tracking-[0.06em] text-foreground leading-tight"
               style={{ textShadow: `0 0 10px ${BRAND}44` }}
             >
-              <div>TickFlow</div>
-              <div>Stock Panel</div>
+              <div>one</div>
+              <div>trading</div>
             </div>
           </div>
 
@@ -456,101 +464,97 @@ export function Layout() {
 
         {/* 全局行情开关 */}
         <div className="border-t border-border px-3 py-2.5 shrink-0">
-          {isNoneTier ? (
-            <div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-secondary truncate">实时行情</span>
-                <span className="text-[10px] text-accent/70 font-medium bg-accent/10 px-1.5 py-0.5 rounded">
-                  Free+
-                </span>
-              </div>
-              <div className="mt-1.5 text-[10px] leading-snug text-muted">
-                免费注册
-                <a
-                  href={TICKFLOW_REGISTER_URL}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mx-1 inline-flex items-baseline gap-0.5 text-accent/80 hover:text-accent hover:underline"
-                >
-                  TickFlow
-                  <ExternalLink className="h-2.5 w-2.5 self-center" />
-                </a>
-                开启个股监控
-              </div>
-            </div>
-          ) : (
-            /* Starter+ — 开关 + 跳转设置 */
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className={`inline-block h-1.5 w-1.5 rounded-full shrink-0 ${
-                  realtimeEnabled && isRunning && isTrading
-                    ? 'bg-accent animate-pulse'
-                    : realtimeEnabled
-                      ? 'bg-warning/60'
-                      : 'bg-muted'
-                }`} />
-                <span className="text-xs text-secondary truncate">
-                  实时行情 · {realtimeModeLabel}
-                </span>
-                <button
-                  onClick={() => navigate('/settings?tab=monitoring')}
-                  className="text-secondary hover:text-foreground transition-colors shrink-0"
-                  title="实时监控设置"
-                >
-                  <Settings className="h-3 w-3" />
-                </button>
-              </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={`inline-block h-1.5 w-1.5 rounded-full shrink-0 ${
+                realtimeEnabled && isRunning && isTrading
+                  ? 'bg-accent animate-pulse'
+                  : realtimeEnabled
+                    ? 'bg-warning/60'
+                    : 'bg-muted'
+              }`} />
+              <span className="text-xs text-secondary truncate">
+                实时行情 · {realtimeModeLabel}
+              </span>
               <button
-                onClick={() => handleToggle(!realtimeEnabled)}
-                disabled={toggleQuote.isPending}
-                className={`relative inline-flex h-4 w-7 items-center rounded-full shrink-0 transition-colors duration-200 ${
-                  realtimeEnabled
-                    ? 'bg-accent shadow-[0_0_6px_rgba(59,130,246,0.3)]'
-                    : 'bg-elevated'
-                } ${toggleQuote.isPending ? 'opacity-50' : 'cursor-pointer'}`}
+                onClick={() => navigate('/settings?tab=monitoring')}
+                className="text-secondary hover:text-foreground transition-colors shrink-0"
+                title="实时监控设置"
               >
-                <span className={`inline-block h-3 w-3 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                  realtimeEnabled ? 'translate-x-[14px]' : 'translate-x-0.5'
-                }`} />
+                <Settings className="h-3 w-3" />
               </button>
             </div>
-          )}
+            <button
+              onClick={() => handleToggle(!realtimeEnabled)}
+              disabled={toggleQuote.isPending || !realtimeAllowed}
+              className={`relative inline-flex h-4 w-7 items-center rounded-full shrink-0 transition-colors duration-200 ${
+                realtimeEnabled
+                  ? 'bg-accent shadow-[0_0_6px_rgba(59,130,246,0.3)]'
+                  : 'bg-elevated'
+              } ${toggleQuote.isPending || !realtimeAllowed ? 'opacity-50' : 'cursor-pointer'}`}
+            >
+              <span className={`inline-block h-3 w-3 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                realtimeEnabled ? 'translate-x-[14px]' : 'translate-x-0.5'
+              }`} />
+            </button>
+          </div>
 
           {/* 状态提示 */}
-          {realtimeEnabled && !isNoneTier && (
+          {realtimeEnabled && (
             <div className="mt-1.5 text-[10px] leading-snug">
               {isRunning && isTrading ? (
-                <span className="text-accent">行情运行中</span>
+                <span className="text-accent">行情运行中{isWatchlistMode ? '（自选/公开源）' : ''}</span>
               ) : realtimeEnabled && !isTrading ? (
                 <span className="text-warning/70">非交易时段，将在交易时间自动开启</span>
               ) : null}
             </div>
           )}
-          {showSidebarQuotes && !isWatchlistMode && !isNoneTier && (
+          {isWatchlistMode && !realtimeEnabled && (
+            <div className="mt-1.5 text-[10px] leading-snug text-muted">
+              无 TickFlow Key 时使用公开源自选实时
+            </div>
+          )}
+          {showSidebarQuotes && !isWatchlistMode && (
             <SidebarIndexQuotes rows={sidebarIndexQuotes?.rows} items={sidebarIndexes} />
           )}
         </div>
 
         <div className="border-t border-border px-2 py-3 space-y-0.5 shrink-0">
-          <NavLink
-            to="/settings"
-            className={({ isActive }) =>
-              cn(
-                'flex items-center justify-between gap-3 px-3 py-2 rounded-btn text-sm transition-colors duration-150 ease-smooth',
-                isActive
-                  ? 'bg-elevated text-foreground font-medium'
-                  : 'text-foreground/80 hover:bg-elevated hover:text-foreground',
-              )
-            }
-          >
-            <span className="flex items-center gap-3">
-              <Settings className="h-4 w-4 shrink-0" />
-              <span>设置</span>
-            </span>
-            <span className="font-mono text-[10px] text-muted/50 select-none">
-              {version ?? ''}
-            </span>
-          </NavLink>
+          <div className="flex items-center gap-1">
+            <NavLink
+              to="/settings"
+              className={({ isActive }) =>
+                cn(
+                  'flex min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2 rounded-btn text-sm transition-colors duration-150 ease-smooth',
+                  isActive
+                    ? 'bg-elevated text-foreground font-medium'
+                    : 'text-foreground/80 hover:bg-elevated hover:text-foreground',
+                )
+              }
+            >
+              <span className="flex items-center gap-3">
+                <Settings className="h-4 w-4 shrink-0" />
+                <span>设置</span>
+              </span>
+              <span className="font-mono text-[10px] text-muted/50 select-none">
+                {version ?? ''}
+              </span>
+            </NavLink>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className={cn(
+                'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-btn transition-colors duration-150 ease-smooth',
+                'text-foreground/80 hover:bg-elevated hover:text-foreground',
+              )}
+              title={isDark ? '切换到浅色模式' : '切换到暗色模式'}
+              aria-label={isDark ? '切换到浅色模式' : '切换到暗色模式'}
+              aria-pressed={isDark}
+              data-theme={theme}
+            >
+              {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
       </aside>
 

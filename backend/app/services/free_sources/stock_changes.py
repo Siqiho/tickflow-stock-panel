@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
 
 from app.services.free_sources.http_resilience import ResilientHttpClient, get_shared_client
 

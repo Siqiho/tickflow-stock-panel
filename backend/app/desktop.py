@@ -20,11 +20,10 @@ import socket
 import sys
 import threading
 import time
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_APP_NAME = "TickFlow 股票面板"
+_APP_NAME = "one-trading"
 _BASE_PORT = 3018
 _PORT_PROBE_RANGE = 50  # 从 3018 起最多试 50 个端口
 
@@ -176,7 +175,7 @@ def _open_window(url: str) -> None:
     """主线程: 用 pywebview 打开桌面窗口。"""
     import webview  # type: ignore[import-not-found]
 
-    window = webview.create_window(
+    webview.create_window(
         _APP_NAME,
         url,
         width=1440,
@@ -191,10 +190,16 @@ def _open_window(url: str) -> None:
 
 def main() -> int:
     """桌面客户端主入口。返回进程退出码。"""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    try:
+        from app.config import settings
+        from app.services.runtime_logging import setup_runtime_logging
+
+        setup_runtime_logging(settings.log_level, settings.data_dir)
+    except Exception:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        )
 
     try:
         _ensure_data_dir_writable()

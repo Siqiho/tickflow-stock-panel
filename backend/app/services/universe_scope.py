@@ -1,0 +1,179 @@
+"""Universe scope helpers for pipeline and public data sync.
+
+Scopes:
+  ALL     — full A-share list (instruments / CN_Equity_A)
+  CSI300  — 沪深300 constituents (data/pools/CSI300.parquet)
+  CSI500  — 中证500（与 CSI300 官方成分互不重叠）
+  CSI800  — 沪深300 ∪ 中证500（约 800，public 扩容推荐）
+  SSE50   — 上证50
+  WATCHLIST — user watchlist only
+
+Defaults (by design):
+  pipeline_universe_scope = ALL   (daily kline keeps broad coverage)
+  public_data_scope       = CSI300 (adj/financials public default fill; can raise to CSI800)
+"""
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+import polars as pl
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+SCOPE_ALL = "ALL"
+SCOPE_CSI300 = "CSI300"
+SCOPE_CSI500 = "CSI500"
+SCOPE_CSI800 = "CSI800"
+SCOPE_SSE50 = "SSE50"
+SCOPE_WATCHLIST = "WATCHLIST"
+
+VALID_SCOPES = (SCOPE_ALL, SCOPE_CSI300, SCOPE_CSI500, SCOPE_CSI800, SCOPE_SSE50, SCOPE_WATCHLIST)
+CSI_POOL_SCOPES = (SCOPE_CSI300, SCOPE_CSI500, SCOPE_SSE50)
+UNION_SCOPES = (SCOPE_CSI800,)
+
+SCOPE_LABELS = {
+    SCOPE_ALL: "全A",
+    SCOPE_CSI300: "沪深300",
+    SCOPE_CSI500: "中证500",
+    SCOPE_CSI800: "中证800(300∪500)",
+    SCOPE_SSE50: "上证50",
+    SCOPE_WATCHLIST: "自选",
+}
+
+
+def normalize_scope(scope: str | None, *, default: str = SCOPE_ALL) -> str:
+    s = (scope or default).strip().upper()
+    aliases = {
+        "FULL": SCOPE_ALL,
+        "CN_EQUITY_A": SCOPE_ALL,
+        "A": SCOPE_ALL,
+        "HS300": SCOPE_CSI300,
+        "000300": SCOPE_CSI300,
+        "ZZ500": SCOPE_CSI500,
+        "000905": SCOPE_CSI500,
+        "ZZ800": SCOPE_CSI800,
+        "000906": SCOPE_CSI800,
+        "HS300_ZZ500": SCOPE_CSI800,
+        "CSI300_CSI500": SCOPE_CSI800,
+        "SH50": SCOPE_SSE50,
+        "000016": SCOPE_SSE50,
+        "WL": SCOPE_WATCHLIST,
+    }
+    s = aliases.get(s, s)
+    return s if s in VALID_SCOPES else default
+
+
+def _load_instruments(data_dir: Path) -> list[str]:
+    path = data_dir / "instruments" / "instruments.parquet"
+    if not path.exists():
+        return []
+    try:
+        df = pl.read_parquet(path, columns=["symbol"])
+        return [str(s).strip().upper() for s in df["symbol"].to_list() if s]
+    except Exception as e:
+        logger.warning("read instruments failed: %s", e)
+        return []
+
+
+def _ensure_csi_pool(pool_id: str, data_dir: Path, *, refresh_if_missing: bool = True) -> list[str]:
+    from app.data_providers.registry import get_provider
+    from app.services.free_sources.pools_public import load_pool_symbols
+    from app.tickflow.pools import get_pool
+
+    # Prefer on-disk public cache
+    syms = load_pool_symbols(data_dir, pool_id)
+    if syms:
+        return [str(s).strip().upper() for s in syms if s]
+    if refresh_if_missing:
+        try:
+            get_provider("public").sync_pools(data_dir, pool_ids=[pool_id])
+            syms = load_pool_symbols(data_dir, pool_id)
+            if syms:
+                return [str(s).strip().upper() for s in syms if s]
+        except Exception as e:
+            logger.warning("sync pool %s failed: %s", pool_id, e)
+    # last resort via get_pool (public or tickflow)
+    try:
+        return [str(s).strip().upper() for s in (get_pool(pool_id, refresh=True) or []) if s]
+    except Exception as e:
+        logger.warning("get_pool %s failed: %s", pool_id, e)
+        return []
+
+
+def resolve_symbols(
+    scope: str | None,
+    *,
+    data_dir: Path | None = None,
+    default: str = SCOPE_ALL,
+    include_watchlist: bool = False,
+    refresh_pools_if_missing: bool = True,
+) -> list[str]:
+    """Resolve symbol list for a scope. Always returns sorted unique list."""
+    from app.tickflow.pools import DEMO_SYMBOLS, get_pool
+
+    data_dir = Path(data_dir or settings.data_dir)
+    sc = normalize_scope(scope, default=default)
+    out: list[str] = []
+
+    if sc == SCOPE_ALL:
+        # Prefer instruments parquet (works offline / free)
+        out = _load_instruments(data_dir)
+        if not out:
+            try:
+                out = [str(s).strip().upper() for s in (get_pool("CN_Equity_A", refresh=False) or []) if s]
+            except Exception:
+                out = []
+        if not out:
+            out = list(DEMO_SYMBOLS)
+    elif sc == SCOPE_CSI800:
+        # Official CSI300 and CSI500 are disjoint; union ≈ CSI800 coverage for public fill.
+        a = _ensure_csi_pool(SCOPE_CSI300, data_dir, refresh_if_missing=refresh_pools_if_missing)
+        b = _ensure_csi_pool(SCOPE_CSI500, data_dir, refresh_if_missing=refresh_pools_if_missing)
+        out = list(a) + list(b)
+        if not out:
+            logger.warning("scope CSI800 empty after pool fetch")
+    elif sc in CSI_POOL_SCOPES:
+        out = _ensure_csi_pool(sc, data_dir, refresh_if_missing=refresh_pools_if_missing)
+        if not out:
+            # degrade rather than empty: instruments head is wrong; keep demo+watchlist later
+            logger.warning("scope %s empty after pool fetch", sc)
+    elif sc == SCOPE_WATCHLIST:
+        try:
+            out = [str(s).strip().upper() for s in (get_pool("watchlist") or []) if s]
+        except Exception:
+            out = []
+    else:
+        out = _load_instruments(data_dir)
+
+    if include_watchlist and sc != SCOPE_WATCHLIST:
+        try:
+            wl = [str(s).strip().upper() for s in (get_pool("watchlist") or []) if s]
+            out = list(out) + wl
+        except Exception:
+            pass
+
+    # unique preserve sort
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for s in out:
+        u = s.strip().upper()
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        ordered.append(u)
+    ordered.sort()
+    return ordered
+
+
+def scope_info(scope: str | None, *, default: str = SCOPE_ALL) -> dict:
+    sc = normalize_scope(scope, default=default)
+    return {
+        "scope": sc,
+        "label": SCOPE_LABELS.get(sc, sc),
+        "is_csi": sc in CSI_POOL_SCOPES or sc in UNION_SCOPES,
+        "is_union": sc in UNION_SCOPES,
+        "is_all": sc == SCOPE_ALL,
+    }

@@ -7,13 +7,15 @@ import { isExpertOrAbove } from '@/lib/capability-labels'
 
 type CapsLike = {
   label?: string
-  capabilities?: Record<string, { rpm: number | null; batch: number | null; subscribe: number | null }>
+  capabilities?: Record<string, { rpm: number | null; batch: number | null; subscribe: number | null; view_only?: boolean }>
   minute?: {
     available?: boolean
     status?: string
     reason?: string | null
     reason_code?: string
     fallback_hint?: string | null
+    full_market_sync_allowed?: boolean
+    capability?: Record<string, boolean>
   }
   features?: { minute?: CapsLike['minute'] }
 }
@@ -30,12 +32,18 @@ export function MinuteSyncConfig({ caps, isRunning, onStart }: { caps: CapsLike 
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.preferences }),
   })
 
-  const hasMinuteCap = !!caps?.capabilities?.['kline.minute.batch']
+  // 全市场分钟同步仍需 batch 能力；公开源只解锁单票/指数查看
+  const minuteFeat = caps?.features?.minute ?? caps?.minute
+  const hasMinuteCap = !!(
+    minuteFeat?.full_market_sync_allowed
+    || (minuteFeat?.available && minuteFeat?.capability?.['kline.minute.batch'])
+    || (caps?.capabilities?.['kline.minute.batch'] && !caps?.capabilities?.['kline.minute.batch']?.view_only)
+  )
   const minuteFeature = caps?.minute ?? caps?.features?.minute
   const minuteReason =
     minuteFeature?.reason ||
     (!hasMinuteCap
-      ? '当前数据源无分钟K权限（需 TickFlow Pro+ 或自定义分钟源）'
+      ? '全市场分钟同步需 TickFlow Pro+ 或自定义分钟源；单票/指数分时可用公开源'
       : null)
   const minuteStatus = minuteFeature?.status || (hasMinuteCap ? 'available' : 'unavailable')
   const fallbackHint =

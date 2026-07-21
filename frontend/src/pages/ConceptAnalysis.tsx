@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
+import { SectorFundFlowPanel, useTopFundFlowName } from '@/components/SectorFundFlowPanel'
 import { AnalysisConfigDialog, PresetFetchState, type AnalysisFieldConfig } from '@/components/analysis-shared'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { RpsRotationDialog } from '@/components/RpsRotationDialog'
@@ -241,6 +242,7 @@ export function ConceptAnalysis() {
   const [sortMode, setSortMode] = useState<SortMode>('heat')
   const [previewSymbol, setPreviewSymbol] = useState<string | null>(null)
   const [previewName, setPreviewName] = useState<string>('')
+  const topFlow = useTopFundFlowName('concept')
   const [showRps, setShowRps] = useState(false)
 
   const configsQuery = useQuery({ queryKey: QK.extData, queryFn: api.extDataList })
@@ -386,7 +388,16 @@ export function ConceptAnalysis() {
 
       <div className="min-h-full bg-[radial-gradient(circle_at_12%_0%,rgba(59,130,246,0.12),transparent_28%),radial-gradient(circle_at_85%_8%,rgba(244,63,94,0.08),transparent_28%)] px-6 py-5">
         <div className="mx-auto max-w-[1440px] space-y-5">
-          <HeroPanel leading={leading[0]} falling={falling[0]} activeConcept={activeConcept} conceptBreadth={conceptBreadth} />
+          <HeroPanel
+            leading={leading[0]}
+            falling={falling[0]}
+            activeConcept={activeConcept}
+            conceptBreadth={conceptBreadth}
+            topFlowName={topFlow.name}
+            topFlowNet={topFlow.mainNet}
+          />
+
+          <SectorFundFlowPanel kind="concept" top={8} />
 
           <MarketPulse
             leading={leading}
@@ -449,11 +460,15 @@ function HeroPanel({
   falling,
   activeConcept,
   conceptBreadth,
+  topFlowName,
+  topFlowNet,
 }: {
   leading?: ConceptStat
   falling?: ConceptStat
   activeConcept?: ConceptStat | null
   conceptBreadth: { up: number; down: number; flat: number }
+  topFlowName?: string | null
+  topFlowNet?: number | null
 }) {
   return (
     <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
@@ -466,7 +481,13 @@ function HeroPanel({
         hint={<><span className="text-bull">上涨</span><span className="mx-1 text-muted">/</span><span className="text-bear">下跌</span>{conceptBreadth.flat ? <span className="text-muted"> · 平 {conceptBreadth.flat}</span> : null}</>}
         tone="blue"
       />
-      <HeroMetric icon={Activity} label="资金活跃" value={activeConcept?.key ?? '—'} hint={activeConcept ? fmtBigNum(activeConcept.totalAmount) : '等待行情'} tone="blue" />
+      <HeroMetric
+        icon={Activity}
+        label="主力净流入"
+        value={topFlowName || activeConcept?.key || '—'}
+        hint={topFlowNet != null ? <span className="text-bull">{fmtBigNum(topFlowNet)}</span> : (activeConcept ? `成交额 ${fmtBigNum(activeConcept.totalAmount)}` : '点击下方刷新资金流')}
+        tone="blue"
+      />
       <HeroMetric icon={Crown} label="龙头算法" value="6 因子" hint="强势 + 承接 + 容量" tone="gold" />
     </div>
   )
@@ -482,13 +503,13 @@ function HeroMetric({ icon: Icon, label, value, hint, tone }: {
   const toneClass = {
     up: 'text-bull bg-bull/10',
     down: 'text-bear bg-bear/10',
-    gold: 'text-amber-300 bg-amber-400/10',
-    blue: 'text-blue-300 bg-blue-400/10',
+    gold: 'text-amber-700 dark:text-amber-300 bg-amber-500/10 dark:bg-amber-400/10',
+    blue: 'text-blue-700 dark:text-blue-300 bg-blue-500/10 dark:bg-blue-400/10',
   }[tone]
   const valueClass = {
     up: 'text-bull',
     down: 'text-bear',
-    gold: 'text-amber-300',
+    gold: 'text-amber-700 dark:text-amber-300',
     blue: 'text-foreground',
   }[tone]
   return (
@@ -685,7 +706,7 @@ function ConceptFocus({ stat, onStockClick }: { stat: ConceptStat | null; onStoc
           <div className="min-w-0">
             <div className="flex items-center gap-3">
               <h3 className="truncate text-xl font-semibold text-foreground">{stat.key}</h3>
-              <span className="rounded-full bg-blue-400/10 px-2 py-0.5 text-[10px] text-blue-300">强度 {stat.heatScore.toFixed(0)}</span>
+              <span className="rounded-full bg-blue-400/10 px-2 py-0.5 text-[10px] text-blue-700 dark:text-blue-300">强度 {stat.heatScore.toFixed(0)}</span>
             </div>
             <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
               <span>{stat.count} 只成分</span>
@@ -739,7 +760,7 @@ function ConceptFocus({ stat, onStockClick }: { stat: ConceptStat | null; onStoc
                 <td className="px-4 py-2 font-mono text-foreground">{s.vol_ratio_5d != null ? s.vol_ratio_5d.toFixed(2) : '—'}</td>
                 <td className="px-4 py-2">
                   <div className="flex items-center gap-2">
-                    <span className="w-9 font-mono text-amber-300">{s.leaderScore.toFixed(0)}</span>
+                    <span className="w-9 font-mono text-amber-700 dark:text-amber-300">{s.leaderScore.toFixed(0)}</span>
                     <div className="h-1.5 w-16 rounded-full bg-elevated"><div className="h-full rounded-full bg-amber-300" style={{ width: `${Math.max(4, s.leaderScore)}%` }} /></div>
                   </div>
                 </td>
@@ -761,7 +782,7 @@ function LeaderStage({ stocks, onStockClick }: { stocks: EnrichedStock[]; onStoc
   if (!stocks.length) return <div className="rounded-xl border border-border/60 bg-surface p-4 text-sm text-muted">暂无龙头候选</div>
   return (
     <div className="rounded-xl border border-border/60 bg-surface p-3">
-      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-amber-300">
+      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-300">
         <Crown className="h-3.5 w-3.5" />
         本概念三龙头
       </div>
@@ -769,8 +790,8 @@ function LeaderStage({ stocks, onStockClick }: { stocks: EnrichedStock[]; onStoc
         {stocks.map((stock, idx) => (
           <div key={stock.symbol} onClick={() => onStockClick(stock.symbol, stock.name || undefined)} className={cn('rounded-lg border p-3 cursor-pointer hover:brightness-110 transition-all', idx === 0 ? 'border-amber-400/25 bg-amber-400/[0.06]' : 'border-border/60 bg-base/35')}>
             <div className="flex items-center justify-between gap-2">
-              <span className={cn('text-[10px] font-medium', idx === 0 ? 'text-amber-300' : 'text-muted')}>{idx === 0 ? '主龙头' : `辅龙 ${idx}`}</span>
-              <span className="font-mono text-[11px] text-amber-300">{stock.leaderScore.toFixed(0)}</span>
+              <span className={cn('text-[10px] font-medium', idx === 0 ? 'text-amber-700 dark:text-amber-300' : 'text-muted')}>{idx === 0 ? '主龙头' : `辅龙 ${idx}`}</span>
+              <span className="font-mono text-[11px] text-amber-700 dark:text-amber-300">{stock.leaderScore.toFixed(0)}</span>
             </div>
             <div className="mt-2 truncate text-sm font-medium text-foreground">{stock.name || stock.symbol}</div>
             <div className="mt-0.5 flex items-center justify-between text-[11px]">

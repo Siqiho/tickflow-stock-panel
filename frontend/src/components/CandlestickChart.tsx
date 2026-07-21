@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { useChartChrome } from '@/lib/theme'
 import {
   createChart,
   CrosshairMode,
@@ -24,11 +25,8 @@ export function fmtBigNum(v: number): string {
   return v.toFixed(0)
 }
 
-const THEME = {
+const BASE = {
   background: 'transparent',
-  textColor: '#A1A1AA',
-  gridColor: 'rgba(255,255,255,0.04)',
-  borderColor: '#27272A',
   bull: '#F04438',
   bear: '#12B76A',
   volBull: 'rgba(240,68,56,0.4)',
@@ -41,6 +39,7 @@ interface Props {
 }
 
 export function CandlestickChart({ data, height = 480 }: Props) {
+  const chrome = useChartChrome()
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -49,6 +48,12 @@ export function CandlestickChart({ data, height = 480 }: Props) {
   useEffect(() => {
     if (!containerRef.current) return
     const el = containerRef.current
+    const THEME = {
+      ...BASE,
+      textColor: chrome.text,
+      gridColor: chrome.grid,
+      borderColor: chrome.border,
+    }
 
     const chart = createChart(el, {
       width: el.clientWidth,
@@ -115,7 +120,7 @@ export function CandlestickChart({ data, height = 480 }: Props) {
       candleRef.current = null
       volRef.current = null
     }
-  }, [height])
+  }, [height, chrome])
 
   useEffect(() => {
     if (!chartRef.current || !candleRef.current || !volRef.current || data.length === 0) return
@@ -134,7 +139,7 @@ export function CandlestickChart({ data, height = 480 }: Props) {
       data.map(d => ({
         time: d.date as any,
         value: d.volume ?? 0,
-        color: d.close >= d.open ? THEME.volBull : THEME.volBear,
+        color: d.close >= d.open ? BASE.volBull : BASE.volBear,
       })) as HistogramData[],
     )
 

@@ -372,7 +372,7 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
                 {/* 三列 */}
                 <div className="grid grid-cols-3 gap-5 items-start">
                   {/* 列1：选股条件 */}
-                    <Section icon={Filter} title="基础参数" accent="text-sky-400">
+                    <Section icon={Filter} title="基础参数" accent="text-sky-700 dark:text-sky-400">
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-[10px] text-muted">启用基础参数过滤</span>
                         <button onClick={() => setBasicFilterEnabled(v => !v)}
@@ -423,7 +423,7 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
 
                   {/* 列3：评分 + 交易 */}
                   <div className="space-y-3">
-                    <Section icon={Star} title="评分权重" accent="text-amber-400">
+                    <Section icon={Star} title="评分权重" accent="text-amber-700 dark:text-amber-400">
                       {Object.entries(scoring).length > 0 ? (() => {
                         const total = Object.values(scoring).reduce((a: number, b: number) => a + b, 0) || 1
                         return (
@@ -474,7 +474,7 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
                       })() : <div className="text-[11px] text-muted">未配置</div>}
                     </Section>
 
-                    <Section icon={TrendingUp} title="交易参数" accent="text-emerald-400">
+                    <Section icon={TrendingUp} title="交易参数" accent="text-emerald-700 dark:text-emerald-400">
                       <div className="space-y-2">
                         <div className="flex items-center gap-1.5">
                           <span className="text-[11px] text-secondary w-12 shrink-0">止损</span>
@@ -553,7 +553,7 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
             <div className="flex items-center gap-2">
               {(detail?.source === 'ai' || detail?.source === 'custom') && (
                 <button onClick={onAiModify}
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-amber-400/30 bg-amber-400/8 text-amber-400 text-xs font-medium hover:bg-amber-400/15 transition-colors cursor-pointer">
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-amber-400/30 bg-amber-400/8 text-amber-700 dark:text-amber-400 text-xs font-medium hover:bg-amber-400/15 transition-colors cursor-pointer">
                   <Sparkles className="h-3.5 w-3.5" />AI 修改
                 </button>
               )}

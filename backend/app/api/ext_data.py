@@ -22,7 +22,6 @@ from app.services.ext_data import (
     ensure_utf8_csv,
     fix_symbol_format,
     normalize_symbol,
-    parse_upload_file,
     write_ext_parquet,
     rows_to_parquet,
 )

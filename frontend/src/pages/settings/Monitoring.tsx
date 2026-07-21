@@ -50,10 +50,17 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
   const tier = tierRank(caps?.label ?? '')
   const isNoneTier = tier < 0
   const isFreeTier = tier === 0
+  // none/free: public or free-key watchlist realtime (not full market)
+  const isWatchlistRealtime = isNoneTier || isFreeTier
   const realtimeEnabled = prefs?.realtime_quotes_enabled ?? false
   const refreshPages = prefs?.sse_refresh_pages ?? {}
   const limitLadderMonitor = prefs?.limit_ladder_monitor_enabled ?? false
-  const hasDepth = !!caps?.capabilities?.['depth5.batch']
+  const hasDepth = !!(
+    caps?.features?.depth?.available
+    || caps?.depth?.available
+    || caps?.capabilities?.['depth5.batch']
+    || caps?.capabilities?.['depth5']
+  )
   // 新建监控规则时是否默认勾选飞书推送 (全局默认值, 单条规则可独立修改)
   const webhookDefault = prefs?.webhook_enabled_default ?? false
   const sidebarIndexSymbols = prefs?.sidebar_index_symbols ?? SIDEBAR_INDEX_OPTIONS.map(i => i.symbol)
@@ -79,7 +86,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
   const watchlist = useQuery({
     queryKey: QK.watchlist,
     queryFn: () => api.watchlistList(),
-    enabled: isFreeTier && watchlistSymbols.length > 0,
+    enabled: isWatchlistRealtime && watchlistSymbols.length > 0,
   })
   const watchlistNameBySymbol = new Map(
     (watchlist.data?.symbols ?? []).map(row => [row.symbol, row.name] as const),
@@ -181,28 +188,6 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
     }
   }, [highlight])
 
-  if (isNoneTier) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 text-center">
-        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl
-                        bg-gradient-to-br from-purple-500/20 to-blue-500/20 mb-5">
-          <Activity className="h-7 w-7 text-purple-400" />
-        </div>
-        <h2 className="text-lg font-medium text-foreground mb-2">实时监控</h2>
-        <p className="text-sm text-secondary max-w-md mb-6">
-          实时行情需要 Free 及以上档位。None 档可使用 free-api 获取历史日K（当日数据需盘后1-2小时），但不能调用付费服务器实时接口。
-        </p>
-        <a
-          href="/settings?tab=account"
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-btn
-                     bg-accent text-white text-sm font-medium
-                     hover:bg-accent/90 transition-colors"
-        >
-          配置 API Key 升级
-        </a>
-      </div>
-    )
-  }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_1fr] gap-6 max-w-5xl">
@@ -222,7 +207,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
               <div className="min-w-0">
                 <div className="text-sm text-foreground">轮询间隔</div>
                 <div className="text-[11px] text-muted">
-                  {isFreeTier ? '每轮拉取自选股实时行情的时间间隔' : '每轮拉取全市场行情的时间间隔'}
+                  {isWatchlistRealtime ? '每轮拉取自选股实时行情的时间间隔（公开源可兜底）' : '每轮拉取全市场行情的时间间隔'}
                 </div>
               </div>
               <span className="text-[11px] font-mono text-foreground shrink-0 tabular-nums">
@@ -246,7 +231,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
           </div>
         </Card>
 
-        {isFreeTier && (
+        {isWatchlistRealtime && (
         <Card icon={Activity} title="自选股实时">
           <div className="mb-3 rounded-btn border border-accent/25 bg-accent/10 px-3 py-2 text-xs font-medium leading-snug text-accent">
             Free 档开启实时行情时自动监控「自选」页面前 5 个标的，最低 6 秒刷新。
@@ -282,7 +267,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
           </div>
         </Card>
         )}
-        {!isFreeTier && (
+        {!isWatchlistRealtime && (
         <Card icon={Wifi} title="页面实时刷新">
           <p className="text-xs text-secondary mb-4">
             选择哪些页面跟随 SSE 实时刷新数据。关闭的页面不会被推送，
@@ -302,7 +287,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
         </Card>
         )}
 
-        {!isFreeTier && (
+        {!isWatchlistRealtime && (
         <Card icon={BarChart3} title="左侧菜单指数">
           <p className="text-xs text-secondary mb-4">
             选择实时行情开启时，左侧菜单底部显示哪些指数点位和涨跌幅。
@@ -340,7 +325,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
         <Card
           icon={Flame}
           title="连板梯队降级修正"
-          badge={!hasDepth ? '需 Pro+' : undefined}
+          badge={!hasDepth ? '不可用' : (caps?.features?.depth?.source === 'local_public' || caps?.depth?.source === 'local_public' ? '公开源' : undefined)}
           right={hasDepth ? (
             <button
               onClick={() => runFix.mutate()}

@@ -119,7 +119,7 @@ _SYSTEM_PROMPT = """你是一位拥有 15 年 A 股投研经验的资深财务�
 
 def _build_user_prompt(fins: dict[str, list[dict]], symbol: str, focus: str) -> str:
     """构建用户消息:标的代码 + 数据 JSON + 可选关注点。"""
-    data_json = json.dumps(fins, ensure_ascii=False, indent=2)
+    data_json = json.dumps(fins, ensure_ascii=False, indent=2, default=str)
     lines = [
         f"标的标准代码: {symbol}",
         f"数据概览: {_summarize(fins)}",

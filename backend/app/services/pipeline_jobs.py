@@ -3,7 +3,7 @@
 设计:
   - job_store/ 文件夹,每个 job 一个 {id}.json,最多保留 max_jobs 个文件
   - running/pending 状态的 job 仅存内存(高频读写)
-  - succeeded/failed 后写入独立文件并从内存释放
+  - succeeded/degraded/failed 后写入独立文件并从内存释放
   - 列表查询 = 内存中的活跃 job + 磁盘文件扫描,按时间排序
   - 单个查询 = 内存优先,没有则读磁盘
   - 创建新 job 前检查文件数量,>= max_jobs 时删除最老的文件
@@ -12,16 +12,33 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from app.services.atomic_io import atomic_write_json
+
 logger = logging.getLogger(__name__)
 
-JobStatus = Literal["pending", "running", "succeeded", "failed"]
+JobStatus = Literal["pending", "running", "succeeded", "degraded", "failed"]
+
+
+def terminal_status(result: dict[str, Any]) -> Literal["succeeded", "degraded"]:
+    """Map a completed pipeline result to an honest quality-aware terminal state."""
+    quality = result.get("quality") if isinstance(result, dict) else None
+    return "succeeded" if isinstance(quality, dict) and quality.get("ok") is True else "degraded"
+
+
+def _normalize_legacy_quality_status(job: dict[str, Any]) -> dict[str, Any]:
+    """Present legacy false-quality successes honestly without rewriting history files."""
+    result = job.get("result")
+    quality = result.get("quality") if isinstance(result, dict) else None
+    if job.get("status") == "succeeded" and isinstance(quality, dict) and quality.get("ok") is False:
+        job = dict(job)
+        job["status"] = "degraded"
+    return job
 
 
 def _default_store_dir() -> Path:
@@ -47,10 +64,7 @@ class JobStore:
         """将终态 job 写入独立 JSON 文件。"""
         path = self._store_dir / f"{job['id']}.json"
         try:
-            path.write_text(
-                json.dumps(job, ensure_ascii=False, indent=None),
-                encoding="utf-8",
-            )
+            atomic_write_json(job, path)
         except Exception:
             logger.warning("failed to write job file %s", path)
 
@@ -60,7 +74,7 @@ class JobStore:
         if not path.exists():
             return None
         try:
-            return json.loads(path.read_text("utf-8"))
+            return _normalize_legacy_quality_status(json.loads(path.read_text("utf-8")))
         except Exception:
             logger.warning("failed to read job file %s", path)
             return None
@@ -83,7 +97,7 @@ class JobStore:
         jobs: list[dict[str, Any]] = []
         for f in self._store_dir.glob("*.json"):
             try:
-                jobs.append(json.loads(f.read_text("utf-8")))
+                jobs.append(_normalize_legacy_quality_status(json.loads(f.read_text("utf-8"))))
             except Exception:
                 continue
         jobs.sort(key=lambda j: j.get("started_at") or "", reverse=True)
@@ -119,15 +133,31 @@ class JobStore:
             if not j:
                 return
             j["status"] = "running"
-            j["started_at"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+            j["started_at"] = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
     def succeed(self, job_id: str, result: Any) -> None:
+        self._finish(job_id, status="succeeded", result=result)
+
+    def degrade(self, job_id: str, result: Any) -> None:
+        self._finish(job_id, status="degraded", result=result)
+
+    def complete(self, job_id: str, result: dict[str, Any]) -> None:
+        """Finish a daily pipeline using its quality report as the authority."""
+        self._finish(job_id, status=terminal_status(result), result=result)
+
+    def _finish(
+        self,
+        job_id: str,
+        *,
+        status: Literal["succeeded", "degraded"],
+        result: Any,
+    ) -> None:
         with self._lock:
             j = self._active_jobs.pop(job_id, None)
             if not j:
                 return
-            j["status"] = "succeeded"
-            j["finished_at"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+            j["status"] = status
+            j["finished_at"] = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
             j["progress"] = 100
             j["result"] = result
             j["duration_s"] = _duration_s(j)
@@ -142,7 +172,7 @@ class JobStore:
             if not j:
                 return
             j["status"] = "failed"
-            j["finished_at"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+            j["finished_at"] = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
             j["error"] = error
             j["duration_s"] = _duration_s(j)
             if self._active_id == job_id:
@@ -165,7 +195,7 @@ class JobStore:
             elif j["stage"] != stage:
                 j["stage_pct"] = 0
             entry = {
-                "ts": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "ts": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
                 "stage": stage,
                 "msg": msg,
             }

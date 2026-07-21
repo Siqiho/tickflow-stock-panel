@@ -156,7 +156,6 @@ def delete_rule(rule_id: str, request: Request):
 # ── 演示数据生成 (仅 Dev 页用) ─────────────────────────
 
 import time as _time
-from datetime import datetime, timezone
 
 
 def _demo_rule(rule_id: str, name: str, rtype: str, scope: str, symbols: list[str],

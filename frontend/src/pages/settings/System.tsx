@@ -5,7 +5,8 @@
  */
 import { useState, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Settings2, Trash2, RefreshCw, Bell, Volume2, Info } from 'lucide-react'
+import { Settings2, Trash2, RefreshCw, Bell, Volume2, Info, Moon, Sun } from 'lucide-react'
+import { useTheme } from '@/lib/theme'
 import { usePreferences, useVersion } from '@/lib/useSharedQueries'
 import { api } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
@@ -15,6 +16,7 @@ import { SOUND_OPTIONS, previewSound } from '@/lib/notificationSound'
 
 export function SettingsSystemPanel() {
   const qc = useQueryClient()
+  const { isDark, toggleTheme } = useTheme()
   const { data: prefs } = usePreferences()
   const { data: versionData } = useVersion()
   const [saving, setSaving] = useState(false)
@@ -66,6 +68,21 @@ export function SettingsSystemPanel() {
       />
 
       <section className="rounded-card border border-border bg-surface p-5">
+        <div className="flex items-center gap-2 mb-4">
+          {isDark ? <Moon className="h-4 w-4 text-accent" /> : <Sun className="h-4 w-4 text-accent" />}
+          <h3 className="text-sm font-medium text-foreground">外观</h3>
+        </div>
+
+        <ToggleRow
+          label="暗色模式"
+          desc="关闭后使用浅色界面；设置会保存在本机浏览器"
+          checked={isDark}
+          disabled={false}
+          onChange={() => toggleTheme()}
+        />
+      </section>
+
+      <section className="rounded-card border border-border bg-surface p-5 mt-6">
         <div className="flex items-center gap-2 mb-4">
           <Settings2 className="h-4 w-4 text-accent" />
           <h3 className="text-sm font-medium text-foreground">策略页</h3>

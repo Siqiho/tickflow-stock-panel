@@ -60,6 +60,13 @@ export const QK = {
 
   // Schema
   extDataSchemaAll:     ['ext-data-schema-all'] as const,
+  stockChips:           (symbol: string, days = 120, bins = 80) => ['stock-chips', symbol, days, bins] as const,
+  fundFlowBoards:       (top = 30) => ['fund-flow-boards', top] as const,
+  fundFlowConcepts:     (top = 30) => ['fund-flow-concepts', top] as const,
+  fundFlowBoardHistory: (code: string, kind: 'board' | 'concept' = 'board', limit = 120) =>
+    ['fund-flow-board-history', kind, code, limit] as const,
+  fundFlowBoardIntraday:(code: string, kind: 'board' | 'concept' = 'board', tradeDate?: string) =>
+    ['fund-flow-board-intraday', kind, code, tradeDate || 'latest'] as const,
   tableSchema:          (table: string) => ['table-schema', table] as const,
 
   // Custom Signals

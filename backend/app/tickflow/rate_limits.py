@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Sequence
 from typing import TypeVar
 
 T = TypeVar("T")

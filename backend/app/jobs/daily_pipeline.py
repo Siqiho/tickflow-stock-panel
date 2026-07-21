@@ -7,6 +7,7 @@
 盘后同步策略:
   日 K: QuoteService 交易时段已实时落盘 → 有数据时跳过 batch,首次拉 1 年区间
   除权因子: 从已有数据最新日期的下一天开始增量获取,避免重复拉取和计算
+  财务(public): financial_provider=public 时按 public_data_scope 刷新四表+股本截面
 """
 from __future__ import annotations
 
@@ -18,10 +19,11 @@ import polars as pl
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from app.indicators.pipeline import run_pipeline
 from app.config import settings
+from app.indicators.pipeline import run_pipeline
+from app.services import index_sync, instrument_sync, kline_sync
+from app.services import preferences as _prefs
 from app.services.daily_quality import run_daily_quality_check
-from app.services import index_sync, instrument_sync, kline_sync, preferences as _prefs
 from app.tickflow.capabilities import Cap, CapabilitySet
 from app.tickflow.pools import DEMO_SYMBOLS, get_pool
 from app.tickflow.repository import KlineRepository
@@ -31,7 +33,7 @@ logger = logging.getLogger(__name__)
 ProgressCb = Callable[..., None]
 
 
-def _noop(stage: str, pct: int, msg: str, **kwargs) -> None:  # noqa: ARG001
+def _noop(stage: str, pct: int, msg: str, **kwargs) -> None:
     pass
 
 
@@ -42,30 +44,49 @@ def _invalidate(table: str | None = None) -> None:
 
 
 def _resolve_universe(capset: CapabilitySet) -> list[str]:
-    """解析标的池 — 以 CN_Equity_A (沪深京A股 ~5522只) 为主。
+    """解析标的池。
 
-    有 batch 能力 → 直接拉 CN_Equity_A universe
-    其他用户 → 用 instruments parquet + watchlist 兜底
+    优先使用 preferences.pipeline_universe_scope：
+      ALL / CSI300 / CSI500 / SSE50 / WATCHLIST
+    - ALL + 有 batch → TickFlow CN_Equity_A（若可用）
+    - ALL + free → instruments + watchlist + demo
+    - CSI* → data/pools 缓存（缺则 public 刷新）
     """
-    if capset.has(Cap.KLINE_DAILY_BATCH):
+    from app.services.universe_scope import (
+        SCOPE_ALL,
+        SCOPE_LABELS,
+        normalize_scope,
+        resolve_symbols,
+    )
+
+    scope = normalize_scope(_prefs.get_pipeline_universe_scope(), default=SCOPE_ALL)
+    logger.info("resolve_universe scope=%s (%s)", scope, SCOPE_LABELS.get(scope, scope))
+
+    # Paid batch + ALL: prefer live CN_Equity_A universe when available
+    if scope == SCOPE_ALL and capset.has(Cap.KLINE_DAILY_BATCH):
         try:
             all_a = get_pool("CN_Equity_A", refresh=True)
             if all_a:
-                return sorted(all_a)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("CN_Equity_A pool unavailable, fallback: %s", e)
+                return sorted({str(s).strip().upper() for s in all_a if s})
+        except Exception as e:
+            logger.warning("CN_Equity_A pool unavailable, fallback instruments: %s", e)
 
-    # Free 用户兜底: instruments parquet + watchlist + demo
+    syms = resolve_symbols(
+        scope,
+        data_dir=Path(settings.data_dir),
+        default=SCOPE_ALL,
+        include_watchlist=(scope == SCOPE_ALL),
+        refresh_pools_if_missing=True,
+    )
+    if syms:
+        return syms
+
+    # Last-resort free fallback
     base: set[str] = set(DEMO_SYMBOLS)
-    base.update(get_pool("watchlist"))
-    d = Path(settings.data_dir)
-    inst_path = d / "instruments" / "instruments.parquet"
-    if inst_path.exists():
-        try:
-            inst = pl.read_parquet(inst_path, columns=["symbol"])
-            base.update(inst["symbol"].to_list())
-        except Exception as e:  # noqa: BLE001
-            logger.warning("instruments supplement failed: %s", e)
+    try:
+        base.update(get_pool("watchlist") or [])
+    except Exception:
+        pass
     return sorted(base)
 
 
@@ -100,13 +121,21 @@ def run_now(
 
     emit("resolve_universe", 9, "解析标的池…")
     universe = _resolve_universe(capset)
-    emit("resolve_universe", 10, f"标的池规模:{len(universe)} 只")
+    try:
+        from app.services.universe_scope import SCOPE_LABELS, normalize_scope
+        _sc = normalize_scope(_prefs.get_pipeline_universe_scope(), default="ALL")
+        _lab = SCOPE_LABELS.get(_sc, _sc)
+    except Exception:
+        _sc, _lab = "ALL", "全A"
+    emit("resolve_universe", 10, f"标的池[{_lab}] 规模:{len(universe)} 只")
 
     # Step 1: 日 K 同步
     #   付费档 + 今天有数据 → 实时行情接口拉一次覆写（1请求全市场）
     #   有历史数据 → batch K-line API 补齐缺口
     #   无任何数据 → batch K-line API 拉首次 1 年
-    from datetime import date as _date, timedelta as _td, datetime as _dt
+    from datetime import date as _date
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
     latest_daily = repo.latest_daily_date()
     today = _date.today()
     today_exists = latest_daily and latest_daily >= today
@@ -117,6 +146,36 @@ def run_now(
 
     # A 股日K拉取开关(默认开);关闭时跳过日K同步,保留已有数据
     pull_a_share = _prefs.get_pipeline_pull_a_share()
+    daily_source = None
+    public_eod_result = None
+    latest_before = latest_daily
+
+    def _daily_partition_dates() -> list[_date]:
+        daily_dir = repo.store.data_dir / "kline_daily"
+        if not daily_dir.exists():
+            return []
+        out: list[_date] = []
+        for p in daily_dir.glob("date=*"):
+            if not p.is_dir():
+                continue
+            try:
+                out.append(_date.fromisoformat(p.name[5:]))
+            except ValueError:
+                continue
+        return sorted(out)
+
+    def _count_new_daily_days(before: _date | None) -> int:
+        """按真实 date= 分区统计新增交易日数,避免 (today-start).days 误报。"""
+        dates = _daily_partition_dates()
+        if not dates:
+            return 0
+        if before is None:
+            return len(dates)
+        return sum(1 for d in dates if d > before)
+
+    # batch 结束时间用当天末尾,避免 end=today 00:00 把当日 bar 排除在外
+    batch_end = _dt.combine(today, _dt.max.time().replace(microsecond=0))
+
     if not pull_a_share:
         emit("sync_daily", 45, "已跳过 A 股日K同步(拉取内容未勾选)")
         logger.info("sync_daily: skipped (pipeline_pull_a_share=False)")
@@ -126,7 +185,8 @@ def run_now(
         # 也降级到下方 batch 路径刷新,避免调用无权限的实时行情接口。
         emit("sync_daily", 12, f"获取日K [{today} ~ {today}] 实时行情…")
         written_daily = kline_sync.sync_daily_by_quotes(repo)
-        new_daily_days = 1
+        daily_source = "tickflow_quotes"
+        new_daily_days = 1 if written_daily else 0
         emit("sync_daily", 45, f"日K 完成,{written_daily} 只标的")
         logger.info("sync_daily: [%s ~ %s] live quotes, %d symbols", today, today, written_daily)
     elif latest_daily:
@@ -145,13 +205,16 @@ def run_now(
         written_daily = kline_sync.sync_and_persist_daily_batch(
             universe, repo, capset,
             start_date=_dt.combine(start_date, _dt.min.time()),
-            end_date=_dt.combine(today, _dt.min.time()),
+            end_date=batch_end,
             on_chunk_done=_daily_chunk_progress,
         )
-        gap_days = (today - start_date).days
-        new_daily_days = gap_days
-        emit("sync_daily", 45, f"日K 完成,覆盖 {gap_days} 天")
-        logger.info("sync_daily: [%s ~ %s] done, %d days", start_date, today, gap_days)
+        daily_source = "tickflow_batch"
+        new_daily_days = _count_new_daily_days(latest_before)
+        emit("sync_daily", 42, f"日K batch 完成,新增 {new_daily_days} 个交易日分区")
+        logger.info(
+            "sync_daily: [%s ~ %s] done, rows=%s new_days=%s",
+            start_date, today, written_daily, new_daily_days,
+        )
     else:
         # 首次：无任何数据 → batch 拉 1 年
         start_date = today - _td(days=365)
@@ -165,12 +228,63 @@ def run_now(
         written_daily = kline_sync.sync_and_persist_daily_batch(
             universe, repo, capset,
             start_date=_dt.combine(start_date, _dt.min.time()),
-            end_date=_dt.combine(today, _dt.min.time()),
+            end_date=batch_end,
             on_chunk_done=_daily_chunk_progress,
         )
-        new_daily_days = 365
-        emit("sync_daily", 45, "日K 完成")
-        logger.info("sync_daily: [%s ~ %s] done", start_date, today)
+        daily_source = "tickflow_batch"
+        new_daily_days = _count_new_daily_days(latest_before)
+        emit("sync_daily", 42, f"日K batch 完成,新增 {new_daily_days} 个交易日分区")
+        logger.info(
+            "sync_daily: [%s ~ %s] done, rows=%s new_days=%s",
+            start_date, today, written_daily, new_daily_days,
+        )
+
+    # None/Free 兜底: free 历史日K若尚未提供 today, 用公开行情合成当日日K。
+    # 仅在工作日尝试; 周末/已有 today / 用户关闭 A 股日K 时跳过。
+    latest_after_batch = repo.latest_daily_date()
+    today_missing = (latest_after_batch is None) or (latest_after_batch < today)
+    want_public_eod = (
+        pull_a_share
+        and today_missing
+        and today.weekday() < 5
+        and not capset.has(Cap.QUOTE_POOL)
+    )
+    if want_public_eod:
+        try:
+            rt_provider = _prefs.get_realtime_data_provider()
+        except Exception:
+            rt_provider = "public"
+        if rt_provider == "public":
+            emit("sync_daily", 43, f"free 日K未含今日,改用公开行情合成 {today}…")
+            logger.info(
+                "sync_daily: public eod fallback for %s (latest_after_batch=%s)",
+                today, latest_after_batch,
+            )
+            public_eod_result = kline_sync.sync_daily_by_public_quotes(universe, repo, trade_date=today)
+            pub_rows = int((public_eod_result or {}).get("rows") or 0)
+            if pub_rows > 0:
+                daily_source = "public_quote_eod"
+                # 以兜底前最新日为 baseline 重算新增天数
+                new_daily_days = _count_new_daily_days(latest_before)
+                emit("sync_daily", 45, f"公开行情合成完成,{pub_rows} 只 · {today}")
+                logger.info("sync_daily: public eod wrote %d rows for %s", pub_rows, today)
+            else:
+                emit("sync_daily", 45, f"公开行情合成未写入今日分区(latest={latest_after_batch})")
+                logger.warning(
+                    "sync_daily: public eod fallback produced 0 rows (latest_after_batch=%s)",
+                    latest_after_batch,
+                )
+        else:
+            emit("sync_daily", 45, f"今日日K仍缺(latest={latest_after_batch}); realtime provider={rt_provider},跳过 public 合成")
+            logger.info(
+                "sync_daily: skip public eod (provider=%s, latest=%s)",
+                rt_provider, latest_after_batch,
+            )
+    elif pull_a_share:
+        # 统一收尾文案
+        latest_now = latest_after_batch or repo.latest_daily_date()
+        emit("sync_daily", 45, f"日K 完成,最新 {latest_now},新增 {new_daily_days} 日")
+
     _invalidate("daily")
 
     # Step 1.5: 同步除权因子 — 范围与日K拉取方式对齐
@@ -180,7 +294,13 @@ def run_now(
     #     (这两类分支不拉历史日K, 除权不能用日K范围, 只能兜底最近几日)
     written_adj = 0
     affected_symbols: list[str] = []
-    if capset.has(Cap.ADJ_FACTOR):
+    from app.services import preferences as _pref_adj
+    _public_adj = False
+    try:
+        _public_adj = _pref_adj.is_public_adj_factor_provider()
+    except Exception:
+        _public_adj = False
+    if capset.has(Cap.ADJ_FACTOR) or _public_adj:
         from datetime import datetime, timedelta
         adj_end = datetime.now()
         if daily_range_start is not None:
@@ -197,8 +317,23 @@ def run_now(
         def _adj_chunk_progress(cur: int, tot: int) -> None:
             emit("sync_adj", 50 + int(10 * cur / tot),
                  f"除权因子批次 {cur}/{tot}", stage_pct=int(100 * cur / tot), skip_log=True)
+        adj_universe = list(universe)
+        try:
+            if _prefs.is_public_adj_factor_provider():
+                from app.services.universe_scope import resolve_symbols
+                # public adj 默认跟 public_data_scope（CSI300），避免 ALL 时盘后被拖死
+                pub_scope = _prefs.get_public_data_scope()
+                adj_universe = resolve_symbols(
+                    pub_scope,
+                    data_dir=Path(settings.data_dir),
+                    default="CSI300",
+                    refresh_pools_if_missing=True,
+                ) or adj_universe
+                emit("sync_adj", 50, f"获取除权因子(public/{pub_scope}) {len(adj_universe)} 只…")
+        except Exception as e:
+            logger.warning("public adj universe resolve failed: %s", e)
         written_adj, affected_symbols = kline_sync.sync_adj_factor(
-            universe, repo, capset,
+            adj_universe, repo, capset,
             start_time=adj_start, end_time=adj_end,
             on_chunk_done=_adj_chunk_progress,
         )
@@ -212,7 +347,125 @@ def run_now(
         _invalidate("adj_factor")
     else:
         skipped.append("sync_adj")
-        logger.info("sync_adj skipped: no ADJ_FACTOR capability")
+        logger.info("sync_adj skipped: no ADJ_FACTOR capability and adj_factor_provider is not public")
+
+    # Step 1.5: public 财务刷新（不阻断日K/复权主路径）
+    financial_result: dict | None = None
+    try:
+        if _prefs.is_public_financial_provider():
+            from app.data_providers.registry import get_provider
+            from app.services.free_sources.financials_public import FINANCIAL_TABLES
+            from app.services.universe_scope import resolve_symbols
+
+            pub_scope = _prefs.get_public_data_scope()
+            fin_syms = resolve_symbols(
+                pub_scope,
+                data_dir=repo.store.data_dir,
+                default="CSI300",
+                refresh_pools_if_missing=True,
+            )
+            mp = _prefs.get_financial_max_periods()
+
+            # Light vs full: statement body is expensive (EM ~5 periods/call).
+            # Full deepen only when local depth is below target; otherwise metrics+shares.
+            median_periods = 0.0
+            try:
+                inc_path = repo.store.data_dir / "financials" / "income" / "part.parquet"
+                if inc_path.exists():
+                    idf = pl.read_parquet(inc_path)
+                    if not idf.is_empty() and "symbol" in idf.columns:
+                        g = idf.group_by("symbol").len()
+                        # restrict to current scope when possible
+                        g = g.filter(pl.col("symbol").is_in(fin_syms)) if fin_syms else g
+                        if g.height:
+                            median_periods = float(g["len"].median())
+            except Exception as e:
+                logger.debug("financial depth probe failed: %s", e)
+
+            full = median_periods < max(4.0, float(mp) * 0.8)
+            tables = FINANCIAL_TABLES if full else ("metrics", "shares")
+            mode = "full" if full else "light"
+            # Light daily refresh: skip symbols that already have enough fresh metrics.
+            # Full deepen: resume by local depth so interrupted runs do not restart from 0.
+            fin_min_periods = max(4, int(float(mp) * 0.8)) if full else max(4, min(int(mp), 8))
+            fin_fresh_days = None if full else -1  # calendar: within last ~2 quarter-ends
+            fin_workers = 2 if full else 4
+            emit(
+                "sync_financials",
+                62,
+                f"刷新财务(public/{pub_scope}/{mode}) {len(fin_syms)} 只 · {mp}期…",
+            )
+            logger.info(
+                "sync_financials public scope=%s n=%d max_periods=%d mode=%s median_periods=%s "
+                "min_periods=%s fresh_days=%s workers=%s",
+                pub_scope, len(fin_syms), mp, mode, median_periods,
+                fin_min_periods, fin_fresh_days, fin_workers,
+            )
+
+            def _fin_progress(cur: int, tot: int, sym: str = "") -> None:
+                # Keep overall progress in the 62→64 band; stage bar shows real coverage.
+                tot = max(int(tot or 0), 1)
+                cur = max(0, min(int(cur or 0), tot))
+                pct = 62 + int(2 * cur / tot)
+                label = f"{cur}/{tot}"
+                if sym:
+                    label = f"{label} · {sym}"
+                emit(
+                    "sync_financials",
+                    pct,
+                    f"财务批次 {label}",
+                    stage_pct=int(100 * cur / tot),
+                    skip_log=True,
+                )
+
+            public_provider = get_provider("public")
+            financial_result = public_provider.sync_financials(
+                fin_syms,
+                repo.store.data_dir,
+                tables=tables,
+                max_periods=mp,
+                pause_s=0.0,
+                on_progress=_fin_progress,
+                resume=True,
+                min_periods=fin_min_periods,
+                prefer_fresh_days=fin_fresh_days,
+                workers=fin_workers,
+                flush_every=15 if full else 25,
+                skip_checked_within_hours=18.0,
+            )
+            # shares always refreshed even if tables omitted somehow
+            try:
+                public_provider.sync_shares_snapshot(repo.store.data_dir, symbols=fin_syms)
+            except Exception as e:
+                logger.debug("shares snapshot in pipeline skipped: %s", e)
+            # touch financial_scheduler last_sync markers when available
+            try:
+                from app.services.financial_sync import financial_scheduler, _refresh_financials_views
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc).isoformat()
+                for table in ("metrics", "income", "balance_sheet", "cash_flow", "shares"):
+                    financial_scheduler._last_sync[table] = now  # noqa: SLF001
+                _refresh_financials_views(repo.store.data_dir)
+            except Exception as e:
+                logger.debug("financial last_sync/view refresh skipped: %s", e)
+            ok_n = int((financial_result or {}).get("symbols_ok_n") or 0)
+            fail_n = int((financial_result or {}).get("symbols_fail_n") or 0)
+            skip_n = int((financial_result or {}).get("symbols_skipped_n") or 0)
+            todo_n = int((financial_result or {}).get("symbols_todo_n") or 0)
+            emit(
+                "sync_financials",
+                64,
+                f"财务完成 ok={ok_n} fail={fail_n} skip={skip_n} todo={todo_n}",
+            )
+            _invalidate("financials")
+            logger.info("sync_financials done ok=%s fail=%s rows=%s", ok_n, fail_n, (financial_result or {}).get("rows"))
+        else:
+            skipped.append("sync_financials")
+            logger.info("sync_financials skipped: financial_provider is not public")
+    except Exception as e:
+        logger.warning("sync_financials failed (non-fatal): %s", e)
+        skipped.append("sync_financials")
+        emit("sync_financials", 64, f"财务刷新失败(已跳过): {e}")
 
     # Step 2: 计算 enriched
     #   判断策略:
@@ -367,7 +620,7 @@ def run_now(
                         )
                         etf_adj_symbols = len(affected_etfs)
                         emit("sync_index", 88, f"ETF 除权因子完成,{etf_adj_symbols} 只")
-                    except Exception as e:  # noqa: BLE001
+                    except Exception as e:
                         logger.warning("ETF adj_factor skipped: %s", e)
                 etf_dir = repo.store.data_dir / "kline_etf_enriched"
                 etf_dates = sorted(
@@ -398,7 +651,7 @@ def run_now(
                 f"同步完成,指数 {index_count} 只/{written_index_daily} 行, ETF {etf_count} 只/{written_etf_daily} 行"
                 + (f", ETF复权 {etf_adj_symbols} 只" if etf_adj_symbols else ""),
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("sync_index/etf failed: %s", e)
             emit("sync_index", 89, f"指数/ETF同步失败:{e}")
     else:
@@ -472,10 +725,8 @@ def run_now(
     emit("refresh_views", 95, "刷新 DuckDB 视图…")
     _refresh_views(repo)
 
-    emit("done", 100, "完成")
-    _invalidate(None)  # 兜底:全清
-
-    # Free-api quality gate (non-fatal)
+    # Quality gate is terminal-state authoritative: completed processing with
+    # failed quality is degraded, never silently succeeded.
     quality_report = None
     try:
         emit("quality", 97, "运行日线质量门禁…")
@@ -485,14 +736,32 @@ def run_now(
             98,
             f"质量门禁 ok={quality_report.get('ok')} issues={len(quality_report.get('issues') or [])}",
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning("quality gate failed: %s", e)
-        emit("quality", 98, f"质量门禁失败: {e}")
+        quality_report = {
+            "ok": False,
+            "issues": [{"code": "quality_gate_exception", "message": str(e)}],
+        }
+        emit("quality", 99, f"质量门禁失败: {e}")
+
+    quality_ok = bool(quality_report and quality_report.get("ok") is True)
+    emit("done", 100, "完成" if quality_ok else "完成，但质量门禁未通过")
+    _invalidate(None)  # 兜底:全清
 
     return {
         "universe_size": len(universe),
         "daily_days": new_daily_days,
+        "daily_source": daily_source,
+        "public_eod": public_eod_result,
         "adj_factor_symbols": len(affected_symbols),
+        "financials": {
+            "ok": int((financial_result or {}).get("symbols_ok_n") or 0),
+            "fail": int((financial_result or {}).get("symbols_fail_n") or 0),
+            "rows": (financial_result or {}).get("rows"),
+            "scope": (financial_result or {}).get("scope") or (
+                _prefs.get_public_data_scope() if _prefs.is_public_financial_provider() else None
+            ),
+        } if financial_result is not None else None,
         "enriched_days": written_enriched,
         "index_count": index_count,
         "index_daily_rows": written_index_daily,
@@ -530,7 +799,7 @@ def _refresh_views(repo: KlineRepository) -> None:
                 f"CREATE OR REPLACE VIEW {name} AS "
                 f"SELECT * FROM read_parquet('{path}', union_by_name=true)"
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("refresh view %s failed: %s", name, e)
     repo.store._register_unified_views()
 
@@ -561,7 +830,7 @@ def _refresh_single_view(repo: KlineRepository, name: str) -> None:
             f"CREATE OR REPLACE VIEW {name} AS "
             f"SELECT * FROM read_parquet('{path}', union_by_name=true)"
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning("refresh view %s failed: %s", name, e)
 
 
@@ -578,7 +847,7 @@ def _refresh_instruments_view(repo: KlineRepository) -> None:
             f"CREATE OR REPLACE VIEW instruments AS "
             f"SELECT * FROM read_parquet('{d}/instruments/**/*.parquet', union_by_name=true)"
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning("refresh instruments view failed: %s", e)
 
 
@@ -595,7 +864,7 @@ def _run_tracked(fn, job_label: str) -> None:
 
     try:
         result = fn(on_progress=progress)
-        job_store.succeed(job_id, result)
+        job_store.complete(job_id, result)
         logger.info("scheduled %s completed: job_id=%s", job_label, job_id)
     except Exception:
         logger.exception("scheduled %s failed: job_id=%s", job_label, job_id)
@@ -621,8 +890,8 @@ async def _run_scheduled_review(repo) -> None:
     import json
 
     try:
-        from app.services import market_recap_reports
         from app import secrets_store as ss
+        from app.services import market_recap_reports
 
         # AI Key 未配置时跳过(避免每日报错刷日志)
         if not ss.get_ai_key():
@@ -662,7 +931,7 @@ async def _run_scheduled_review(repo) -> None:
         # 推送到飞书(可选): 运行时读取配置, 用户改设置下次触发即生效。
         # 失败静默降级, 不影响已归档的报告。
         _maybe_push_review(content, meta)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.exception("scheduled review failed: %s", e)
         # 兜底: 异常时通知前端停止「生成中」状态, 避免页面卡在 streaming
         try:
@@ -673,7 +942,7 @@ async def _run_scheduled_review(repo) -> None:
                 qs.push_review_event(_json.dumps(
                     {"type": "error", "message": "复盘生成异常,请稍后手动重试"},
                     ensure_ascii=False))
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
 
@@ -685,6 +954,7 @@ async def _stream_review_with_retry(repo, quote_service, depth_service) -> tuple
     """
     import asyncio
     import json
+
     from app.services.market_recap import recap_market_stream
 
     max_attempts = 3  # 初次 + 2 次重试
@@ -718,7 +988,7 @@ async def _stream_review_with_retry(repo, quote_service, depth_service) -> tuple
             # 流自然结束(无 done 事件)且有内容, 视为成功
             if content_parts and not failed:
                 return "".join(content_parts), last_meta
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             # LLM 断流等异常(httpx.RemoteProtocolError)落到这里
             failed = True
             logger.warning("scheduled review stream exception (attempt %d/%d): %s",
@@ -767,7 +1037,7 @@ def _maybe_push_review(content: str, meta: dict) -> None:
                 )
                 logger.info("review push(feishu) %s", "sent" if ok else "failed")
             # 未来更多渠道在此追加分支
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning("review push error: %s", e)
 
 

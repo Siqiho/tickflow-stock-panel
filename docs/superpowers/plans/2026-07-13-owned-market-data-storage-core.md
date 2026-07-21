@@ -19,7 +19,7 @@
 - 临时文件必须与目标同目录、名称唯一且不以 `.parquet` 结尾；写后 fsync 文件、`os.replace`，再走平台 durability adapter。POSIX fsync 父目录；Windows 尝试目录 handle flush，不支持时记录明确降级事件并依赖 manifest/checksum 恢复。
 - 事务顺序固定为 preimage -> planned manifest -> replace -> applied manifest -> committed manifest -> lineage。
 - 所有自动测试只使用 `tmp_path`；不得读写 `/Users/simon/Trading/one-trading/data`。
-- 实施前在 `/Users/simon/备份/codex` 创建新的时间戳子目录，备份项目、当前 diff、未跟踪清单和 HEAD，并附 `README【codex】.md`，写明备份原因、原路径和时间。
+- 实施前在 `/Users/simon/备份/codex` 创建新的时间戳子目录，备份项目、当前 diff、未跟踪清单和 HEAD，并附 `README.md`，写明备份原因、原路径和时间。
 - 当前工作树有用户改动；每次只暂存该任务列出的文件，不得覆盖或提交品牌、AI、打包、依赖及其他无关改动。
 - 所有测试命令从 `backend/` 执行；所有 `git add` / `git commit` 命令先回到 `/Users/simon/Trading/one-trading`。若列出的文件在实施开始时已含用户改动，必须在隔离 worktree 完成并以精确补丁合入，不能把用户原有 hunks 一并提交。
 - 每项生产代码严格遵循 RED -> GREEN -> refactor；旧有 19 个测试必须持续通过。

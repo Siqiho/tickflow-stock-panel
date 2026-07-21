@@ -8,7 +8,6 @@ import math
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -17,7 +16,7 @@ from app.strategy import config as strategy_config
 from app.strategy.engine import StrategyEngine, StrategyDef
 from app.strategy.ai_generator import AIStrategyGenerator
 from app.strategy.prompt_builder import build_step1, build_step2
-from app.strategy.monitor import StrategyMonitorService, StrategyAlert
+from app.strategy.monitor import StrategyMonitorService
 
 router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
@@ -304,7 +303,6 @@ def ai_status(request: Request):
 @router.get("/{strategy_id}/source")
 def get_strategy_source(strategy_id: str, request: Request):
     """获取策略源文件内容（用于 AI 修改）"""
-    from pathlib import Path
 
     # 先查 StrategyEngine 获取文件路径
     engine = _get_engine(request)
@@ -400,7 +398,6 @@ async def ai_save(req: AISaveRequest, request: Request):
 @router.delete("/{strategy_id}")
 def delete_strategy(strategy_id: str, request: Request):
     """删除自定义策略 — 清除 .py 文件 + overrides + 热重载。内置策略不可删除。"""
-    from pathlib import Path
 
     engine = _get_engine(request)
     try:

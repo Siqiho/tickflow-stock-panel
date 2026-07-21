@@ -13,12 +13,12 @@ export const CARD_META: Record<string, {
   // 标的维表走 exchanges 端点,free-api 服务器即可获取,无需付费能力
   instruments: { capKey: '',                        tierReq: '' },
   daily:       { capKey: 'kline.daily.batch',       tierReq: 'Starter+' },
-  adj_factor:  { capKey: 'adj_factor',              tierReq: 'Starter+' },
+  adj_factor:  { capKey: 'adj_factor',              tierReq: 'Starter+ / 本地public' },
   enriched:    { capKey: '',                        tierReq: '' },
   // ETF 复用日K批量能力(免费档 kline.daily.batch 即可),不显示档位徽章
   etf:         { capKey: 'kline.daily.batch',       tierReq: '' },
-  minute:      { capKey: 'kline.minute.batch',      tierReq: 'Pro+' },
-  financials:  { capKey: 'financial',                tierReq: 'Expert' },
+  minute:      { capKey: 'kline.minute.batch',      tierReq: '全市场Pro+' },
+  financials:  { capKey: 'financial',                tierReq: 'Expert / 本地public' },
 }
 
 export function Pill({ label, value }: { label: string; value: number | string }) {
@@ -30,12 +30,27 @@ export function Pill({ label, value }: { label: string; value: number | string }
   )
 }
 
+type CapInfo = {
+  rpm?: number | null
+  batch?: number | null
+  subscribe?: number | null
+  source?: string | null
+  local?: boolean | null
+}
+
+function isLocalPublicCap(capInfo?: CapInfo | null): boolean {
+  if (!capInfo) return false
+  if (capInfo.local) return true
+  const src = String(capInfo.source || '').toLowerCase()
+  return src === 'local_public' || src === 'public' || src === 'local' || src.includes('public')
+}
+
 function CapBadge({ hasCap, isLocal, tierLabel, tierReq, capInfo, localSuffix }: {
   hasCap: boolean
   isLocal: boolean
   tierLabel?: string
   tierReq?: string
-  capInfo?: { rpm: number | null; batch: number | null; subscribe: number | null } | undefined
+  capInfo?: CapInfo | undefined
   localSuffix?: string
 }) {
   if (isLocal) {
@@ -46,8 +61,18 @@ function CapBadge({ hasCap, isLocal, tierLabel, tierReq, capInfo, localSuffix }:
     )
   }
 
+  // public/local 财务与复权：能力来自本地 parquet，不展示 TickFlow 档位 RPM
+  if (hasCap && isLocalPublicCap(capInfo)) {
+    return (
+      <span className="text-[10px] text-secondary bg-elevated rounded px-1.5 py-px font-medium">
+        本地 public{localSuffix ? ` · ${localSuffix}` : ''}
+      </span>
+    )
+  }
+
   if (hasCap && capInfo && tierLabel) {
-    const parts = [tierLabel, `${capInfo.rpm}/min`]
+    const parts = [tierLabel]
+    if (capInfo.rpm != null) parts.push(`${capInfo.rpm}/min`)
     if (capInfo.batch != null && capInfo.batch > 1) parts.push(`${capInfo.batch}股/批`)
     return (
       <span className="text-[10px] text-accent/80 bg-accent/8 rounded px-1.5 py-px font-mono font-medium">
@@ -95,7 +120,7 @@ export function StatCard({
   skipped?: boolean
   stagePct?: number
   tierKey?: string
-  capLimits?: Record<string, { rpm: number | null; batch: number | null; subscribe: number | null }>
+  capLimits?: Record<string, CapInfo>
   tierLabel?: string
   onSettings?: () => void
   onShowFields?: (table?: string) => void

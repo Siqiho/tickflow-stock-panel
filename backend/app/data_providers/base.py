@@ -23,6 +23,9 @@ class ProviderCapabilities:
     minute: bool = False
     realtime: bool = False
     financial: bool = False
+    quote_snapshot: bool = False
+    sealed_l1: bool = False
+    pools: bool = False
 
 
 class MarketDataProvider(Protocol):

@@ -8,6 +8,8 @@ import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { QK } from '@/lib/queryKeys'
 import { storage } from '@/lib/storage'
 import { fmtPct, priceColorClass } from '@/lib/format'
+import { cn } from '@/lib/cn'
+import { useTheme } from '@/lib/theme'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
 import { useCapabilities } from '@/lib/useSharedQueries'
@@ -137,9 +139,9 @@ function fmtSealAmount(v: number): string {
 // ===== 板块标识 =====
 
 function boardTag(symbol: string): { label: string; cls: string } | null {
-  if (/^(300|301)/.test(symbol)) return { label: '创', cls: 'text-[#f97316] bg-[#f97316]/12 border-[#f97316]/25' }
-  if (/^688/.test(symbol))       return { label: '科', cls: 'text-cyan-400 bg-cyan-400/12 border-cyan-400/25' }
-  if (/\.BJ$/.test(symbol))      return { label: '北', cls: 'text-purple-400 bg-purple-400/12 border-purple-400/25' }
+  if (/^(300|301)/.test(symbol)) return { label: '创', cls: 'text-orange-700 dark:text-[#f97316] bg-orange-500/12 border-orange-500/25' }
+  if (/^688/.test(symbol))       return { label: '科', cls: 'text-cyan-700 dark:text-cyan-400 bg-cyan-500/12 border-cyan-500/25' }
+  if (/\.BJ$/.test(symbol))      return { label: '北', cls: 'text-purple-700 dark:text-purple-400 bg-purple-500/12 border-purple-500/25' }
   return null
 }
 
@@ -147,53 +149,44 @@ function boardTag(symbol: string): { label: string; cls: string } | null {
 
 const STATUS_STYLE: Record<string, { bg: string; bar: string; nameCls: string; codeCls: string; badge: string; badgeText: string | ((d: Direction) => string); cardStyle?: React.CSSProperties; hoverShadow?: string }> = {
   limit_up: {
-    bg: '',
-    bar: 'border-l-2 border-bull/50',
-    nameCls: 'text-rose-50 text-[13px]',
-    codeCls: 'text-muted/80',
+    // 浅色用深字 + 淡红底；暗色保留近白字 + 暗红晕
+    bg: 'bg-gradient-to-r from-rose-500/[0.14] via-rose-500/[0.06] to-transparent shadow-[inset_1px_0_0_rgba(240,68,56,0.18)] hover:shadow-[inset_1px_0_0_rgba(240,68,56,0.35),0_0_18px_-4px_rgba(240,68,56,0.22)]',
+    bar: 'border-l-2 border-bull/60',
+    nameCls: 'text-rose-800 dark:text-rose-50 text-[13px]',
+    codeCls: 'text-secondary dark:text-muted/80',
     badge: '',
     badgeText: '',
-    cardStyle: {
-      background: 'linear-gradient(105deg, hsl(4 60% 45% / 0.14) 0%, hsl(6 50% 30% / 0.09) 40%, hsl(220 15% 12% / 0.0) 100%)',
-      boxShadow: 'inset 1px 0 0 hsl(4 80% 55% / 0.12), 0 0 10px -4px hsl(4 80% 50% / 0.10)',
-    },
-    hoverShadow: 'inset 1px 0 0 hsl(4 80% 55% / 0.30), 0 0 18px -4px hsl(4 80% 50% / 0.28)',
   },
   limit_down: {
-    bg: '',
-    bar: 'border-l-2 border-bear/50',
-    nameCls: 'text-green-50 text-[13px]',
-    codeCls: 'text-muted/80',
+    bg: 'bg-gradient-to-r from-emerald-500/[0.14] via-emerald-500/[0.06] to-transparent shadow-[inset_1px_0_0_rgba(18,183,106,0.18)] hover:shadow-[inset_1px_0_0_rgba(18,183,106,0.35),0_0_18px_-4px_rgba(18,183,106,0.22)]',
+    bar: 'border-l-2 border-bear/60',
+    nameCls: 'text-emerald-800 dark:text-green-50 text-[13px]',
+    codeCls: 'text-secondary dark:text-muted/80',
     badge: '',
     badgeText: '',
-    cardStyle: {
-      background: 'linear-gradient(105deg, hsl(152 60% 45% / 0.14) 0%, hsl(150 50% 30% / 0.09) 40%, hsl(220 15% 12% / 0.0) 100%)',
-      boxShadow: 'inset 1px 0 0 hsl(152 80% 45% / 0.12), 0 0 10px -4px hsl(152 80% 45% / 0.10)',
-    },
-    hoverShadow: 'inset 1px 0 0 hsl(152 80% 45% / 0.30), 0 0 18px -4px hsl(152 80% 45% / 0.28)',
   },
   broken: {
-    bg: 'opacity-75',
-    bar: 'border-l border-purple-400/30',
-    nameCls: 'text-foreground/70 text-xs',
-    codeCls: 'text-muted/60',
-    badge: 'text-purple-400',
+    bg: 'bg-elevated/50 dark:bg-transparent opacity-90 dark:opacity-75',
+    bar: 'border-l border-purple-500/40 dark:border-purple-400/30',
+    nameCls: 'text-foreground/80 dark:text-foreground/70 text-xs',
+    codeCls: 'text-secondary/80 dark:text-muted/60',
+    badge: 'text-purple-600 dark:text-purple-400',
     badgeText: d => d === 'down' ? '撬' : '炸',
   },
   recovery: {
-    bg: 'opacity-75',
-    bar: 'border-l border-purple-400/30',
-    nameCls: 'text-foreground/70 text-xs',
-    codeCls: 'text-muted/60',
-    badge: 'text-purple-400',
+    bg: 'bg-elevated/50 dark:bg-transparent opacity-90 dark:opacity-75',
+    bar: 'border-l border-purple-500/40 dark:border-purple-400/30',
+    nameCls: 'text-foreground/80 dark:text-foreground/70 text-xs',
+    codeCls: 'text-secondary/80 dark:text-muted/60',
+    badge: 'text-purple-600 dark:text-purple-400',
     badgeText: '撬',
   },
   failed: {
-    bg: 'opacity-75',
-    bar: 'border-l border-muted/25',
-    nameCls: 'text-foreground/70 text-xs',
-    codeCls: 'text-muted/60',
-    badge: 'text-muted/80',
+    bg: 'bg-elevated/40 dark:bg-transparent opacity-90 dark:opacity-75',
+    bar: 'border-l border-border dark:border-muted/25',
+    nameCls: 'text-foreground/80 dark:text-foreground/70 text-xs',
+    codeCls: 'text-secondary/80 dark:text-muted/60',
+    badge: 'text-secondary dark:text-muted/80',
     badgeText: d => d === 'down' ? '止' : '断',
   },
 }
@@ -206,7 +199,12 @@ const STATUS_STYLE: Record<string, { bg: string; bar: string; nameCls: string; c
  */
 function useSealedDegrade(asOf: string, latestDate: string | undefined, sealedReady: boolean | undefined, sealedCounts?: { real: number; fake: number; pending: number }) {
   const { data: caps } = useCapabilities()
-  const hasDepth = !!caps?.capabilities?.['depth5.batch']
+  const hasDepth = !!(
+    caps?.features?.depth?.available
+    || caps?.depth?.available
+    || caps?.capabilities?.['depth5.batch']
+    || caps?.capabilities?.['depth5']
+  )
   // 历史判定: 用户主动选了早于最新交易日的日期
   const isHistorical = !!asOf && !!latestDate && asOf < latestDate
   // 降级: 无能力 / 历史日期 / 最新日但 sealed 未就绪
@@ -241,9 +239,9 @@ function StockCard({ stock, extFields, direction, sealMode, onClick }: {
   const badgeText = typeof style.badgeText === 'function' ? style.badgeText(direction) : style.badgeText
 
   const tagCls = 'text-[9px] leading-none px-1 py-px rounded-sm'
-  const conceptCls = 'text-[10px] leading-none px-1.5 py-0.5 rounded-sm text-orange-200/60 bg-orange-400/[0.05]'
-  const industryCls = 'text-[10px] leading-none px-1.5 py-0.5 rounded-sm text-sky-300/90 bg-sky-400/10'
-  const textCls = `${tagCls} text-secondary/60 bg-elevated/60`
+  const conceptCls = 'text-[10px] leading-none px-1.5 py-0.5 rounded-sm text-orange-700/90 dark:text-orange-200/70 bg-orange-500/10 dark:bg-orange-400/[0.08]'
+  const industryCls = 'text-[10px] leading-none px-1.5 py-0.5 rounded-sm text-sky-700 dark:text-sky-300/90 bg-sky-500/10 dark:bg-sky-400/10'
+  const textCls = `${tagCls} text-secondary dark:text-secondary/70 bg-elevated/80`
 
   const hasTags = conceptTags.length > 0 || industryTags.length > 0
 
@@ -279,16 +277,16 @@ function StockCard({ stock, extFields, direction, sealMode, onClick }: {
           ) : stock.sealed_status === 'real' && stock.sealed_vol != null ? (
             /* 已修正真封板: 右侧显示封单(量或额, 替代连板数)。
                sealed_vol 单位是手, 1手=100股, 算金额需 ×100 */
-            <span className="text-[10px] font-semibold tabular-nums text-accent/80">
+            <span className="text-[10px] font-semibold tabular-nums text-accent dark:text-accent/80">
               {sealMode === 'amount' && stock.close
                 ? fmtSealAmount(stock.sealed_vol * 100 * stock.close)
                 : fmtSealVol(stock.sealed_vol)}
             </span>
           ) : stock.sealed_status === 'pending' ? (
-            <span className="text-[9px] text-yellow-500/60 leading-none">待确认</span>
+            <span className="text-[9px] text-amber-700/80 dark:text-yellow-500/70 leading-none">待确认</span>
           ) : (
             /* 未修正: 显示连板数 */
-            <span className="text-[10px] font-semibold tabular-nums text-accent/80">
+            <span className="text-[10px] font-semibold tabular-nums text-accent dark:text-accent/80">
               {consecNum}
             </span>
           )}
@@ -431,9 +429,9 @@ const TIER_COLORS: Record<number, string> = {
 }
 
 const TIER_TEXT: Record<number, string> = {
-  1: 'text-muted',
-  2: 'text-yellow-500',
-  3: 'text-orange-400',
+  1: 'text-secondary dark:text-muted',
+  2: 'text-yellow-600 dark:text-yellow-500',
+  3: 'text-orange-600 dark:text-orange-400',
 }
 
 function tierBorder(n: number): string {
@@ -447,7 +445,8 @@ function tierTextCls(n: number): string {
   for (let i = Math.min(n, 20); i >= 1; i--) {
     if (TIER_TEXT[i]) return TIER_TEXT[i]
   }
-  return 'text-muted'
+  // 4 板及以上
+  return n >= 4 ? 'text-orange-700 dark:text-orange-400' : 'text-secondary dark:text-muted'
 }
 
 function tierLabel(n: number, direction: Direction): string {
@@ -500,7 +499,7 @@ function OverviewBar({ tiers, dateValue, onDateChange, filterKeys, bf, direction
           )
         })}
         {showBroken && totalBroken > 0 && (
-          <span className="text-purple-400 font-medium">{brokenLabel} {totalBroken}</span>
+          <span className="text-purple-700 dark:text-purple-400 font-medium">{brokenLabel} {totalBroken}</span>
         )}
         {showFailed && totalFailed > 0 && (
           <span className="text-yellow-500 font-medium">{failedLabel} {totalFailed}</span>
@@ -520,13 +519,14 @@ function TagStats({ title, tiers, extFields, fieldKey, color, selectedTag, onSel
   tiers: LimitLadderTier[]
   extFields: ExtFieldConfig
   fieldKey: 'concept' | 'industry'
-  color: { text: [number, number, number]; bg: [number, number, number] }
+  color: { text: [number, number, number]; bg: [number, number, number]; textLight?: [number, number, number] }
   selectedTag: { fieldKey: 'concept' | 'industry'; tag: string } | null
   onSelect: (sel: { fieldKey: 'concept' | 'industry'; tag: string } | null) => void
   direction: Direction
 }) {
   const [expanded, setExpanded] = useState(false)
   const mainStatus = direction === 'down' ? 'limit_down' : 'limit_up'
+  const { isDark } = useTheme()
 
   const stats = useMemo(() => {
     const item = extFields[fieldKey]
@@ -575,17 +575,20 @@ function TagStats({ title, tiers, extFields, fieldKey, color, selectedTag, onSel
           {stats.map(([name, count]) => {
             const intensity = Math.max(0.15, count / maxCount)
             const isSelected = selectedTag?.fieldKey === fieldKey && selectedTag?.tag === name
+            const [tr, tg, tb] = (!isDark && color.textLight) ? color.textLight : [r, g, b]
+            const textAlpha = isDark ? (0.6 + intensity * 0.4) : (0.78 + intensity * 0.22)
+            const bgAlpha = isDark ? (intensity * 0.2) : (0.1 + intensity * 0.16)
             return (
               <button
                 key={name}
                 onClick={() => onSelect(isSelected ? null : { fieldKey, tag: name })}
                 className="text-[11px] px-2 py-1 rounded-sm whitespace-nowrap cursor-pointer hover:brightness-110 transition-all"
                 style={{
-                  color: isSelected ? '#fff' : `rgba(${r},${g},${b},${0.6 + intensity * 0.4})`,
+                  color: isSelected ? '#fff' : `rgba(${tr},${tg},${tb},${textAlpha})`,
                   backgroundColor: isSelected
                     ? `rgba(${br},${bg},${bb},0.7)`
-                    : `rgba(${br},${bg},${bb},${intensity * 0.2})`,
-                  outline: isSelected ? `1px solid rgba(${r},${g},${b},0.8)` : 'none',
+                    : `rgba(${br},${bg},${bb},${bgAlpha})`,
+                  outline: isSelected ? `1px solid rgba(${tr},${tg},${tb},0.8)` : 'none',
                   outlineOffset: 1,
                 }}
               >
@@ -676,7 +679,7 @@ function TierGroup({ tier, defaultOpen, extFields, filterKeys, bf, onStockClick,
         <span className={`text-sm font-bold tabular-nums ${tierTextCls(tier.boards)}`}>{tierLabel(tier.boards, direction)}<span className="text-muted/40 mx-1">·</span>{luCount}</span>
         {(showBroken && brCount > 0) || (showFailed && faCount > 0) ? (
           <span className="text-[11px] text-muted/60">
-            {showBroken && brCount > 0 && <span className="text-purple-400">{brCount}{brokenBadge}</span>}
+            {showBroken && brCount > 0 && <span className="text-purple-700 dark:text-purple-400">{brCount}{brokenBadge}</span>}
             {showBroken && brCount > 0 && showFailed && faCount > 0 && <span className="text-muted/40"> · </span>}
             {showFailed && faCount > 0 && <span className="text-muted/80">{faCount}{failedBadge}</span>}
           </span>
@@ -701,20 +704,19 @@ function TierGroup({ tier, defaultOpen, extFields, filterKeys, bf, onStockClick,
               <div className="px-3 pt-1 pb-2 space-y-1">
                 {groupConceptStats.length > 0 && (
                   <div className="flex flex-wrap gap-1 items-center">
-                    <span className="text-[9px] tracking-wider text-yellow-400/70 mr-0.5">概念</span>
+                    <span className="text-[9px] tracking-wider text-amber-700/80 dark:text-yellow-400/70 mr-0.5">概念</span>
                     {groupConceptStats.slice(0, 20).map(([name, count]) => {
                       const isSelected = selectedTag?.fieldKey === 'concept' && selectedTag?.tag === name
                       return (
                         <button
                           key={name}
                           onClick={() => onSelectTag(isSelected ? null : { fieldKey: 'concept', tag: name })}
-                          className="text-[10px] px-1.5 py-0.5 rounded-sm whitespace-nowrap cursor-pointer hover:brightness-110 transition-all"
-                          style={{
-                            color: isSelected ? '#fff' : 'rgba(250,204,21,0.8)',
-                            backgroundColor: isSelected ? 'rgba(234,179,8,0.7)' : 'rgba(234,179,8,0.12)',
-                            outline: isSelected ? '1px solid rgba(250,204,21,0.8)' : 'none',
-                            outlineOffset: 1,
-                          }}
+                          className={cn(
+                            'text-[10px] px-1.5 py-0.5 rounded-sm whitespace-nowrap cursor-pointer transition-all',
+                            isSelected
+                              ? 'bg-amber-500 text-white outline outline-1 outline-amber-500 outline-offset-1'
+                              : 'bg-amber-500/12 text-amber-800 dark:text-amber-200/80 dark:bg-amber-400/12 hover:bg-amber-500/18',
+                          )}
                         >
                           {name}<span className="ml-0.5" style={{ opacity: isSelected ? 0.8 : 0.6 }}>{count}</span>
                         </button>
@@ -724,20 +726,19 @@ function TierGroup({ tier, defaultOpen, extFields, filterKeys, bf, onStockClick,
                 )}
                 {groupIndustryStats.length > 0 && (
                   <div className="flex flex-wrap gap-1 items-center">
-                    <span className="text-[9px] tracking-wider text-blue-400/70 mr-0.5">行业</span>
+                    <span className="text-[9px] tracking-wider text-blue-600/80 dark:text-blue-400/70 mr-0.5">行业</span>
                     {groupIndustryStats.slice(0, 20).map(([name, count]) => {
                       const isSelected = selectedTag?.fieldKey === 'industry' && selectedTag?.tag === name
                       return (
                         <button
                           key={name}
                           onClick={() => onSelectTag(isSelected ? null : { fieldKey: 'industry', tag: name })}
-                          className="text-[10px] px-1.5 py-0.5 rounded-sm whitespace-nowrap cursor-pointer hover:brightness-110 transition-all"
-                          style={{
-                            color: isSelected ? '#fff' : 'rgba(96,165,250,0.8)',
-                            backgroundColor: isSelected ? 'rgba(59,130,246,0.7)' : 'rgba(59,130,246,0.12)',
-                            outline: isSelected ? '1px solid rgba(96,165,250,0.8)' : 'none',
-                            outlineOffset: 1,
-                          }}
+                          className={cn(
+                            'text-[10px] px-1.5 py-0.5 rounded-sm whitespace-nowrap cursor-pointer transition-all',
+                            isSelected
+                              ? 'bg-blue-500 text-white outline outline-1 outline-blue-500 outline-offset-1'
+                              : 'bg-blue-500/12 text-blue-800 dark:text-blue-300/90 dark:bg-blue-400/12 hover:bg-blue-500/18',
+                          )}
                         >
                           {name}<span className="ml-0.5" style={{ opacity: isSelected ? 0.8 : 0.6 }}>{count}</span>
                         </button>
@@ -997,7 +998,7 @@ function BrokenFailedSection({ bf, onChange }: {
       <div className="h-px bg-border" />
       {/* 断板 */}
       <div className="space-y-2">
-        <span className="text-[10px] font-semibold text-yellow-500 uppercase tracking-wider">断板</span>
+        <span className="text-[10px] font-semibold text-yellow-700 dark:text-yellow-500 uppercase tracking-wider">断板</span>
         <Toggle label="显示断板股票" checked={bf.failedShow ?? true} onChange={v => update({ failedShow: v })} />
         <Toggle label="计入断板数量" checked={bf.failedCount ?? true} onChange={v => update({ failedCount: v })} />
         <NumInput label="最低板数（含）" value={bf.failedMinBoards ?? 0} onChange={v => update({ failedMinBoards: v ?? 0 })} min={0} max={50} placeholder="0=不限" />
@@ -1051,7 +1052,7 @@ function ExtConfigDialog({ fields, onSave, onClose }: {
         {/* 三列平铺 */}
         <div className="flex gap-0 border-b border-border px-2 overflow-hidden">
           <div className="flex-1 min-w-0 p-3 border-r border-border" style={{ minWidth: 180 }}>
-            <span className="text-[10px] font-semibold text-sky-400 uppercase tracking-wider mb-2 block">概念</span>
+            <span className="text-[10px] font-semibold text-sky-700 dark:text-sky-400 uppercase tracking-wider mb-2 block">概念</span>
             <ExtFieldSection item={draft.concept} onChange={v => setDraft(d => ({ ...d, concept: v }))} options={options} />
             <div className="h-px bg-border my-3" />
             <Toggle label="显示概念分布统计" checked={draft.showConceptStats ?? true} onChange={v => setDraft(d => ({ ...d, showConceptStats: v }))} />
@@ -1276,7 +1277,7 @@ export function LimitUpLadder() {
               onClick={toggleConcept}
               className={`px-2 py-1 text-xs transition-colors ${
                 showConcept
-                  ? 'bg-yellow-500/15 text-yellow-400 font-medium'
+                  ? 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400 font-medium'
                   : 'text-secondary hover:text-foreground hover:bg-surface'
               }`}
             >
@@ -1339,7 +1340,7 @@ export function LimitUpLadder() {
           tiers={tiers}
           extFields={resolveExtFields(extFields, showConcept, showIndustry)}
           fieldKey="concept"
-          color={{ text: [250, 204, 21], bg: [234, 179, 8] }}
+          color={{ text: [250, 204, 21], textLight: [161, 98, 7], bg: [234, 179, 8] }}
           selectedTag={selectedTag}
           onSelect={handleSelectTag}
           direction={direction}
@@ -1352,7 +1353,7 @@ export function LimitUpLadder() {
           tiers={tiers}
           extFields={resolveExtFields(extFields, showConcept, showIndustry)}
           fieldKey="industry"
-          color={{ text: [96, 165, 250], bg: [59, 130, 246] }}
+          color={{ text: [96, 165, 250], textLight: [30, 64, 175], bg: [59, 130, 246] }}
           selectedTag={selectedTag}
           onSelect={handleSelectTag}
           direction={direction}

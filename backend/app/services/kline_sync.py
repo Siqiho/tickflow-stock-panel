@@ -10,11 +10,12 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import polars as pl
 
 from app.indicators.pipeline import filter_halt_days
+from app.services.atomic_io import atomic_write_parquet
 from app.tickflow.capabilities import Cap, CapabilitySet
 from app.tickflow.client import get_client
 from app.tickflow.repository import KlineRepository
@@ -197,7 +198,6 @@ def sync_daily_by_quotes(repo: KlineRepository) -> int:
 
     records = []
     for q in resp:
-        ext = q.get("ext") or {}
         records.append({
             "symbol": q.get("symbol"),
             "open": q.get("open"),
@@ -221,6 +221,149 @@ def sync_daily_by_quotes(repo: KlineRepository) -> int:
     repo.flush_live_daily(daily_df)
     logger.info("sync_daily_by_quotes: %d symbols flushed for %s", daily_df.height, today)
     return daily_df.height
+
+
+def _public_quote_records_to_daily(records: list[dict], trade_date: date) -> pl.DataFrame:
+    """把腾讯/新浪公开行情快照规范成 canonical 日K行。"""
+    if not records:
+        return pl.DataFrame()
+
+    rows: list[dict] = []
+    for q in records:
+        symbol = str(q.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        close = q.get("last")
+        if close is None:
+            close = q.get("last_price")
+        if close is None:
+            close = q.get("close")
+        open_ = q.get("open")
+        high = q.get("high")
+        low = q.get("low")
+        # 先按原始 open/high 识别停牌，再做 0/null 填充，避免把停牌日填成假蜡烛。
+        if open_ in (0, 0.0) and high in (0, 0.0):
+            continue
+        # 非交易时段偶发 open/high/low 为 0/null，用 close 兜底，避免脏蜡烛。
+        if open_ in (None, 0) and close not in (None, 0):
+            open_ = close
+        if high in (None, 0) and close not in (None, 0):
+            high = close
+        if low in (None, 0) and close not in (None, 0):
+            low = close
+        rows.append({
+            "symbol": symbol,
+            "date": trade_date,
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": q.get("volume"),
+            "amount": q.get("amount"),
+        })
+
+    if not rows:
+        return pl.DataFrame()
+
+    df = pl.DataFrame(rows)
+    for col in ("open", "high", "low", "close", "volume", "amount"):
+        if col in df.columns:
+            df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
+    if "date" in df.columns and df.schema["date"] != pl.Date:
+        df = df.with_columns(pl.col("date").cast(pl.Date, strict=False))
+
+    keep = [c for c in CANONICAL_DAILY_COLS if c in df.columns]
+    df = df.select(keep)
+    df = filter_halt_days(df)
+    if "close" in df.columns:
+        df = df.filter(pl.col("close").is_not_null() & (pl.col("close") > 0))
+    if "symbol" in df.columns:
+        df = df.unique(subset=["symbol"], keep="last").sort("symbol")
+    return df
+
+
+def sync_daily_by_public_quotes(
+    symbols: list[str],
+    repo: KlineRepository,
+    *,
+    trade_date: date | None = None,
+    batch_size: int = 80,
+    pause_s: float = 0.05,
+) -> dict:
+    """None/Free 兜底: 用腾讯/新浪公开行情合成当日日K并覆写 kline_daily 分区。
+
+    只补“今天”这一天，不替代 TickFlow free 历史日K。
+    返回 {rows, date, source}；失败时 rows=0。
+    """
+    from app.services.atomic_io import write_lineage_record
+    from app.services.free_sources.quote_fallback import fetch_public_market_quotes
+
+    today = trade_date or date.today()
+    if not symbols:
+        return {"rows": 0, "date": today.isoformat(), "source": "public_quote_eod"}
+
+    try:
+        records = fetch_public_market_quotes(
+            list(symbols),
+            batch_size=batch_size,
+            pause_s=pause_s,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("sync_daily_by_public_quotes fetch failed: %s", e)
+        return {"rows": 0, "date": today.isoformat(), "source": "public_quote_eod", "error": str(e)}
+
+    daily_df = _public_quote_records_to_daily(records, today)
+    if daily_df.is_empty():
+        logger.warning("sync_daily_by_public_quotes: empty after normalize (%d raw)", len(records or []))
+        return {"rows": 0, "date": today.isoformat(), "source": "public_quote_eod"}
+
+    repo.flush_live_daily(daily_df)
+
+    # flush_live_daily 本身不写 lineage；这里补一条，便于区分 free 历史 vs public 合成。
+    try:
+        ds = today.isoformat()
+        out = repo.store.data_dir / "kline_daily" / f"date={ds}" / "part.parquet"
+        scope = None
+        try:
+            from app.services import preferences
+            scope = preferences.get_pipeline_universe_scope()
+        except Exception:  # noqa: BLE001
+            scope = None
+        write_lineage_record(
+            repo.store.data_dir,
+            "kline_daily",
+            {
+                "date": ds,
+                "source": "public_quote_eod",
+                "unit_version": "canonical_daily_v1",
+                "row_count": daily_df.height,
+                "scope": scope,
+                "quality": "pending_gate",
+                "target_artifact": str(out.relative_to(repo.store.data_dir)) if out.exists() else None,
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("public eod lineage write skipped: %s", e)
+
+    # 刷新 DuckDB 日K视图，确保后续 latest_daily_date / enriched 能看到今天。
+    try:
+        d = repo.store.data_dir.as_posix()
+        repo.db.execute(
+            f"""CREATE OR REPLACE VIEW kline_daily AS
+                SELECT * FROM read_parquet('{d}/kline_daily/**/*.parquet', union_by_name=true)"""
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("refresh kline_daily view after public eod failed: %s", e)
+
+    logger.info(
+        "sync_daily_by_public_quotes: %d symbols flushed for %s (raw=%d)",
+        daily_df.height, today, len(records or []),
+    )
+    return {
+        "rows": int(daily_df.height),
+        "date": today.isoformat(),
+        "source": "public_quote_eod",
+    }
 
 
 def _normalize_adj_factor(raw) -> pl.DataFrame:
@@ -270,12 +413,47 @@ def sync_adj_factor(symbols: list[str], repo: KlineRepository,
                     end_time: datetime | None = None,
                     on_chunk_done: Callable[[int, int], None] | None = None,
                     asset_type: str = "stock") -> tuple[int, list[str]]:
-    """同步除权因子(Starter+)。SDK 接口:`tf.klines.ex_factors(symbols=...)`。
+    """同步除权因子。
 
-    支持增量: 传 start_time/end_time 只拉取该时间范围内的新除权事件。
+    - 默认 TickFlow Starter+：`tf.klines.ex_factors`（需 Cap.ADJ_FACTOR）
+    - 当 preferences.adj_factor_provider ∈ {public,sina,sina_qfq,free} 时：
+      走 free_sources.adj_factor_public（新浪 qfq.js），**不依赖** Cap.ADJ_FACTOR
+
+    支持增量: 传 start_time/end_time 只保留该时间范围内的新除权事件。
     返回 (写入行数, 受影响的 symbol 列表) — 供 enriched 局部重算使用。
     """
-    if not capset.has(Cap.ADJ_FACTOR) or not symbols:
+    if not symbols:
+        return 0, []
+
+    # Public free path (no TickFlow subscription)
+    try:
+        from app.services import preferences as _prefs
+        use_public = _prefs.is_public_adj_factor_provider()
+    except Exception:  # noqa: BLE001
+        use_public = False
+
+    if use_public:
+        from app.data_providers.registry import get_provider
+
+        def _prog(cur: int, tot: int, _sym: str = "") -> None:
+            if on_chunk_done:
+                on_chunk_done(cur, tot)
+
+        result = get_provider("public").sync_adj_factors(
+            symbols,
+            repo.store.data_dir,
+            asset_type=asset_type,
+            start=start_time,
+            end=end_time,
+            on_progress=_prog,
+            workers=4,
+            flush_every=25,
+            skip_checked_within_hours=18.0,
+            pause_s=0.0,
+        )
+        return int(result.get("rows_delta") or 0), list(result.get("symbols_affected") or [])
+
+    if not capset.has(Cap.ADJ_FACTOR):
         return 0, []
 
     tf = get_client()
@@ -327,13 +505,13 @@ def sync_adj_factor(symbols: list[str], repo: KlineRepository,
         merged = pl.concat([existing, new_data]).unique(
             subset=["symbol", "trade_date"], keep="last",
         ).sort(["symbol", "trade_date"])
-        merged.write_parquet(out)
+        atomic_write_parquet(merged, out)
         added = merged.height - before
         logger.info("adj_factor merged: %d total (+%d new), %d/%d symbols",
                      merged.height, added, new_data.height, len(symbols))
         return added, affected
     else:
-        new_data.sort(["symbol", "trade_date"]).write_parquet(out)
+        atomic_write_parquet(new_data.sort(["symbol", "trade_date"]), out)
         logger.info("adj_factor synced: %d rows (%d symbols)", new_data.height, len(symbols))
         return new_data.height, affected
 
@@ -462,12 +640,16 @@ def sync_minute_batch(
 
 
 def fetch_minute_single(symbol: str, trade_date: date) -> pl.DataFrame:
-    """从 TickFlow 实时拉取单股单日分钟 K（不写入本地）。"""
+    """拉取单股单日分钟 K（不写入本地）。
+
+    优先 TickFlow；失败或无权限时回退公开分时（仅适合当日/最近交易日视图）。
+    """
     from datetime import datetime
+
     start_time = datetime(trade_date.year, trade_date.month, trade_date.day, 9, 25, 0)
     end_time = datetime(trade_date.year, trade_date.month, trade_date.day, 15, 5, 0)
-    tf = get_client()
     try:
+        tf = get_client()
         raw = tf.klines.batch(
             [symbol], period="1m",
             start_time=_datetime_to_ms(start_time),
@@ -475,16 +657,29 @@ def fetch_minute_single(symbol: str, trade_date: date) -> pl.DataFrame:
             count=10000,
             as_dataframe=True, show_progress=False,
         )
-    except Exception as e:
-        logger.warning("fetch_minute_single(%s, %s) failed: %s", symbol, trade_date, e)
-        return pl.DataFrame()
+        if isinstance(raw, dict):
+            sub = raw.get(symbol)
+            if sub is not None and len(sub) > 0:
+                return _normalize_minute(sub)
+        elif raw is not None and len(raw) > 0:
+            return _normalize_minute(raw)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("fetch_minute_single(%s, %s) TickFlow failed: %s", symbol, trade_date, e)
 
-    if isinstance(raw, dict):
-        sub = raw.get(symbol)
-        return _normalize_minute(sub) if sub is not None and len(sub) > 0 else pl.DataFrame()
-    if raw is not None and len(raw) > 0:
-        return _normalize_minute(raw)
-    return pl.DataFrame()
+    # Public fallback (Tencent cumulative minute -> OHLC-like rows)
+    try:
+        from app.services.free_sources.intraday_public import public_intraday_to_minute_rows
+        rows = public_intraday_to_minute_rows(symbol, trade_date=trade_date)
+        if not rows:
+            return pl.DataFrame()
+        df = pl.DataFrame(rows)
+        # datetime may be string; normalize helper expects proper types
+        if "datetime" in df.columns and df["datetime"].dtype == pl.Utf8:
+            df = df.with_columns(pl.col("datetime").str.to_datetime(strict=False))
+        return _normalize_minute(df, default_symbol=symbol)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("fetch_minute_single(%s, %s) public fallback failed: %s", symbol, trade_date, e)
+        return pl.DataFrame()
 
 
 def fetch_adj_factor_single(symbol: str) -> pl.DataFrame:

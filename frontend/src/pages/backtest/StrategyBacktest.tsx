@@ -1597,7 +1597,7 @@ export function StrategyBacktest() {
 
             {executionSummary.length > 0 && (
               <div className="rounded-card border border-amber-400/25 bg-amber-400/5 px-3 py-2 text-[11px] leading-5 text-secondary">
-                <span className="font-medium text-amber-300">成交约束：</span>
+                <span className="font-medium text-amber-700 dark:text-amber-300">成交约束：</span>
                 {executionSummary.map((item, index) => (
                   <span key={item.key} className="ml-2">
                     {index > 0 ? '· ' : ''}{item.label} <span className="font-mono text-foreground">{item.value}</span> 次

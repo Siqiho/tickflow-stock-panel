@@ -67,7 +67,7 @@ async def run_now(request: Request) -> dict:
                 _long_task_executor,
                 lambda: daily_pipeline.run_now(repo, capset, on_progress=progress),
             )
-            job_store.succeed(job_id, result)
+            job_store.complete(job_id, result)
             invalidate_storage_cache()
             repo.refresh_cache()  # 刷新 Polars 缓存
         except Exception as e:  # noqa: BLE001

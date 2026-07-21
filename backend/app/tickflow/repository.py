@@ -22,6 +22,7 @@ import duckdb
 import polars as pl
 
 from app.config import settings
+from app.services.atomic_io import atomic_write_parquet, write_lineage_record
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,9 @@ class DataStore:
             "ai_cache",
             "user_data",
             "depth5",
+            "sealed_l1",
+            "quote_snapshot",
+            "lineage",
         ):
             (self.data_dir / sub).mkdir(parents=True, exist_ok=True)
 
@@ -173,6 +177,8 @@ class DataStore:
                 SELECT * FROM read_parquet('{d}/financials/balance_sheet/*.parquet', union_by_name=true)""",
             f"""CREATE OR REPLACE VIEW financials_cash_flow AS
                 SELECT * FROM read_parquet('{d}/financials/cash_flow/*.parquet', union_by_name=true)""",
+            f"""CREATE OR REPLACE VIEW financials_shares AS
+                SELECT * FROM read_parquet('{d}/financials/shares/*.parquet', union_by_name=true)""",
             # 五档盘口 sealed 真假涨停(独立旁路存储,不进 enriched)
             f"""CREATE OR REPLACE VIEW depth5 AS
                 SELECT * FROM read_parquet('{d}/depth5/**/*.parquet', union_by_name=true)""",
@@ -1302,13 +1308,87 @@ class KlineRepository:
         elif asset_type == "etf":
             self.append_etf_enriched(df)
 
+    def write_quote_snapshot_asset(
+        self,
+        asset_type: str,
+        df: pl.DataFrame,
+        metadata: dict | None = None,
+    ) -> None:
+        """Persist the latest intraday quote snapshot outside canonical daily tables."""
+        if df.is_empty() or "date" not in df.columns:
+            return
+        if asset_type not in {"stock", "index", "etf"}:
+            raise ValueError(f"unsupported quote snapshot asset type: {asset_type}")
+
+        snapshot = df
+        for key, value in (metadata or {}).items():
+            if key not in snapshot.columns:
+                snapshot = snapshot.with_columns(pl.lit(value).alias(key))
+
+        dt = snapshot["date"][0]
+        ds = dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
+        out = (
+            self.store.data_dir
+            / "quote_snapshot"
+            / f"asset_type={asset_type}"
+            / f"date={ds}"
+            / "part.parquet"
+        )
+        sort_cols = [c for c in ("symbol", "date") if c in snapshot.columns]
+        if sort_cols:
+            snapshot = snapshot.sort(sort_cols)
+        atomic_write_parquet(snapshot, out)
+        write_lineage_record(
+            self.store.data_dir,
+            "quote_snapshot",
+            {
+                "date": ds,
+                "source": "public_quote",
+                "unit_version": "cn_quote_v1",
+                "row_count": snapshot.height,
+                "scope": (metadata or {}).get("scope"),
+                "quality": (metadata or {}).get("quality_status", "intraday_partial"),
+                "target_artifact": str(out.relative_to(self.store.data_dir)),
+                "asset_type": asset_type,
+            },
+        )
+
+    def publish_live_enriched_asset(
+        self,
+        asset_type: str,
+        df: pl.DataFrame,
+        *,
+        merge: bool = False,
+    ) -> None:
+        """Publish intraday enriched data to memory without writing canonical Parquet."""
+        if df.is_empty() or "date" not in df.columns:
+            return
+        dt = df["date"][0]
+        live = df
+        if asset_type == "stock":
+            existing = self._enriched_cache if merge and self._enriched_cache_date == dt else None
+            if existing is not None and not existing.is_empty():
+                live = pl.concat([existing, df], how="diagonal_relaxed").unique(
+                    subset=["symbol", "date"], keep="last"
+                )
+            self._enriched_cache = live.sort("symbol")
+            self._enriched_cache_date = dt
+        elif asset_type == "etf":
+            existing = self._etf_enriched_cache if merge and self._etf_enriched_cache_date == dt else None
+            if existing is not None and not existing.is_empty():
+                live = pl.concat([existing, df], how="diagonal_relaxed").unique(
+                    subset=["symbol", "date"], keep="last"
+                )
+            self._etf_enriched_cache = live.sort("symbol")
+            self._etf_enriched_cache_date = dt
+
     def save_index_instruments(self, df: pl.DataFrame) -> None:
         """保存指数标的维表。"""
         if df.is_empty() or "symbol" not in df.columns:
             return
         out = self.store.data_dir / "instruments_index" / "instruments_index.parquet"
         out.parent.mkdir(parents=True, exist_ok=True)
-        df.unique(subset=["symbol"], keep="last").sort("symbol").write_parquet(out)
+        atomic_write_parquet(df.unique(subset=["symbol"], keep="last").sort("symbol"), out)
         self._index_instruments_cache = None
         self._etf_instruments_cache = None
         self._refresh_index_instruments()
@@ -1321,7 +1401,7 @@ class KlineRepository:
             df = df.with_columns(pl.lit("etf").alias("asset_type"))
         out = self.store.data_dir / "instruments_etf" / "instruments_etf.parquet"
         out.parent.mkdir(parents=True, exist_ok=True)
-        df.unique(subset=["symbol"], keep="last").sort("symbol").write_parquet(out)
+        atomic_write_parquet(df.unique(subset=["symbol"], keep="last").sort("symbol"), out)
         self._etf_instruments_cache = None
         self._refresh_etf_instruments()
 
@@ -1365,7 +1445,28 @@ class KlineRepository:
                     subset=["symbol", "date"], keep="last"
                 )
             date_df = date_df.sort(["symbol", "date"])
-            date_df.write_parquet(out)
+            atomic_write_parquet(date_df, out)
+            try:
+                from app.services import preferences
+
+                source = preferences.get_daily_data_provider()
+                scope = preferences.get_pipeline_universe_scope()
+            except Exception:  # noqa: BLE001
+                source = "unknown"
+                scope = None
+            write_lineage_record(
+                self.store.data_dir,
+                table,
+                {
+                    "date": ds,
+                    "source": source,
+                    "unit_version": "canonical_daily_v1",
+                    "row_count": date_df.height,
+                    "scope": scope,
+                    "quality": "pending_gate",
+                    "target_artifact": str(out.relative_to(self.store.data_dir)),
+                },
+            )
 
     def merge_live_daily_asset(self, asset_type: str, df: pl.DataFrame) -> None:
         """按 symbol 合并当天指定资产日K分区。用于少量自选实时，不覆盖全市场。"""
@@ -1389,7 +1490,7 @@ class KlineRepository:
             date_df = pl.concat([existing, date_df], how="diagonal_relaxed").unique(
                 subset=["symbol", "date"], keep="last"
             )
-        date_df.sort(["symbol", "date"]).write_parquet(out)
+        atomic_write_parquet(date_df.sort(["symbol", "date"]), out)
 
     def merge_live_enriched_asset(self, asset_type: str, df: pl.DataFrame) -> None:
         """按 symbol 合并当天 enriched 分区和内存缓存。用于少量自选实时。"""
@@ -1433,7 +1534,7 @@ class KlineRepository:
             df_storage = pl.concat([existing, df_storage], how="diagonal_relaxed").unique(
                 subset=["symbol", "date"], keep="last"
             )
-        df_storage.sort(["symbol"]).write_parquet(out)
+        atomic_write_parquet(df_storage.sort(["symbol"]), out)
 
     def flush_live_daily(self, df: pl.DataFrame) -> None:
         """覆写当天 kline_daily 分区 (实时行情落盘, 非merge)。"""
@@ -1457,7 +1558,7 @@ class KlineRepository:
         ds = dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
         out = base / f"date={ds}" / "part.parquet"
         out.parent.mkdir(parents=True, exist_ok=True)
-        df.sort(["symbol", "date"]).write_parquet(out)
+        atomic_write_parquet(df.sort(["symbol", "date"]), out)
 
     def flush_live_enriched(self, df: pl.DataFrame) -> None:
         """覆写当天 kline_daily_enriched 分区 (实时 enriched 落盘, 非merge)。
@@ -1491,4 +1592,4 @@ class KlineRepository:
         ds = dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
         out = base / f"date={ds}" / "part.parquet"
         out.parent.mkdir(parents=True, exist_ok=True)
-        df_storage.write_parquet(out)
+        atomic_write_parquet(df_storage, out)

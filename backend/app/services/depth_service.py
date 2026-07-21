@@ -29,6 +29,8 @@ from pathlib import Path
 
 import polars as pl
 
+from app.services.atomic_io import atomic_write_parquet, write_lineage_record
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,6 +38,11 @@ logger = logging.getLogger(__name__)
 TIER_INTERVAL_RANGE: dict[str, tuple[float, float]] = {
     "pro": (10.0, 120.0),
     "expert": (3.0, 300.0),
+    # public L1 sealed fallback (Tencent quotes) — gentler polling
+    "public": (15.0, 180.0),
+    "none": (15.0, 180.0),
+    "free": (15.0, 180.0),
+    "starter": (15.0, 180.0),
 }
 # 兜底: 其他有 DEPTH5_BATCH 的套餐按 pro 范围
 DEFAULT_RANGE = (10.0, 120.0)
@@ -87,7 +94,7 @@ class DepthService:
     def boot_check(self) -> None:
         """启动补跑: 当天 depth5 文件不存在则 finalize 一次; 已存在则恢复内存缓存。"""
         if not self._has_capability():
-            logger.info("depth sealed: 无 DEPTH5_BATCH 能力, 跳过启动补跑")
+            logger.info("depth sealed: 无可用 depth 能力, 跳过启动补跑")
             return
         today = date.today()
         if self._persisted_for_date(today):
@@ -104,8 +111,8 @@ class DepthService:
         """从 parquet 恢复内存缓存(服务重启后)。"""
         if not self._repo:
             return
-        out = self._repo.store.data_dir / "depth5" / f"date={d.isoformat()}" / "part.parquet"
-        if not out.exists():
+        out = self._sealed_artifact_for_read(d)
+        if out is None:
             return
         try:
             df = pl.read_parquet(out)
@@ -167,7 +174,7 @@ class DepthService:
         返回 {"ok": bool, "count": int, "msg": str}
         """
         if not self._has_capability():
-            return {"ok": False, "count": 0, "msg": "无五档盘口能力(需 Pro+)"}
+            return {"ok": False, "count": 0, "msg": "无五档盘口能力"}
         try:
             self._fetch_and_seal(persist=True)  # 落盘, 刷新页面不丢
             with self._lock:
@@ -262,15 +269,29 @@ class DepthService:
             self._persist(enriched_date)
 
     def _call_depth_batch(self, symbols: list[str]) -> dict:
-        """调 tf.depth.batch, 按 capset 的 batch 切片 + 节流。返回 {symbol: MarketDepth}。"""
-        from app.tickflow.client import get_client
-        tf = get_client()
+        """Fetch depth for sealed judgment.
 
+        Prefer TickFlow depth.batch when available; otherwise use public L1
+        bid1/ask1 volumes (enough for true/false limit-up sealed).
+        Returns {symbol: {"ask_volumes":[...], "bid_volumes":[...], ...}}.
+        """
+        if self._has_tickflow_depth():
+            data = self._call_tickflow_depth_batch(symbols)
+            if data:
+                return data
+            logger.warning("TickFlow depth empty/failed, falling back to public L1")
+        return self._call_public_depth_l1(symbols)
+
+    def _call_tickflow_depth_batch(self, symbols: list[str]) -> dict:
+        """调 tf.depth.batch, 按 capset 的 batch 切片 + 节流。"""
+        from app.tickflow.client import get_client
+        from app.tickflow.capabilities import Cap
+
+        tf = get_client()
         capset = self._get_capset()
-        lim = capset.limits(__import__("app.tickflow.capabilities", fromlist=["Cap"]).Cap.DEPTH5_BATCH)
+        lim = capset.limits(Cap.DEPTH5_BATCH) or capset.limits(Cap.DEPTH5)
         batch_size = (lim.batch if lim and lim.batch else 100)
         rpm = (lim.rpm if lim and lim.rpm else 30)
-        # 批间隔 = 60/rpm(匀速)
         inter_batch = 60.0 / rpm if rpm > 0 else 2.0
 
         result: dict = {}
@@ -279,13 +300,51 @@ class DepthService:
             if i > 0:
                 time.sleep(inter_batch)
             try:
-                # SDK 的 batch 内部已按 batch_size 切, 这里再切一层防单请求过大
                 data = tf.depth.batch(chunk)
                 if isinstance(data, dict):
-                    result.update(data)
+                    # Normalize object-like SDK rows into plain dicts with volumes lists.
+                    for sym, row in data.items():
+                        if isinstance(row, dict):
+                            result[sym] = row
+                        else:
+                            ask_vols = getattr(row, "ask_volumes", None) or getattr(row, "ask_vols", None) or []
+                            bid_vols = getattr(row, "bid_volumes", None) or getattr(row, "bid_vols", None) or []
+                            result[sym] = {
+                                "ask_volumes": list(ask_vols) if ask_vols is not None else [],
+                                "bid_volumes": list(bid_vols) if bid_vols is not None else [],
+                                "timestamp": getattr(row, "timestamp", None),
+                            }
             except Exception as e:  # noqa: BLE001
                 logger.warning("depth.batch 第 %d 批失败(%d 只): %s", i + 1, len(chunk), e)
-                # 单批失败不影响其他批
+        return result
+
+    def _call_public_depth_l1(self, symbols: list[str]) -> dict:
+        """Public L1 depth via Tencent quotes (ask1/bid1 volumes only)."""
+        from app.data_providers.registry import get_provider
+
+        provider = get_provider("public")
+
+        result: dict = {}
+        # Keep batches modest to avoid oversized query strings.
+        batch_size = 50
+        chunks = [symbols[i:i + batch_size] for i in range(0, len(symbols), batch_size)]
+        for i, chunk in enumerate(chunks):
+            if i > 0:
+                time.sleep(0.35)
+            try:
+                data = provider.get_sealed_l1(chunk)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("public depth L1 第 %d 批失败(%d 只): %s", i + 1, len(chunk), e)
+                continue
+            for sym, row in (data or {}).items():
+                ask1 = row.get("ask1_vol")
+                bid1 = row.get("bid1_vol")
+                result[sym] = {
+                    "ask_volumes": [int(ask1)] if ask1 is not None else [],
+                    "bid_volumes": [int(bid1)] if bid1 is not None else [],
+                    "timestamp": None,
+                    "source": row.get("source") or "tencent",
+                }
         return result
 
     def finalize(self) -> None:
@@ -329,9 +388,23 @@ class DepthService:
             "fetched_at": pl.Float64,
         })
         ds = today.isoformat()
-        out = self._repo.store.data_dir / "depth5" / f"date={ds}" / "part.parquet"
+        table = "depth5" if self._has_tickflow_depth() else "sealed_l1"
+        out = self._repo.store.data_dir / table / f"date={ds}" / "part.parquet"
         out.parent.mkdir(parents=True, exist_ok=True)
-        df.write_parquet(out)
+        atomic_write_parquet(df, out)
+        write_lineage_record(
+            self._repo.store.data_dir,
+            table,
+            {
+                "date": ds,
+                "source": self._depth_source(),
+                "unit_version": "sealed_l1_v1" if table == "sealed_l1" else "depth5_v1",
+                "row_count": df.height,
+                "scope": "limit_stocks",
+                "quality": "sealed_snapshot",
+                "target_artifact": str(out.relative_to(self._repo.store.data_dir)),
+            },
+        )
         self._persisted_date = today
         logger.info("depth sealed 落盘: %d 行 → %s", df.height, out)
 
@@ -339,8 +412,17 @@ class DepthService:
         """检查某日 depth5 文件是否已存在。"""
         if not self._repo:
             return False
-        out = self._repo.store.data_dir / "depth5" / f"date={d.isoformat()}" / "part.parquet"
-        return out.exists()
+        return self._sealed_artifact_for_read(d) is not None
+
+    def _sealed_artifact_for_read(self, d: date) -> Path | None:
+        if not self._repo:
+            return None
+        base = self._repo.store.data_dir
+        for table in ("depth5", "sealed_l1"):
+            path = base / table / f"date={d.isoformat()}" / "part.parquet"
+            if path.exists():
+                return path
+        return None
 
     # ================================================================
     # 查询(供 limit_ladder API 用)
@@ -383,13 +465,13 @@ class DepthService:
     def _read_from_parquet(self, target_date: date, is_down: bool) -> dict:
         if not self._repo:
             return {}
-        out = self._repo.store.data_dir / "depth5" / f"date={target_date.isoformat()}" / "part.parquet"
-        if not out.exists():
+        out = self._sealed_artifact_for_read(target_date)
+        if out is None:
             return {}
         try:
             df = pl.read_parquet(out)
         except Exception as e:  # noqa: BLE001
-            logger.warning("depth5 parquet 读取失败: %s", e)
+            logger.warning("sealed parquet 读取失败: %s", e)
             return {}
         sealed_key = "sealed_down" if is_down else "sealed_up"
         # 封单量: 涨停=买一量, 跌停=卖一量
@@ -484,12 +566,22 @@ class DepthService:
         from app.tickflow.policy import tier_label
 
         capset = self._get_capset()
-        lim = capset.limits(__import__("app.tickflow.capabilities", fromlist=["Cap"]).Cap.DEPTH5_BATCH)
-        batch_size = (lim.batch if lim and lim.batch else 100)
-        rpm = (lim.rpm if lim and lim.rpm else 30)
+        from app.tickflow.capabilities import Cap
+        lim = capset.limits(Cap.DEPTH5_BATCH) or capset.limits(Cap.DEPTH5)
+        # Public L1: smaller batches + lower effective rpm
+        if lim and lim.batch:
+            batch_size = lim.batch
+        else:
+            batch_size = 50 if not self._has_tickflow_depth() else 100
+        if lim and lim.rpm:
+            rpm = lim.rpm
+        else:
+            rpm = 20 if not self._has_tickflow_depth() else 30
 
-        # ① 套餐范围 clamp
+        # ① 套餐范围 clamp（无 TickFlow depth 时按 public 档）
         tier = tier_label().split()[0].split("+")[0].strip().lower()
+        if not self._has_tickflow_depth():
+            tier = "public"
         lo, hi = TIER_INTERVAL_RANGE.get(tier, DEFAULT_RANGE)
         raw_user = preferences.get_depth_polling_interval()
         user_interval = max(lo, min(hi, raw_user))
@@ -564,9 +656,16 @@ class DepthService:
     # ================================================================
 
     def _has_capability(self) -> bool:
+        """TickFlow depth5.batch or public L1 sealed fallback."""
+        return True
+
+    def _has_tickflow_depth(self) -> bool:
         capset = self._get_capset()
         from app.tickflow.capabilities import Cap
-        return capset.has(Cap.DEPTH5_BATCH)
+        return capset.has(Cap.DEPTH5_BATCH) or capset.has(Cap.DEPTH5)
+
+    def _depth_source(self) -> str:
+        return "tickflow" if self._has_tickflow_depth() else "local_public"
 
     def _get_capset(self):
         """获取当前 capset(优先 app.state, 回退 detect)。"""

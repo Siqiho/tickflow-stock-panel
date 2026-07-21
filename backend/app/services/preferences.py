@@ -24,7 +24,7 @@ def load() -> dict:
     if p.exists():
         try:
             return json.loads(p.read_text(encoding="utf-8"))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("preferences.json malformed: %s", e)
     return {}
 
@@ -58,7 +58,7 @@ def get_realtime_watchlist_symbols() -> list[str]:
     try:
         from app.services import watchlist
         rows = watchlist.list_symbols()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning("load watchlist for realtime failed: %s", e)
         return []
     out: list[str] = []
@@ -71,7 +71,7 @@ def get_realtime_watchlist_symbols() -> list[str]:
     return out
 
 
-def set_realtime_watchlist_symbols(symbols: list[str]) -> list[str]:  # noqa: ARG001
+def set_realtime_watchlist_symbols(symbols: list[str]) -> list[str]:
     """兼容旧接口: Free 实时标的现在由自选页前 5 个决定。"""
     return get_realtime_watchlist_symbols()
 
@@ -97,6 +97,7 @@ def get_minute_sync_days() -> int:
 # ===== 数据源选择 (默认 TickFlow；第一阶段仅日K切换入口) =====
 
 _ALLOWED_DATA_PROVIDERS = {"tickflow"}
+_ALLOWED_ADJ_FACTOR_PROVIDERS = {"tickflow", "public", "sina", "sina_qfq", "free"}
 
 
 def get_daily_data_provider() -> str:
@@ -105,10 +106,64 @@ def get_daily_data_provider() -> str:
 
 
 def get_adj_factor_provider() -> str:
+    """Adj factor source: tickflow | public/sina/sina_qfq/free | same_as_daily.
+
+    public/sina* bypass TickFlow Cap.ADJ_FACTOR and use free_sources.adj_factor_public.
+    """
     provider = str(load().get("adj_factor_provider", "same_as_daily") or "same_as_daily").lower()
     if provider == "same_as_daily":
+        # If daily is still tickflow-only, keep same_as_daily token for callers.
         return provider
-    return provider if provider in _ALLOWED_DATA_PROVIDERS else "same_as_daily"
+    if provider in _ALLOWED_ADJ_FACTOR_PROVIDERS:
+        return provider
+    return "same_as_daily"
+
+
+def is_public_adj_factor_provider(name: str | None = None) -> bool:
+    p = (name or get_adj_factor_provider()).lower()
+    if p == "same_as_daily":
+        return False
+    return p in {"public", "sina", "sina_qfq", "free"}
+
+
+_ALLOWED_FINANCIAL_PROVIDERS = {"tickflow", "public", "eastmoney", "em", "free"}
+
+
+def get_financial_provider() -> str:
+    """Financial statements source: tickflow | public/eastmoney/em/free.
+
+    public* uses free_sources.financials_public (East Money HSF10) and bypasses Cap.FINANCIAL.
+    """
+    provider = str(load().get("financial_provider", "tickflow") or "tickflow").lower()
+    if provider in _ALLOWED_FINANCIAL_PROVIDERS:
+        return provider
+    return "tickflow"
+
+
+def is_public_financial_provider(name: str | None = None) -> bool:
+    p = (name or get_financial_provider()).lower()
+    return p in {"public", "eastmoney", "em", "free"}
+
+
+_ALLOWED_POOL_PROVIDERS = {"tickflow", "public", "csindex", "sina", "free"}
+
+
+def get_pool_provider() -> str:
+    """Index constituent pool source: tickflow | public/csindex/sina/free.
+
+    public* uses free_sources.pools_public (CSI XLS + Sina fallback).
+    """
+    provider = str(load().get("pool_provider", "public") or "public").lower()
+    if provider in _ALLOWED_POOL_PROVIDERS:
+        return provider
+    return "public"
+
+
+def is_public_pool_provider(name: str | None = None) -> bool:
+    p = (name or get_pool_provider()).lower()
+    return p in {"public", "csindex", "sina", "free"}
+
+
 
 
 def get_minute_data_provider() -> str:
@@ -117,8 +172,18 @@ def get_minute_data_provider() -> str:
 
 
 def get_realtime_data_provider() -> str:
-    # 盘中实时现阶段仅支持 TickFlow。
-    return "tickflow"
+    """Realtime source: tickflow | public (Tencent/Sina full-universe snapshot).
+
+    Default is public when unset so None/Free tiers can drive full-market live
+    without a paid TickFlow key. Explicit "tickflow" keeps the paid path.
+    """
+    raw = str(load().get("realtime_data_provider", "public") or "public").strip().lower()
+    if raw in {"public", "tencent", "sina", "free", "local_public"}:
+        return "public"
+    if raw == "tickflow":
+        return "tickflow"
+    # unknown custom names fall back to public (safe offline path)
+    return "public"
 
 
 # ===== 盘后管道拉取内容开关 (A股 / ETF / 指数 独立控制) =====
@@ -158,6 +223,53 @@ def set_pipeline_pull_types(cfg: dict) -> dict:
     }
     save(updates)
     return get_pipeline_pull_types()
+
+
+
+_VALID_UNIVERSE_SCOPES = ("ALL", "CSI300", "CSI500", "SSE50", "WATCHLIST")
+
+
+def _norm_universe_scope(value: str | None, default: str) -> str:
+    from app.services.universe_scope import normalize_scope
+    return normalize_scope(value, default=default)
+
+
+def get_pipeline_universe_scope() -> str:
+    """盘后日K/管道主标的范围。默认 ALL（全A），保持历史日K覆盖。"""
+    return _norm_universe_scope(load().get("pipeline_universe_scope"), "ALL")
+
+
+def set_pipeline_universe_scope(scope: str) -> str:
+    val = _norm_universe_scope(scope, "ALL")
+    save({"pipeline_universe_scope": val})
+    return val
+
+
+def get_public_data_scope() -> str:
+    """public 复权/财务默认同范围。默认 CSI300；可升 CSI800(300∪500)。"""
+    return _norm_universe_scope(load().get("public_data_scope"), "CSI300")
+
+
+def set_public_data_scope(scope: str) -> str:
+    val = _norm_universe_scope(scope, "CSI300")
+    save({"public_data_scope": val})
+    return val
+
+
+
+def get_financial_max_periods() -> int:
+    """How many report periods to keep/pull for public financials (default 12)."""
+    try:
+        n = int(load().get("financial_max_periods", 12) or 12)
+    except (TypeError, ValueError):
+        n = 12
+    return max(4, min(40, n))
+
+
+def set_financial_max_periods(n: int) -> int:
+    val = max(4, min(40, int(n)))
+    save({"financial_max_periods": val})
+    return val
 
 
 def get_pipeline_index_symbols() -> str:

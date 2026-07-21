@@ -17,11 +17,6 @@ class _Repo:
 
 
 def test_chips_endpoint(tmp_path, monkeypatch):
-    # minimal bars via loader mock
-    bars = [
-        {"open": 10, "high": 11, "low": 9.5, "close": 10.5, "volume": 1000, "amount": 10500, "turnover_rate": 2.0},
-        {"open": 10.5, "high": 12, "low": 10.2, "close": 11.5, "volume": 1200, "amount": 13500, "turnover_rate": 3.0},
-    ]
     monkeypatch.setattr(
         "app.api.free_ext.chips_for_symbol",
         lambda data_dir, symbol, days=120, bins=80: {

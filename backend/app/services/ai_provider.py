@@ -16,6 +16,9 @@ from app.config import settings
 
 OPENAI_COMPAT_PROVIDER = "openai_compat"
 CODEX_CLI_PROVIDER = "codex_cli"
+XAI_PROVIDER = "xai"
+XAI_API_BASE = "https://api.x.ai/v1"
+XAI_DEFAULT_MODEL = "grok-4.5"
 CODEX_DEFAULT_COMMAND = "codex"
 CODEX_SERVICE_TIER_FALLBACK = "fast"
 CODEX_SUPPORTED_SERVICE_TIERS = {"fast", "flex"}
@@ -30,9 +33,13 @@ def current_ai_provider() -> str:
 
 
 def current_ai_model() -> str:
-    if current_ai_provider() == CODEX_CLI_PROVIDER:
+    provider = current_ai_provider()
+    if provider == CODEX_CLI_PROVIDER:
         return normalize_codex_model(str(secrets_store.load().get("ai_model") or ""))
-    return secrets_store.get_ai_config("ai_model", settings.ai_model)
+    model = secrets_store.get_ai_config("ai_model", settings.ai_model)
+    if provider == XAI_PROVIDER and not (model or "").strip():
+        return XAI_DEFAULT_MODEL
+    return model
 
 
 def current_codex_command() -> str:
@@ -44,6 +51,10 @@ def current_codex_command() -> str:
 
 def is_codex_cli_provider(provider: str | None = None) -> bool:
     return (provider or current_ai_provider()) == CODEX_CLI_PROVIDER
+
+
+def is_xai_provider(provider: str | None = None) -> bool:
+    return (provider or current_ai_provider()) == XAI_PROVIDER
 
 
 def normalize_codex_model(model: str) -> str:
@@ -86,6 +97,12 @@ def ai_configured(provider: str | None = None) -> bool:
     provider = provider or current_ai_provider()
     if is_codex_cli_provider(provider):
         return codex_cli_available()
+    if is_xai_provider(provider):
+        from app.services import xai_oauth
+        # SuperGrok OAuth 或粘贴的 xAI API Key 均可
+        if xai_oauth.has_oauth():
+            return True
+        return bool(secrets_store.get_ai_key())
     return bool(secrets_store.get_ai_key())
 
 
@@ -139,11 +156,8 @@ async def _run_openai_once(
     max_tokens: int,
     timeout: float,
 ) -> str:
-    ai_key = secrets_store.get_ai_key()
-    if not ai_key:
-        raise RuntimeError("AI API Key 未配置, 请在设置页配置")
-
-    client = _openai_client(ai_key, timeout)
+    api_key, base_url = _resolve_openai_credentials()
+    client = _openai_client(api_key, timeout, base_url=base_url)
     resp = await client.chat.completions.create(
         model=current_ai_model(),
         messages=list(messages),
@@ -162,11 +176,8 @@ async def _stream_openai(
     max_tokens: int,
     timeout: float,
 ) -> AsyncIterator[str]:
-    ai_key = secrets_store.get_ai_key()
-    if not ai_key:
-        raise RuntimeError("AI API Key 未配置, 请在设置页配置")
-
-    client = _openai_client(ai_key, timeout)
+    api_key, base_url = _resolve_openai_credentials()
+    client = _openai_client(api_key, timeout, base_url=base_url)
     stream = await client.chat.completions.create(
         model=current_ai_model(),
         messages=list(messages),
@@ -181,13 +192,33 @@ async def _stream_openai(
             yield delta.content
 
 
-def _openai_client(api_key: str, timeout: float):
+def _resolve_openai_credentials() -> tuple[str, str]:
+    """Return (api_key, base_url) for the active HTTP AI provider."""
+    if is_xai_provider():
+        from app.services import xai_oauth
+        token = xai_oauth.get_valid_access_token()
+        if token:
+            return token, XAI_API_BASE
+        key = secrets_store.get_ai_key()
+        if key:
+            base = secrets_store.get_ai_config("ai_base_url", XAI_API_BASE) or XAI_API_BASE
+            return key, base
+        raise RuntimeError("xAI / Grok 未登录。请在设置页使用 SuperGrok 登录，或粘贴 xAI API Key。")
+
+    key = secrets_store.get_ai_key()
+    if not key:
+        raise RuntimeError("AI API Key 未配置, 请在设置页配置")
+    base = secrets_store.get_ai_config("ai_base_url", settings.ai_base_url)
+    return key, base
+
+
+def _openai_client(api_key: str, timeout: float, *, base_url: str | None = None):
     from openai import AsyncOpenAI
 
     user_agent = secrets_store.get_ai_config("ai_user_agent", "") or settings.ai_user_agent
     return AsyncOpenAI(
         api_key=api_key,
-        base_url=normalize_openai_base_url(secrets_store.get_ai_config("ai_base_url", settings.ai_base_url)),
+        base_url=normalize_openai_base_url(base_url or secrets_store.get_ai_config("ai_base_url", settings.ai_base_url)),
         timeout=timeout,
         max_retries=2,
         default_headers={"User-Agent": user_agent},
@@ -262,7 +293,7 @@ async def _run_codex_cli(
 
 def _codex_prompt(messages: Sequence[Message], *, max_tokens: int) -> str:
     parts = [
-        "You are TickFlow Stock Panel's local AI provider.",
+        "You are one-trading's local AI provider.",
         "This is a text-generation task. The working directory is intentionally empty.",
         "Use only the user-provided prompt content below; do not inspect or modify local files.",
         "Return only the final requested content; do not include execution logs.",

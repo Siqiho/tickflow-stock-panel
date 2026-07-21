@@ -15,17 +15,17 @@ from app.api import analysis, auth as auth_api, backtest, data, ext_data, financ
 from app.api.routes import router as core_router
 from app.api import free_ext
 from app.api import custom_sources
+from app.api import runtime_logs as runtime_logs_api
 from app.config import settings
+from app.services import runtime_logging as runtime_logging_service
 from app.jobs import daily_pipeline
 from app.services.quote_service import QuoteService
 from app.tickflow import client as tf_client
 from app.tickflow.policy import detect_capabilities
 from app.tickflow.repository import DataStore, KlineRepository
 
-logging.basicConfig(
-    level=settings.log_level,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+# 统一运行日志: 控制台 + data/logs 滚动文件 + 结构化缓冲
+runtime_logging_service.setup_runtime_logging(settings.log_level, settings.data_dir)
 logger = logging.getLogger(__name__)
 
 
@@ -202,6 +202,39 @@ app.add_middleware(
 
 
 # ================================================================
+# HTTP 访问运行日志中间件
+# ================================================================
+@app.middleware("http")
+async def runtime_access_log_middleware(request: Request, call_next):
+    import time as _time
+
+    path = request.url.path
+    if runtime_logging_service.should_skip_access(path, request.method):
+        return await call_next(request)
+
+    started = _time.perf_counter()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    except Exception:
+        status_code = 500
+        raise
+    finally:
+        duration_ms = (_time.perf_counter() - started) * 1000.0
+        client = request.client.host if request.client else None
+        runtime_logging_service.log_access(
+            method=request.method,
+            path=path,
+            status=status_code,
+            duration_ms=duration_ms,
+            client=client,
+            query=str(request.url.query or "") or None,
+        )
+
+
+# ================================================================
 # 访问认证中间件
 # ================================================================
 # 拦截所有 /api/ 请求, 三种状态:
@@ -271,13 +304,12 @@ app.include_router(alerts.router)
 app.include_router(rps.router)
 app.include_router(free_ext.router)
 app.include_router(custom_sources.router)
+app.include_router(runtime_logs_api.router)
 
 
 # 能力门控异常 → 403(而非默认 500)
 # 业务代码用 capset.require(Cap.X) 断言能力,缺失时抛 CapabilityDenied;
 # 若不注册 handler 会冒泡成 500 Internal Server Error,对前端不友好且语义错误。
-from fastapi import Request
-from fastapi.responses import JSONResponse
 from app.tickflow.capabilities import CapabilityDenied
 
 

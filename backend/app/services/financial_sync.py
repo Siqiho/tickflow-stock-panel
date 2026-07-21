@@ -8,9 +8,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import polars as pl
 
@@ -22,7 +21,16 @@ logger = logging.getLogger(__name__)
 _BATCH_SIZE = 100
 
 # 4 张财务表
-FINANCIAL_TABLES = ("metrics", "income", "balance_sheet", "cash_flow")
+FINANCIAL_TABLES = ("metrics", "income", "balance_sheet", "cash_flow", "shares")
+STATEMENT_TABLES = ("metrics", "income", "balance_sheet", "cash_flow")
+
+
+def _use_public_financials() -> bool:
+    try:
+        from app.services import preferences
+        return preferences.is_public_financial_provider()
+    except Exception:
+        return False
 
 
 # ================================================================
@@ -30,7 +38,28 @@ FINANCIAL_TABLES = ("metrics", "income", "balance_sheet", "cash_flow")
 # ================================================================
 
 def _get_symbols(data_dir: Path) -> list[str]:
-    """从 instruments 表获取标的列表。"""
+    """获取财务同步标的列表。
+
+    - public 财务源：使用 preferences.public_data_scope（默认 CSI300）
+    - TickFlow：instruments 全表（Expert 批量）
+    """
+    try:
+        from app.services import preferences
+        if preferences.is_public_financial_provider():
+            from app.services.universe_scope import resolve_symbols
+            scope = preferences.get_public_data_scope()
+            syms = resolve_symbols(
+                scope,
+                data_dir=data_dir,
+                default="CSI300",
+                refresh_pools_if_missing=True,
+            )
+            if syms:
+                logger.info("financial symbols from public_data_scope=%s n=%d", scope, len(syms))
+                return syms
+    except Exception as e:
+        logger.warning("public financial scope resolve failed: %s", e)
+
     inst_path = data_dir / "instruments" / "instruments.parquet"
     if not inst_path.exists():
         return []
@@ -50,23 +79,45 @@ def _sync_table(
     latest_only: bool = True,
 ) -> int:
     """同步单张财务表。返回写入的行数。"""
-    if not capset.has(Cap.FINANCIAL):
-        logger.info("sync_%s skipped: no FINANCIAL capability", table)
-        return 0
     if not symbols:
         logger.warning("sync_%s skipped: no symbols", table)
+        return 0
+
+    # Public free path (East Money HSF10) — no TickFlow Cap.FINANCIAL
+    if _use_public_financials():
+        from app.services.free_sources.financials_public import sync_financials_public
+
+        from app.services import preferences as _p
+        max_periods = _p.get_financial_max_periods()
+        if latest_only:
+            max_periods = min(max_periods, max(4, max_periods // 2))
+        # shares is snapshot-only
+        if table == "shares":
+            from app.services.free_sources.financials_public import sync_shares_snapshot
+            return sync_shares_snapshot(data_dir, symbols=symbols)
+        result = sync_financials_public(symbols, data_dir, tables=(table,), max_periods=max_periods)
+        return int((result.get("rows") or {}).get(table) or 0)
+
+    if not capset.has(Cap.FINANCIAL):
+        logger.info("sync_%s skipped: no FINANCIAL capability", table)
         return 0
 
     from app.tickflow.client import get_client
     tf = get_client()
 
     # 分批拉取
-    api_method = {
-        "metrics": tf.financials.metrics,
-        "income": tf.financials.income,
-        "balance_sheet": tf.financials.balance_sheet,
-        "cash_flow": tf.financials.cash_flow,
-    }[table]
+    if table == "shares":
+        api_method = getattr(tf.financials, "shares", None)
+        if api_method is None:
+            logger.warning("tickflow SDK has no financials.shares")
+            return 0
+    else:
+        api_method = {
+            "metrics": tf.financials.metrics,
+            "income": tf.financials.income,
+            "balance_sheet": tf.financials.balance_sheet,
+            "cash_flow": tf.financials.cash_flow,
+        }[table]
 
     all_records: list[dict] = []
     total_batches = (len(symbols) + _BATCH_SIZE - 1) // _BATCH_SIZE
@@ -135,12 +186,29 @@ def sync_cash_flow(data_dir: Path, capset: CapabilitySet) -> int:
 
 def sync_all(data_dir: Path, capset: CapabilitySet) -> dict[str, int]:
     """同步所有财务表。返回 {table: rows}。"""
-    if not capset.has(Cap.FINANCIAL):
+    if not capset.has(Cap.FINANCIAL) and not _use_public_financials():
         logger.info("sync_all financials skipped: no FINANCIAL capability")
         return {}
 
     symbols = _get_symbols(data_dir)
     results: dict[str, int] = {}
+
+    # Public path: one multi-table pull (avoids 4x universe scans)
+    if _use_public_financials():
+        from app.services.free_sources.financials_public import sync_financials_public
+
+        if not symbols:
+            logger.warning("sync_all financials skipped: no symbols")
+            return {}
+        from app.services import preferences as _p
+        out = sync_financials_public(
+            symbols, data_dir, tables=FINANCIAL_TABLES,
+            max_periods=_p.get_financial_max_periods(),
+        )
+        results = {k: int(v) for k, v in (out.get("rows") or {}).items()}
+        _refresh_financials_views(data_dir)
+        return results
+
     for table in FINANCIAL_TABLES:
         results[table] = _sync_table(table, symbols, data_dir, capset, latest_only=True)
 
@@ -162,6 +230,7 @@ def _refresh_financials_views(data_dir: Path) -> None:
         "financials_income": f"{d}/financials/income/*.parquet",
         "financials_balance_sheet": f"{d}/financials/balance_sheet/*.parquet",
         "financials_cash_flow": f"{d}/financials/cash_flow/*.parquet",
+        "financials_shares": f"{d}/financials/shares/*.parquet",
     }
     for name, path in views.items():
         out = data_dir / "financials" / name.replace("financials_", "") / "part.parquet"
@@ -213,7 +282,7 @@ class FinancialScheduler:
         # 即便 app.state.capabilities 已更新, 调度器仍报 "no FINANCIAL capability"。
         self._data_dir = data_dir
         self._capset = capset
-        if not capset.has(Cap.FINANCIAL):
+        if not capset.has(Cap.FINANCIAL) and not _use_public_financials():
             logger.info("FinancialScheduler skipped: no FINANCIAL capability")
             return
         # 从持久化恢复上次同步时间: 重启后前端仍能显示真实最后同步时间,而非"尚未同步"
@@ -227,14 +296,14 @@ class FinancialScheduler:
                     continue
                 parquet = data_dir / "financials" / table / "part.parquet"
                 if parquet.exists():
-                    mtime = datetime.fromtimestamp(parquet.stat().st_mtime, tz=timezone.utc).isoformat()
+                    mtime = datetime.fromtimestamp(parquet.stat().st_mtime, tz=UTC).isoformat()
                     restored[table] = mtime
                     preferences.set_financial_sync_time(table, mtime)
                     logger.info("FinancialScheduler backfilled last_sync for %s from parquet mtime", table)
             self._last_sync = restored
             if self._last_sync:
                 logger.info("FinancialScheduler restored last_sync: %s", list(self._last_sync.keys()))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("restore financial_sync_times failed: %s", e)
 
         if not auto_schedule:
@@ -252,12 +321,12 @@ class FinancialScheduler:
         持久化确保即使重启,前端 /status 仍返回真实的最后同步时间,
         不会错误地显示"尚未同步"。
         """
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
         self._last_sync[table] = ts
         try:
             from app.services import preferences
             preferences.set_financial_sync_time(table, ts)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("persist financial_sync_time(%s) failed: %s", e)
 
     def update_capabilities(self, capset: CapabilitySet) -> None:
@@ -347,7 +416,7 @@ class FinancialScheduler:
         用 _is_syncing 标志防并发:若已有同步在进行,本次直接跳过,
         避免重复请求拖慢服务端 / 触发上游限流。
         """
-        if not self._capset or not self._capset.has(Cap.FINANCIAL):
+        if (not self._capset or not self._capset.has(Cap.FINANCIAL)) and not _use_public_financials():
             return {}
         with self._lock:
             if self._is_syncing:
@@ -372,7 +441,7 @@ class FinancialScheduler:
         /status 已能看到 syncing=True,无竞态窗口;同时防止快速重复点击
         启动多个后台线程。后台线程复用 _run_body 执行真正的同步逻辑。
         """
-        if not self._capset or not self._capset.has(Cap.FINANCIAL):
+        if (not self._capset or not self._capset.has(Cap.FINANCIAL)) and not _use_public_financials():
             return {"started": False, "reason": "no FINANCIAL capability"}
         with self._lock:
             if self._is_syncing:
@@ -384,7 +453,7 @@ class FinancialScheduler:
         def _bg() -> None:
             try:
                 self._run_body(table)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.exception("background financial sync failed: %s", e)
             finally:
                 with self._lock:
