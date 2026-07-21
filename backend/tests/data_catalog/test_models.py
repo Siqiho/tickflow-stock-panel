@@ -196,6 +196,16 @@ def test_registry_validation_rejects_ancestor_descendant_root_ownership() -> Non
         validate_dataset_definitions((stock_daily, nested_owner))
 
 
+@pytest.mark.parametrize("reversed_order", (False, True))
+def test_depth_dataset_exception_does_not_allow_nested_roots(reversed_order: bool) -> None:
+    sealed_l1 = replace(get_dataset_definition("sealed_l1"), roots=("depth5/subdir",))
+    depth5 = get_dataset_definition("depth5")
+    definitions = (depth5, sealed_l1) if reversed_order else (sealed_l1, depth5)
+
+    with pytest.raises(ValueError, match="overlap"):
+        validate_dataset_definitions(definitions)
+
+
 def test_realtime_datasets_use_utc_timestamp_and_name_shanghai_market_timezone() -> None:
     for dataset_id in ("quote_snapshot", "sealed_l1", "depth5"):
         timestamp = next(

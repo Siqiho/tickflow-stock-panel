@@ -210,12 +210,13 @@ def _roots_overlap(left: str, right: str) -> bool:
 
 
 def _allows_depth5_share(
-    root: str,
+    candidate_root: str,
+    existing_root: str,
     left: DatasetDefinition,
     right: DatasetDefinition,
 ) -> bool:
     return (
-        root == "depth5"
+        candidate_root == existing_root == "depth5"
         and left.shared_root_group == right.shared_root_group == "depth_semantics"
         and left.semantic_classifier == right.semantic_classifier == "depth"
         and {left.descriptor.dataset_id, right.descriptor.dataset_id} == {"sealed_l1", "depth5"}
@@ -242,7 +243,7 @@ def validate_dataset_definitions(definitions: tuple[DatasetDefinition, ...]) -> 
                 raise ValueError(f"dataset {descriptor.dataset_id} has invalid root {root!r}")
             for existing_root, existing in roots.items():
                 if _roots_overlap(root, existing_root) and not _allows_depth5_share(
-                    root, definition, existing
+                    root, existing_root, definition, existing
                 ):
                     raise ValueError(f"root overlap is not allowed: {root}")
             roots[root] = definition
