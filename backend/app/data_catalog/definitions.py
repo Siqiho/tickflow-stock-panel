@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Literal
 
 from .models import DatasetAvailability, DatasetDescriptor, FieldContract
@@ -107,10 +108,21 @@ def _stock_instrument_fields() -> list[FieldContract]:
     ]
 
 
-def _bar_fields(asset_name: str, time_name: str) -> list[FieldContract]:
+def _bar_fields(
+    asset_name: str,
+    time_name: str,
+    *,
+    time_semantic: str | None = None,
+    time_timezone: str | None = None,
+) -> list[FieldContract]:
     return [
         _field("symbol", "string", f"Canonical {asset_name} identifier"),
-        _field(time_name, "date" if time_name == "date" else "datetime", f"{asset_name.title()} bar time"),
+        _field(
+            time_name,
+            "date" if time_name == "date" else "datetime",
+            time_semantic or f"{asset_name.title()} bar time",
+            timezone=time_timezone,
+        ),
         _field("open", "float64", f"Opening price of the {asset_name} bar", unit="CNY", currency="CNY"),
         _field("high", "float64", f"Highest price of the {asset_name} bar", unit="CNY", currency="CNY"),
         _field("low", "float64", f"Lowest price of the {asset_name} bar", unit="CNY", currency="CNY"),
@@ -171,9 +183,9 @@ DATASET_DEFINITIONS: tuple[DatasetDefinition, ...] = (
     DatasetDefinition(_descriptor("index_instruments", "Indices", ["index"], "one row per index", ["symbol"], _instrument_fields("index")), ("instruments_index",), None, None, "indices"),
     DatasetDefinition(_descriptor("index_daily", "Index daily bars", ["index"], "one row per index and trading day", ["symbol", "date"], _bar_fields("index", "date"), partition_keys=["date"]), ("kline_index_daily",), None, None, "indices", time_column="date", partition_key="date"),
     DatasetDefinition(_descriptor("index_enriched", "Enriched index daily bars", ["index"], "one row per index and trading day", ["symbol", "date"], _enriched_fields("index"), partition_keys=["date"]), ("kline_index_enriched",), None, None, "indices", time_column="date", partition_key="date"),
-    DatasetDefinition(_descriptor("quote_snapshot", "Quote snapshots", ["stock", "etf", "index"], "one row per symbol and snapshot", ["symbol", "timestamp"], _bar_fields("quote snapshot", "timestamp"), unit_version="cn_market_v1"), ("quote_snapshot",), None, None, "quote_snapshot", time_column="timestamp"),
-    DatasetDefinition(_descriptor("sealed_l1", "Sealed L1 quotes", ["stock"], "one row per symbol and quote time", ["symbol", "timestamp"], [_field("symbol", "string", "Canonical stock identifier"), _field("timestamp", "datetime", "Quote time", timezone="Asia/Shanghai"), _field("bid_price_1", "float64", "Best bid price", unit="CNY", currency="CNY"), _field("bid_volume_1", "float64", "Best bid volume", unit="lot"), _field("ask_price_1", "float64", "Best ask price", unit="CNY", currency="CNY"), _field("ask_volume_1", "float64", "Best ask volume", unit="lot")]), ("depth5",), None, None, "sealed_l1", time_column="timestamp", semantic_classifier="depth", shared_root_group="depth_semantics"),
-    DatasetDefinition(_descriptor("depth5", "Five-level order book", ["stock"], "one row per symbol and quote time", ["symbol", "timestamp"], [_field("symbol", "string", "Canonical stock identifier"), _field("timestamp", "datetime", "Quote time", timezone="Asia/Shanghai"), _field("bid_price_1", "float64", "Level-one bid price", unit="CNY", currency="CNY"), _field("bid_price_5", "float64", "Level-five bid price", unit="CNY", currency="CNY"), _field("ask_price_1", "float64", "Level-one ask price", unit="CNY", currency="CNY"), _field("ask_price_5", "float64", "Level-five ask price", unit="CNY", currency="CNY"), _field("bid_volume_5", "float64", "Level-five bid volume", unit="lot"), _field("ask_volume_5", "float64", "Level-five ask volume", unit="lot")]), ("depth5",), None, None, "depth5", time_column="timestamp", semantic_classifier="depth", shared_root_group="depth_semantics"),
+    DatasetDefinition(_descriptor("quote_snapshot", "Quote snapshots", ["stock", "etf", "index"], "one row per symbol and snapshot", ["symbol", "timestamp"], _bar_fields("quote snapshot", "timestamp", time_semantic="UTC quote snapshot timestamp; market timezone Asia/Shanghai", time_timezone="UTC"), unit_version="cn_market_v1"), ("quote_snapshot",), None, None, "quote_snapshot", time_column="timestamp"),
+    DatasetDefinition(_descriptor("sealed_l1", "Sealed L1 quotes", ["stock"], "one row per symbol and quote time", ["symbol", "timestamp"], [_field("symbol", "string", "Canonical stock identifier"), _field("timestamp", "datetime", "UTC quote timestamp; market timezone Asia/Shanghai", timezone="UTC"), _field("bid_price_1", "float64", "Best bid price", unit="CNY", currency="CNY"), _field("bid_volume_1", "float64", "Best bid volume", unit="lot"), _field("ask_price_1", "float64", "Best ask price", unit="CNY", currency="CNY"), _field("ask_volume_1", "float64", "Best ask volume", unit="lot")]), ("depth5",), None, None, "sealed_l1", time_column="timestamp", semantic_classifier="depth", shared_root_group="depth_semantics"),
+    DatasetDefinition(_descriptor("depth5", "Five-level order book", ["stock"], "one row per symbol and quote time", ["symbol", "timestamp"], [_field("symbol", "string", "Canonical stock identifier"), _field("timestamp", "datetime", "UTC quote timestamp; market timezone Asia/Shanghai", timezone="UTC"), _field("bid_price_1", "float64", "Level-one bid price", unit="CNY", currency="CNY"), _field("bid_price_5", "float64", "Level-five bid price", unit="CNY", currency="CNY"), _field("ask_price_1", "float64", "Level-one ask price", unit="CNY", currency="CNY"), _field("ask_price_5", "float64", "Level-five ask price", unit="CNY", currency="CNY"), _field("bid_volume_5", "float64", "Level-five bid volume", unit="lot"), _field("ask_volume_5", "float64", "Level-five ask volume", unit="lot")]), ("depth5",), None, None, "depth5", time_column="timestamp", semantic_classifier="depth", shared_root_group="depth_semantics"),
     DatasetDefinition(_descriptor("pools", "Stock pools", ["stock"], "one row per pool constituent", ["pool_id", "symbol"], [_field("pool_id", "string", "Stock pool identifier"), _field("symbol", "string", "Canonical stock identifier"), _field("as_of_date", "date", "Pool membership date")]), ("pools",), None, None, "pools", time_column="as_of_date"),
     DatasetDefinition(_descriptor("ext_data", "External data", ["reference"], "one row per external record", ["source", "record_id"], [_field("source", "string", "External data source"), _field("record_id", "string", "External source record identifier"), _field("published_at", "datetime", "External record publication time", nullable=True)], unit_version="ext_data_v1"), ("ext_data",), None, None, "ext_data", symbol_column=None, time_column="published_at"),
     DatasetDefinition(_descriptor("financial_metrics", "Financial metrics", ["stock"], "one row per stock and reporting period", ["symbol", "period_end"], _financial_fields("metrics"), partition_keys=["period_end"]), ("financials/metrics",), None, None, "financials", time_column="period_end", partition_key="period_end"),
@@ -182,6 +194,32 @@ DATASET_DEFINITIONS: tuple[DatasetDefinition, ...] = (
     DatasetDefinition(_descriptor("financial_cash_flow", "Cash-flow statements", ["stock"], "one row per stock and reporting period", ["symbol", "period_end"], _financial_fields("cash_flow"), partition_keys=["period_end"]), ("financials/cash_flow",), None, None, "financials", time_column="period_end", partition_key="period_end"),
     DatasetDefinition(_descriptor("financial_shares", "Shares outstanding", ["stock"], "one row per stock and reporting period", ["symbol", "period_end"], _financial_fields("shares"), partition_keys=["period_end"]), ("financials/shares",), None, None, "financials", time_column="period_end", partition_key="period_end"),
 )
+
+
+def _is_canonical_relative_posix_root(root: str) -> bool:
+    if not root or root.startswith("/") or root.endswith("/") or "\\" in root or "//" in root:
+        return False
+    return all(part not in {"", ".", ".."} for part in root.split("/"))
+
+
+def _roots_overlap(left: str, right: str) -> bool:
+    left_parts = PurePosixPath(left).parts
+    right_parts = PurePosixPath(right).parts
+    shortest = min(len(left_parts), len(right_parts))
+    return left_parts[:shortest] == right_parts[:shortest]
+
+
+def _allows_depth5_share(
+    root: str,
+    left: DatasetDefinition,
+    right: DatasetDefinition,
+) -> bool:
+    return (
+        root == "depth5"
+        and left.shared_root_group == right.shared_root_group == "depth_semantics"
+        and left.semantic_classifier == right.semantic_classifier == "depth"
+        and {left.descriptor.dataset_id, right.descriptor.dataset_id} == {"sealed_l1", "depth5"}
+    )
 
 
 def validate_dataset_definitions(definitions: tuple[DatasetDefinition, ...]) -> None:
@@ -200,24 +238,14 @@ def validate_dataset_definitions(definitions: tuple[DatasetDefinition, ...]) -> 
         if not definition.roots:
             raise ValueError(f"dataset {descriptor.dataset_id} has no roots")
         for root in definition.roots:
-            if not root or root.startswith("/") or ".." in root.split("/"):
+            if not _is_canonical_relative_posix_root(root):
                 raise ValueError(f"dataset {descriptor.dataset_id} has invalid root {root!r}")
-            existing = roots.get(root)
-            if existing is not None:
-                allowed_share = (
-                    root == "depth5"
-                    and definition.shared_root_group == existing.shared_root_group == "depth_semantics"
-                    and definition.semantic_classifier == existing.semantic_classifier == "depth"
-                    and {
-                        definition.descriptor.dataset_id,
-                        existing.descriptor.dataset_id,
-                    }
-                    == {"sealed_l1", "depth5"}
-                )
-                if not allowed_share:
+            for existing_root, existing in roots.items():
+                if _roots_overlap(root, existing_root) and not _allows_depth5_share(
+                    root, definition, existing
+                ):
                     raise ValueError(f"root overlap is not allowed: {root}")
-            else:
-                roots[root] = definition
+            roots[root] = definition
 
 
 def get_dataset_definition(dataset_id: str) -> DatasetDefinition:

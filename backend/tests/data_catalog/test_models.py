@@ -161,3 +161,48 @@ def test_registry_validation_rejects_a_third_depth_root_owner() -> None:
 
     with pytest.raises(ValueError, match="overlap"):
         validate_dataset_definitions((sealed_l1, depth5, third_owner))
+
+
+@pytest.mark.parametrize(
+    "root",
+    (
+        "",
+        "/kline_daily",
+        ".",
+        "./kline_daily",
+        "kline_daily/",
+        "kline//daily",
+        "depth5/.",
+        "../kline_daily",
+    ),
+)
+def test_registry_validation_rejects_noncanonical_roots(root: str) -> None:
+    stock_daily = get_dataset_definition("stock_daily")
+    invalid_root = replace(stock_daily, roots=(root,))
+
+    with pytest.raises(ValueError, match="root"):
+        validate_dataset_definitions((invalid_root,))
+
+
+def test_registry_validation_rejects_ancestor_descendant_root_ownership() -> None:
+    stock_daily = get_dataset_definition("stock_daily")
+    nested_owner = replace(
+        stock_daily,
+        descriptor=stock_daily.descriptor.model_copy(update={"dataset_id": "nested_daily"}),
+        roots=("kline_daily/partitions",),
+    )
+
+    with pytest.raises(ValueError, match="overlap"):
+        validate_dataset_definitions((stock_daily, nested_owner))
+
+
+def test_realtime_datasets_use_utc_timestamp_and_name_shanghai_market_timezone() -> None:
+    for dataset_id in ("quote_snapshot", "sealed_l1", "depth5"):
+        timestamp = next(
+            field
+            for field in get_dataset_definition(dataset_id).descriptor.fields
+            if field.name == "timestamp"
+        )
+
+        assert timestamp.timezone == "UTC"
+        assert "asia/shanghai" in timestamp.semantic.lower()
