@@ -42,8 +42,10 @@ import {
   RadioTower,
   CheckCircle2,
   BookOpenCheck,
+  Menu,
   Moon,
   Sun,
+  X,
 } from 'lucide-react'
 import { Logo } from './Logo'
 import { api, type IndexQuote } from '@/lib/api'
@@ -286,7 +288,10 @@ export function Layout() {
   // 数据同步完成的"瞬时反馈": isDataSyncing 从 true→false 时显示绿色对勾,
   // 闪烁约 3 秒后自动消失。
   const [dataSyncJustDone, setDataSyncJustDone] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const prevSyncingRef = useRef(false)
+  const mobileNavButtonRef = useRef<HTMLButtonElement>(null)
+  const mobileNavCloseRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     // 仅在"刚结束"(true→false)且非首次挂载时触发
     if (prevSyncingRef.current && !isDataSyncing) {
@@ -297,6 +302,20 @@ export function Layout() {
     }
     prevSyncingRef.current = isDataSyncing
   }, [isDataSyncing])
+
+  useEffect(() => {
+    if (!mobileNavOpen) return
+    const triggerButton = mobileNavButtonRef.current
+    mobileNavCloseRef.current?.focus()
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileNavOpen(false)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      triggerButton?.focus()
+    }
+  }, [mobileNavOpen])
 
   const qc = useQueryClient()
   const navigate = useNavigate()
@@ -385,8 +404,130 @@ export function Layout() {
   }
 
   return (
-    <div className="h-screen grid grid-cols-[14rem_1fr] bg-base text-foreground overflow-hidden">
-      <aside className="border-r border-border bg-surface flex flex-col h-full min-h-0 overflow-hidden">
+    <div
+      data-testid="app-shell"
+      className="h-screen grid grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[14rem_1fr] md:grid-rows-1 bg-base text-foreground overflow-hidden"
+    >
+      <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-4 md:hidden">
+        <div className="flex items-center gap-2.5">
+          <Logo size={24} className="text-violet-500" />
+          <div className="font-mono text-xs font-bold leading-tight tracking-[0.06em]">
+            <div>one</div>
+            <div>trading</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[10px] text-muted">{version ?? ''}</span>
+          <button
+            ref={mobileNavButtonRef}
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-btn text-foreground/80 transition-colors hover:bg-elevated hover:text-foreground"
+            aria-label="打开导航"
+            aria-expanded={mobileNavOpen}
+            aria-controls="mobile-navigation-dialog"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+        </div>
+      </header>
+
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/45 backdrop-blur-[1px]"
+            onClick={() => setMobileNavOpen(false)}
+            aria-label="关闭导航背景"
+          />
+          <aside
+            id="mobile-navigation-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="移动导航"
+            className="relative flex h-full w-[min(20rem,calc(100vw-3rem))] flex-col border-r border-border bg-surface shadow-2xl"
+          >
+            <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
+              <div className="flex items-center gap-2.5">
+                <Logo size={24} className="text-violet-500" />
+                <span className="font-mono text-xs font-bold tracking-[0.06em]">one-trading</span>
+              </div>
+              <button
+                ref={mobileNavCloseRef}
+                type="button"
+                onClick={() => setMobileNavOpen(false)}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-btn text-foreground/80 transition-colors hover:bg-elevated hover:text-foreground"
+                aria-label="关闭导航"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <nav aria-label="移动端主导航" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-3">
+              {visibleNavItems.map(({ to, label, icon: Icon }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  onClick={() => setMobileNavOpen(false)}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm transition-colors duration-150 ease-smooth',
+                      isActive
+                        ? 'bg-elevated font-medium text-foreground'
+                        : 'text-foreground/80 hover:bg-elevated hover:text-foreground',
+                    )
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      <Icon className="h-4 w-4 shrink-0" />
+                      <span className="flex-1">{label}</span>
+                      {(to === '/stock-analysis' || to === '/review') && (
+                        <span className="inline-flex items-center rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-400">
+                          Beta
+                        </span>
+                      )}
+                      {to === '/data' && isDataSyncing && (
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-accent" />
+                      )}
+                      {to === '/data' && !isDataSyncing && dataSyncJustDone && (
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 animate-pulse text-bull" />
+                      )}
+                      {to === '/monitor' && <MonitorBadge active={isActive} />}
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </nav>
+
+            <div className="flex shrink-0 items-center gap-2 border-t border-border p-3">
+              <NavLink
+                to="/settings"
+                onClick={() => setMobileNavOpen(false)}
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-btn px-3 py-2.5 text-sm text-foreground/80 transition-colors hover:bg-elevated hover:text-foreground"
+              >
+                <Settings className="h-4 w-4" />
+                <span className="flex-1">设置</span>
+                <span className="font-mono text-[10px] text-muted">{version ?? ''}</span>
+              </NavLink>
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-btn text-foreground/80 transition-colors hover:bg-elevated hover:text-foreground"
+                aria-label={isDark ? '切换到浅色模式' : '切换到暗色模式'}
+                aria-pressed={isDark}
+              >
+                {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      <aside
+        data-testid="desktop-sidebar"
+        className="hidden border-r border-border bg-surface md:flex flex-col h-full min-h-0 overflow-hidden"
+      >
         <div className="px-5 py-5 border-b border-border shrink-0">
           {/* Brand block — 原创 logo + 等宽 wordmark */}
           <div className="flex items-center gap-2.5">
@@ -562,7 +703,7 @@ export function Layout() {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-        className="h-full overflow-auto scrollbar-gutter-stable"
+        className="h-full min-h-0 min-w-0 overflow-auto scrollbar-gutter-stable"
       >
         <Outlet />
       </motion.main>
