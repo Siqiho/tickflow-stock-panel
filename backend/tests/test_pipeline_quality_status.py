@@ -51,12 +51,17 @@ def test_daily_pipeline_transitions_are_mirrored_without_progress_ticks(tmp_path
     store.set_control_plane_sink(mirrored.append)
 
     job_id = store.create(mirror={"dataset_id": "daily_pipeline", "operation": "daily_pipeline"})
+    assert "_catalog_mirror" not in (store.get(job_id) or {})
     store.start(job_id)
     store.progress(job_id, "sync_daily", 50, "halfway")
     store.complete(job_id, {"quality": {"ok": True}})
 
     assert [job["status"] for job in mirrored] == ["pending", "running", "succeeded"]
     assert {job["_catalog_mirror"]["dataset_id"] for job in mirrored} == {"daily_pipeline"}
+    saved = store.get(job_id)
+    assert saved is not None
+    assert "_catalog_mirror" not in saved
+    assert "_catalog_mirror" not in (tmp_path / f"{job_id}.json").read_text("utf-8")
 
 
 def test_instruments_and_failed_pipeline_are_mirrored_with_distinct_terminal_statuses(tmp_path):

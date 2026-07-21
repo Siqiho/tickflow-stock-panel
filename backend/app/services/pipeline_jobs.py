@@ -59,22 +59,40 @@ class JobStore:
         self._active_id: str | None = None
         self._lock = threading.Lock()
         self._control_plane_sink: ControlPlaneSink | None = None
+        self._control_plane_sink_token: object | None = None
+        self._mirror_metadata: dict[str, dict[str, str]] = {}
         self._store_dir.mkdir(parents=True, exist_ok=True)
 
-    def set_control_plane_sink(self, sink: ControlPlaneSink | None) -> None:
-        """Set the optional best-effort sink used only by opted-in pipeline jobs."""
+    def set_control_plane_sink(self, sink: ControlPlaneSink | None) -> object | None:
+        """Install a best-effort sink and return the ownership token for its cleanup."""
         with self._lock:
+            token = object() if sink is not None else None
             self._control_plane_sink = sink
+            self._control_plane_sink_token = token
+            return token
 
-    def _notify_control_plane(self, job: dict[str, Any]) -> None:
-        if "_catalog_mirror" not in job:
+    def clear_control_plane_sink(self, token: object | None) -> bool:
+        """Clear only the sink installed by the caller holding ``token``."""
+        with self._lock:
+            if token is None or token is not self._control_plane_sink_token:
+                return False
+            self._control_plane_sink = None
+            self._control_plane_sink_token = None
+            return True
+
+    def _notify_control_plane(
+        self, job: dict[str, Any], mirror: Mapping[str, str] | None
+    ) -> None:
+        if mirror is None:
             return
         with self._lock:
             sink = self._control_plane_sink
         if sink is None:
             return
+        payload = dict(job)
+        payload["_catalog_mirror"] = dict(mirror)
         try:
-            sink(dict(job))
+            sink(payload)
         except Exception:
             logger.exception("control-plane job mirror failed: job_id=%s", job.get("id"))
 
@@ -145,10 +163,11 @@ class JobStore:
                 "error": None,
             }
             if mirror is not None:
-                self._active_jobs[job_id]["_catalog_mirror"] = dict(mirror)
+                self._mirror_metadata[job_id] = dict(mirror)
             self._active_id = job_id
             created = dict(self._active_jobs[job_id])
-        self._notify_control_plane(created)
+            mirror_metadata = self._mirror_metadata.get(job_id)
+        self._notify_control_plane(created, mirror_metadata)
         return job_id
 
     def start(self, job_id: str) -> None:
@@ -159,7 +178,8 @@ class JobStore:
             j["status"] = "running"
             j["started_at"] = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
             started = dict(j)
-        self._notify_control_plane(started)
+            mirror_metadata = self._mirror_metadata.get(job_id)
+        self._notify_control_plane(started, mirror_metadata)
 
     def succeed(self, job_id: str, result: Any) -> None:
         self._finish(job_id, status="succeeded", result=result)
@@ -192,7 +212,8 @@ class JobStore:
             self._delete_oldest()
             self._write_file(j)
             finished = dict(j)
-        self._notify_control_plane(finished)
+            mirror_metadata = self._mirror_metadata.pop(job_id, None)
+        self._notify_control_plane(finished, mirror_metadata)
 
     def fail(self, job_id: str, error: str) -> None:
         with self._lock:
@@ -208,7 +229,8 @@ class JobStore:
             self._delete_oldest()
             self._write_file(j)
             failed = dict(j)
-        self._notify_control_plane(failed)
+            mirror_metadata = self._mirror_metadata.pop(job_id, None)
+        self._notify_control_plane(failed, mirror_metadata)
 
     # ===== progress =====
 
@@ -273,6 +295,7 @@ class JobStore:
         with self._lock:
             self._active_jobs.clear()
             self._active_id = None
+            self._mirror_metadata.clear()
             for f in self._store_dir.glob("*.json"):
                 try:
                     f.unlink()

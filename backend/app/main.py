@@ -56,6 +56,56 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
+async def catalog_control_plane_lifespan(
+    app: FastAPI,
+    data_dir: Path,
+    *,
+    job_store_instance=None,
+):
+    """Install the catalog service and release only this lifespan's sink on exit."""
+    from app.services.pipeline_jobs import job_store
+
+    store = job_store_instance or job_store
+    control_db = CatalogControlDB(data_dir)
+    catalog_service = CatalogService(data_dir, control_db)
+    if not control_db.has_dataset_states():
+        catalog_service.rescan()
+    app.state.catalog_control_db = control_db
+    app.state.catalog_service = catalog_service
+
+    def mirror_pipeline_run(job: dict) -> None:
+        metadata = job.get("_catalog_mirror")
+        if not metadata:
+            return
+        status = job["status"]
+        quality_status = {
+            "succeeded": "healthy",
+            "degraded": "degraded",
+            "failed": "failed",
+        }.get(status, "unknown")
+        control_db.upsert_sync_run(
+            SyncRun(
+                run_id=f"pipeline-{job['id']}",
+                dataset_id=metadata["dataset_id"],
+                provider="local",
+                operation=metadata["operation"],
+                started_at=job.get("started_at"),
+                finished_at=job.get("finished_at"),
+                status=status,
+                quality_status=quality_status,
+                error_code="pipeline_failed" if status == "failed" else None,
+                error_message=job.get("error"),
+            )
+        )
+
+    sink_token = store.set_control_plane_sink(mirror_pipeline_run)
+    try:
+        yield
+    finally:
+        store.clear_control_plane_sink(sink_token)
+
+
+@asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(
         "one-trading v%s starting (mode=%s)",
@@ -83,43 +133,6 @@ async def lifespan(app: FastAPI):
     capset = detect_capabilities()
     app.state.capabilities = capset
     logger.info("ready; %d capabilities active", len(capset.all()))
-
-    # Control plane: persisted catalog snapshots and best-effort daily-pipeline run history.
-    control_db = CatalogControlDB(store.data_dir)
-    catalog_service = CatalogService(store.data_dir, control_db)
-    if not control_db.has_dataset_states():
-        catalog_service.rescan()
-    app.state.catalog_control_db = control_db
-    app.state.catalog_service = catalog_service
-
-    from app.services.pipeline_jobs import job_store
-
-    def mirror_pipeline_run(job: dict) -> None:
-        metadata = job.get("_catalog_mirror")
-        if not metadata:
-            return
-        status = job["status"]
-        quality_status = {
-            "succeeded": "healthy",
-            "degraded": "degraded",
-            "failed": "failed",
-        }.get(status, "unknown")
-        control_db.upsert_sync_run(
-            SyncRun(
-                run_id=f"pipeline-{job['id']}",
-                dataset_id=metadata["dataset_id"],
-                provider="local",
-                operation=metadata["operation"],
-                started_at=job.get("started_at"),
-                finished_at=job.get("finished_at"),
-                status=status,
-                quality_status=quality_status,
-                error_code="pipeline_failed" if status == "failed" else None,
-                error_message=job.get("error"),
-            )
-        )
-
-    job_store.set_control_plane_sink(mirror_pipeline_run)
 
     # 全局行情服务
     qs = QuoteService()
@@ -226,25 +239,29 @@ async def lifespan(app: FastAPI):
         logger.warning("monitor engine load failed: %s", e)
     app.state.monitor_engine = monitor_engine
 
-    yield
-
-    if app.state.scheduler:
-        app.state.scheduler.shutdown(wait=False)
-    from app.services.pipeline_jobs import job_store
-    job_store.set_control_plane_sink(None)
-    ps = getattr(app.state, "pull_scheduler", None)
-    if ps:
-        ps.stop()
-    fsc = getattr(app.state, "financial_scheduler", None)
-    if fsc:
-        fsc.stop()
-    qs = getattr(app.state, "quote_service", None)
-    if qs:
-        qs.stop()
-    dsvc = getattr(app.state, "depth_service", None)
-    if dsvc:
-        dsvc.stop_polling()
-    logger.info("shutdown")
+    control_scope = catalog_control_plane_lifespan(app, store.data_dir)
+    await control_scope.__aenter__()
+    try:
+        yield
+    finally:
+        try:
+            if app.state.scheduler:
+                app.state.scheduler.shutdown(wait=False)
+            ps = getattr(app.state, "pull_scheduler", None)
+            if ps:
+                ps.stop()
+            fsc = getattr(app.state, "financial_scheduler", None)
+            if fsc:
+                fsc.stop()
+            qs = getattr(app.state, "quote_service", None)
+            if qs:
+                qs.stop()
+            dsvc = getattr(app.state, "depth_service", None)
+            if dsvc:
+                dsvc.stop_polling()
+            logger.info("shutdown")
+        finally:
+            await control_scope.__aexit__(None, None, None)
 
 
 app = FastAPI(
