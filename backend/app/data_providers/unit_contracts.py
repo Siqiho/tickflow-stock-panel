@@ -119,11 +119,12 @@ def ensure_publishable_units(
     ordered_fields.extend(sorted(set(required_fields) - {"volume", "amount"}))
     for field in ordered_fields:
         source_unit = source_units.get(field, "unknown")
-        if field == "volume":
+        normalized_field = field.lower()
+        if "volume" in normalized_field:
             if _volume_unit(source_unit) == "unknown":
-                raise UnitContractError("unknown volume unit is not publishable")
-        elif field == "amount" and _amount_unit(source_unit) == "unknown":
-            raise UnitContractError("unknown amount unit is not publishable")
+                raise UnitContractError(f"unknown {field} unit is not publishable")
+        elif "amount" in normalized_field and _amount_unit(source_unit) == "unknown":
+            raise UnitContractError(f"unknown {field} unit is not publishable")
 
     if market.upper() != "CN" and {
         canonical_units.get("volume"),

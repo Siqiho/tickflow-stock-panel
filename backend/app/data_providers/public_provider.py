@@ -25,10 +25,13 @@ def _public_financial_manifest(dataset_id: str) -> ProviderDatasetManifest:
     return ProviderDatasetManifest(
         provider="public",
         dataset_id=dataset_id,
-        asset_types=("stock",),
-        operations=("financial",),
+        asset_types=["stock"],
+        operations=["financial"],
         source_units={"monetary_currency": "unknown", "monetary_scale": "unknown"},
         canonical_units={"monetary_currency": "unknown", "monetary_scale": "unknown"},
+        entitlement_required=None,
+        history_guarantee="no_formal_guarantee",
+        verified_at=None,
     )
 
 
@@ -47,17 +50,20 @@ class PublicProvider:
         ProviderDatasetManifest(
             provider="public",
             dataset_id="quote_snapshot",
-            asset_types=("stock", "index", "etf"),
-            operations=("quote_snapshot",),
+            asset_types=["stock", "index", "etf"],
+            operations=["quote_snapshot"],
             # Quote rows carry per-row provenance and are already canonical.
             source_units={"volume": "unknown", "amount": "unknown", "ratio": "percentage_point"},
             canonical_units=_CN_QUOTE_UNITS,
+            entitlement_required=None,
+            history_guarantee="snapshot",
+            verified_at=None,
         ),
         ProviderDatasetManifest(
             provider="public",
             dataset_id="sealed_l1",
-            asset_types=("stock",),
-            operations=("sealed_l1",),
+            asset_types=["stock"],
+            operations=["sealed_l1"],
             source_units={"book_volume": "unknown"},
             canonical_units={
                 "book_volume": "unknown",
@@ -65,14 +71,20 @@ class PublicProvider:
                 "realtime_timezone": "UTC",
                 "market_timezone": "Asia/Shanghai",
             },
+            entitlement_required=None,
+            history_guarantee="snapshot",
+            verified_at=None,
         ),
         ProviderDatasetManifest(
             provider="public",
             dataset_id="stock_adj_factor",
-            asset_types=("stock",),
-            operations=("adj_factor",),
+            asset_types=["stock"],
+            operations=["adj_factor"],
             source_units={"daily_timestamp": "date"},
             canonical_units={"daily_timestamp": "date"},
+            entitlement_required=None,
+            history_guarantee="no_formal_guarantee",
+            verified_at=None,
         ),
         _public_financial_manifest("financial_metrics"),
         _public_financial_manifest("financial_income"),
@@ -82,8 +94,11 @@ class PublicProvider:
         ProviderDatasetManifest(
             provider="public",
             dataset_id="pools",
-            asset_types=("stock",),
-            operations=("pools",),
+            asset_types=["stock"],
+            operations=["pools"],
+            entitlement_required=None,
+            history_guarantee="cache",
+            verified_at=None,
         ),
     )
 

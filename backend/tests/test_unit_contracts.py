@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import polars as pl
 import pytest
 from pydantic import ValidationError
@@ -21,8 +23,8 @@ def _daily_manifest(**overrides) -> ProviderDatasetManifest:
     data = {
         "provider": "fixture",
         "dataset_id": "stock_daily",
-        "asset_types": ("stock",),
-        "operations": ("daily",),
+        "asset_types": ["stock"],
+        "operations": ["daily"],
         "source_units": {
             "volume": "share",
             "amount": "TEN_THOUSAND_CNY",
@@ -33,6 +35,9 @@ def _daily_manifest(**overrides) -> ProviderDatasetManifest:
             "amount": "CNY",
             "ratio": "percentage_point",
         },
+        "entitlement_required": None,
+        "history_guarantee": "unknown",
+        "verified_at": None,
     }
     data.update(overrides)
     return ProviderDatasetManifest(**data)
@@ -45,11 +50,60 @@ def test_canonicalizers_convert_cn_volume_amount_and_fraction_ratio():
     assert canonicalize_ratio(0.01, "fraction", target_scale="percentage_point") == 1.0
 
 
+def test_manifest_matches_exact_m3_public_model_and_default_maps_are_independent():
+    verified_at = "2026-07-21T08:30:00Z"
+    manifest = ProviderDatasetManifest(
+        provider="fixture",
+        dataset_id="stock_daily",
+        asset_types=["stock"],
+        operations=["daily"],
+        entitlement_required=None,
+        history_guarantee="unknown",
+        verified_at=verified_at,
+    )
+
+    assert manifest.model_dump() == {
+        "provider": "fixture",
+        "dataset_id": "stock_daily",
+        "asset_types": ["stock"],
+        "operations": ["daily"],
+        "source_units": {},
+        "canonical_units": {},
+        "entitlement_required": None,
+        "history_guarantee": "unknown",
+        "verified_at": datetime(2026, 7, 21, 8, 30, tzinfo=UTC),
+    }
+    assert ProviderDatasetManifest.model_validate(manifest.model_dump()) == manifest
+
+    other = ProviderDatasetManifest(
+        provider="other",
+        dataset_id="stock_daily",
+        asset_types=["stock"],
+        operations=["daily"],
+        entitlement_required=None,
+        history_guarantee=None,
+        verified_at=None,
+    )
+    manifest.source_units["volume"] = "share"
+    manifest.canonical_units["volume"] = "lot"
+    assert other.source_units == {}
+    assert other.canonical_units == {}
+
+
 def test_publishable_units_fail_closed_for_unknown_required_unit():
     manifest = _daily_manifest(source_units={"volume": "unknown", "amount": "unknown"})
 
     with pytest.raises(UnitContractError, match="volume"):
         ensure_publishable_units(manifest, required_fields={"volume", "amount"}, market="CN")
+
+
+def test_publishable_units_fail_closed_for_unknown_required_book_volume():
+    manifest = _daily_manifest(
+        source_units={"volume": "lot", "amount": "CNY", "book_volume": "unknown"}
+    )
+
+    with pytest.raises(UnitContractError, match="book_volume"):
+        ensure_publishable_units(manifest, required_fields={"book_volume"}, market="CN")
 
 
 def test_publishable_units_reject_cn_canonical_contract_for_non_cn_market():
@@ -162,6 +216,10 @@ def test_builtin_manifests_are_local_ordered_and_cover_required_datasets(monkeyp
         *financial_ids,
     } <= public_ids
     assert "depth5" not in public_ids
+    assert all(manifest.entitlement_required is None for manifest in public)
+    assert {
+        manifest.history_guarantee for manifest in public
+    } <= {"snapshot", "cache", "no_formal_guarantee"}
     assert {
         "stock_instruments",
         "etf_instruments",
@@ -190,14 +248,10 @@ def test_book_and_financial_manifests_keep_independent_truthful_metadata():
     assert tickflow_daily.source_units["ratio"] == "fraction"
     assert tickflow_daily.canonical_units["ratio"] == "percentage_point"
     assert tickflow_daily.verified_at is None
-    for provider_dataset in (
-        ("public", "quote_snapshot"),
-        ("public", "sealed_l1"),
-        ("tickflow", "quote_snapshot"),
-        ("tickflow", "depth5"),
-    ):
-        realtime_units = by_key[provider_dataset].canonical_units
-        assert realtime_units["realtime_timestamp"] == "iso8601"
+    for manifest in manifests:
+        realtime_units = manifest.canonical_units
+        if realtime_units.get("realtime_timestamp") != "iso8601":
+            continue
         assert realtime_units["realtime_timezone"] == "UTC"
         assert realtime_units["market_timezone"] == "Asia/Shanghai"
     for provider in ("public", "tickflow"):

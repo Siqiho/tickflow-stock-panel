@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Literal, Protocol
 
 import polars as pl
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 AssetType = Literal["stock", "index", "etf"]
 
@@ -35,11 +35,13 @@ class ProviderDatasetManifest(BaseModel):
 
     provider: str
     dataset_id: str
-    asset_types: tuple[str, ...]
-    operations: tuple[str, ...]
-    source_units: dict[str, str] = {}
-    canonical_units: dict[str, str] = {}
-    verified_at: str | None = None
+    asset_types: list[str]
+    operations: list[str]
+    source_units: dict[str, str] = Field(default_factory=dict)
+    canonical_units: dict[str, str] = Field(default_factory=dict)
+    entitlement_required: str | None
+    history_guarantee: str | None
+    verified_at: datetime | None
 
     @field_validator("provider", "dataset_id")
     @classmethod
@@ -51,7 +53,7 @@ class ProviderDatasetManifest(BaseModel):
 
     @field_validator("asset_types", "operations")
     @classmethod
-    def validate_non_empty_values(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+    def validate_non_empty_values(cls, values: list[str]) -> list[str]:
         if not values:
             raise ValueError("asset_types and operations must contain non-empty strings")
         normalized: list[str] = []
@@ -61,7 +63,7 @@ class ProviderDatasetManifest(BaseModel):
             normalized.append(value.strip())
         if len(normalized) != len(set(normalized)):
             raise ValueError("operations and asset_types must be unique")
-        return tuple(normalized)
+        return normalized
 
     @field_validator("source_units", "canonical_units")
     @classmethod
