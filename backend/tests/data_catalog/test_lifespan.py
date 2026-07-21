@@ -74,3 +74,99 @@ def test_older_catalog_lifespan_cannot_clear_newer_sink(tmp_path) -> None:
     asyncio.run(scenario())
 
     assert store._control_plane_sink is None
+
+
+def test_newest_exit_restores_older_catalog_owner_for_new_pipeline_runs(tmp_path) -> None:
+    store = JobStore(store_dir=tmp_path / "jobs")
+    first_app = FastAPI()
+    second_app = FastAPI()
+    first = main.catalog_control_plane_lifespan(
+        first_app, tmp_path / "first", job_store_instance=store
+    )
+    second = main.catalog_control_plane_lifespan(
+        second_app, tmp_path / "second", job_store_instance=store
+    )
+
+    async def scenario() -> None:
+        await first.__aenter__()
+        await second.__aenter__()
+        await second.__aexit__(None, None, None)
+
+        job_id = store.create(
+            mirror={"dataset_id": "daily_pipeline", "operation": "daily_pipeline"}
+        )
+        store.start(job_id)
+        store.complete(job_id, {"quality": {"ok": True}})
+
+        assert [run.status for run in first_app.state.catalog_control_db.list_sync_runs("daily_pipeline")] == [
+            "succeeded"
+        ]
+        assert second_app.state.catalog_control_db.list_sync_runs("daily_pipeline") == []
+
+        await first.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+    assert store._control_plane_sink is None
+
+
+def test_inflight_job_stays_bound_to_its_creation_owner_after_newer_owner_enters(tmp_path) -> None:
+    store = JobStore(store_dir=tmp_path / "jobs")
+    first_app = FastAPI()
+    second_app = FastAPI()
+    first = main.catalog_control_plane_lifespan(
+        first_app, tmp_path / "first", job_store_instance=store
+    )
+    second = main.catalog_control_plane_lifespan(
+        second_app, tmp_path / "second", job_store_instance=store
+    )
+
+    async def scenario() -> None:
+        await first.__aenter__()
+        job_id = store.create(
+            mirror={"dataset_id": "daily_pipeline", "operation": "daily_pipeline"}
+        )
+        store.start(job_id)
+        await second.__aenter__()
+        store.complete(job_id, {"quality": {"ok": True}})
+
+        assert [run.status for run in first_app.state.catalog_control_db.list_sync_runs("daily_pipeline")] == [
+            "succeeded"
+        ]
+        assert second_app.state.catalog_control_db.list_sync_runs("daily_pipeline") == []
+
+        await second.__aexit__(None, None, None)
+        await first.__aexit__(None, None, None)
+
+    asyncio.run(scenario())
+
+
+def test_inflight_job_drops_terminal_when_its_owner_exits_instead_of_redirecting(tmp_path) -> None:
+    store = JobStore(store_dir=tmp_path / "jobs")
+    first_app = FastAPI()
+    second_app = FastAPI()
+    first = main.catalog_control_plane_lifespan(
+        first_app, tmp_path / "first", job_store_instance=store
+    )
+    second = main.catalog_control_plane_lifespan(
+        second_app, tmp_path / "second", job_store_instance=store
+    )
+
+    async def scenario() -> None:
+        await first.__aenter__()
+        job_id = store.create(
+            mirror={"dataset_id": "daily_pipeline", "operation": "daily_pipeline"}
+        )
+        store.start(job_id)
+        await second.__aenter__()
+        await first.__aexit__(None, None, None)
+        store.fail(job_id, "owner exited")
+
+        assert [run.status for run in first_app.state.catalog_control_db.list_sync_runs("daily_pipeline")] == [
+            "running"
+        ]
+        assert second_app.state.catalog_control_db.list_sync_runs("daily_pipeline") == []
+
+        await second.__aexit__(None, None, None)
+
+    asyncio.run(scenario())

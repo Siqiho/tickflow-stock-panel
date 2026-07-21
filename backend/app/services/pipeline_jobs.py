@@ -58,43 +58,63 @@ class JobStore:
         self._active_jobs: dict[str, dict[str, Any]] = {}   # running/pending
         self._active_id: str | None = None
         self._lock = threading.Lock()
+        self._sink_owner_lock = threading.Lock()
         self._control_plane_sink: ControlPlaneSink | None = None
         self._control_plane_sink_token: object | None = None
+        self._sink_owners: dict[object, ControlPlaneSink] = {}
+        self._sink_owner_order: list[object] = []
         self._mirror_metadata: dict[str, dict[str, str]] = {}
+        self._mirror_owner_tokens: dict[str, object] = {}
         self._store_dir.mkdir(parents=True, exist_ok=True)
 
     def set_control_plane_sink(self, sink: ControlPlaneSink | None) -> object | None:
         """Install a best-effort sink and return the ownership token for its cleanup."""
-        with self._lock:
-            token = object() if sink is not None else None
+        if sink is None:
+            return None
+        token = object()
+        with self._sink_owner_lock:
+            self._sink_owners[token] = sink
+            self._sink_owner_order.append(token)
             self._control_plane_sink = sink
             self._control_plane_sink_token = token
-            return token
+        return token
 
     def clear_control_plane_sink(self, token: object | None) -> bool:
         """Clear only the sink installed by the caller holding ``token``."""
-        with self._lock:
-            if token is None or token is not self._control_plane_sink_token:
+        with self._sink_owner_lock:
+            if token is None or token not in self._sink_owners:
                 return False
-            self._control_plane_sink = None
-            self._control_plane_sink_token = None
+            del self._sink_owners[token]
+            self._sink_owner_order.remove(token)
+            if self._sink_owner_order:
+                current_token = self._sink_owner_order[-1]
+                self._control_plane_sink_token = current_token
+                self._control_plane_sink = self._sink_owners[current_token]
+            else:
+                self._control_plane_sink = None
+                self._control_plane_sink_token = None
             return True
 
     def _notify_control_plane(
-        self, job: dict[str, Any], mirror: Mapping[str, str] | None
+        self,
+        job: dict[str, Any],
+        mirror: Mapping[str, str] | None,
+        owner_token: object | None,
     ) -> None:
-        if mirror is None:
-            return
-        with self._lock:
-            sink = self._control_plane_sink
-        if sink is None:
+        if mirror is None or owner_token is None:
             return
         payload = dict(job)
         payload["_catalog_mirror"] = dict(mirror)
-        try:
-            sink(payload)
-        except Exception:
-            logger.exception("control-plane job mirror failed: job_id=%s", job.get("id"))
+        # Keep owner lookup and dispatch in one dedicated synchronization domain.
+        # This serializes cleanup with SQLite callbacks without holding the job-state lock.
+        with self._sink_owner_lock:
+            sink = self._sink_owners.get(owner_token)
+            if sink is None:
+                return
+            try:
+                sink(payload)
+            except Exception:
+                logger.exception("control-plane job mirror failed: job_id=%s", job.get("id"))
 
     # ===== persistence =====
 
@@ -144,30 +164,33 @@ class JobStore:
     # ===== lifecycle =====
 
     def create(self, *, mirror: Mapping[str, str] | None = None) -> str:
-        with self._lock:
-            if self._active_id and self._active_jobs.get(self._active_id, {}).get("status") == "running":
-                return self._active_id
+        with self._sink_owner_lock:
+            owner_token = self._control_plane_sink_token if mirror is not None else None
+            with self._lock:
+                if self._active_id and self._active_jobs.get(self._active_id, {}).get("status") == "running":
+                    return self._active_id
 
-            job_id = uuid.uuid4().hex[:10]
-            self._active_jobs[job_id] = {
-                "id": job_id,
-                "status": "pending",
-                "stage": "init",
-                "progress": 0,
-                "stage_pct": 0,
-                "log": [],
-                "started_at": None,
-                "finished_at": None,
-                "duration_s": None,
-                "result": None,
-                "error": None,
-            }
-            if mirror is not None:
-                self._mirror_metadata[job_id] = dict(mirror)
-            self._active_id = job_id
-            created = dict(self._active_jobs[job_id])
-            mirror_metadata = self._mirror_metadata.get(job_id)
-        self._notify_control_plane(created, mirror_metadata)
+                job_id = uuid.uuid4().hex[:10]
+                self._active_jobs[job_id] = {
+                    "id": job_id,
+                    "status": "pending",
+                    "stage": "init",
+                    "progress": 0,
+                    "stage_pct": 0,
+                    "log": [],
+                    "started_at": None,
+                    "finished_at": None,
+                    "duration_s": None,
+                    "result": None,
+                    "error": None,
+                }
+                if mirror is not None and owner_token is not None:
+                    self._mirror_metadata[job_id] = dict(mirror)
+                    self._mirror_owner_tokens[job_id] = owner_token
+                self._active_id = job_id
+                created = dict(self._active_jobs[job_id])
+                mirror_metadata = self._mirror_metadata.get(job_id)
+        self._notify_control_plane(created, mirror_metadata, owner_token)
         return job_id
 
     def start(self, job_id: str) -> None:
@@ -179,7 +202,8 @@ class JobStore:
             j["started_at"] = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
             started = dict(j)
             mirror_metadata = self._mirror_metadata.get(job_id)
-        self._notify_control_plane(started, mirror_metadata)
+            owner_token = self._mirror_owner_tokens.get(job_id)
+        self._notify_control_plane(started, mirror_metadata, owner_token)
 
     def succeed(self, job_id: str, result: Any) -> None:
         self._finish(job_id, status="succeeded", result=result)
@@ -213,7 +237,8 @@ class JobStore:
             self._write_file(j)
             finished = dict(j)
             mirror_metadata = self._mirror_metadata.pop(job_id, None)
-        self._notify_control_plane(finished, mirror_metadata)
+            owner_token = self._mirror_owner_tokens.pop(job_id, None)
+        self._notify_control_plane(finished, mirror_metadata, owner_token)
 
     def fail(self, job_id: str, error: str) -> None:
         with self._lock:
@@ -230,7 +255,8 @@ class JobStore:
             self._write_file(j)
             failed = dict(j)
             mirror_metadata = self._mirror_metadata.pop(job_id, None)
-        self._notify_control_plane(failed, mirror_metadata)
+            owner_token = self._mirror_owner_tokens.pop(job_id, None)
+        self._notify_control_plane(failed, mirror_metadata, owner_token)
 
     # ===== progress =====
 
@@ -296,6 +322,7 @@ class JobStore:
             self._active_jobs.clear()
             self._active_id = None
             self._mirror_metadata.clear()
+            self._mirror_owner_tokens.clear()
             for f in self._store_dir.glob("*.json"):
                 try:
                     f.unlink()
