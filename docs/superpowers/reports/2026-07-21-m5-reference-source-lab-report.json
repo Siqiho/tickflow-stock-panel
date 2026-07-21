@@ -1,0 +1,300 @@
+{
+  "ok": true,
+  "as_of": "2026-07-21",
+  "lab_dir": "/tmp/one-trading-m5-ref-lab-dWIXGI",
+  "source_data_dir": "/Users/simon/Trading/one-trading/data",
+  "started_at": "2026-07-21T21:30:32.770512+08:00",
+  "datasets": {
+    "trading_calendar": {
+      "producer_attempted": true,
+      "meta": {
+        "producer": "szse_month_list",
+        "producer_kind": "exchange_public_http",
+        "endpoint": "http://www.szse.cn/api/report/exchange/onepersistenthour/monthList",
+        "rights_note": "SZSE public website JSON used for Lab only; production rights/ToS still require explicit admission before formal publish.",
+        "expansion": "SH/SZ/BJ rows expanded from SZSE open flag",
+        "months": [
+          "2026-06",
+          "2026-07"
+        ],
+        "raw_day_count": 61,
+        "open_day_count": 44,
+        "fetched_at": "2026-07-21T21:30:34.437479+08:00"
+      },
+      "source": "szse_month_list",
+      "publish": {
+        "ok": true,
+        "dataset_id": "trading_calendar",
+        "run_id": "lab-cal-2026-07-21",
+        "published_path": "/tmp/one-trading-m5-ref-lab-dWIXGI/reference/trading_calendar/calendar.parquet",
+        "row_count": 183,
+        "quality_report_path": "/tmp/one-trading-m5-ref-lab-dWIXGI/.staging/trading_calendar/lab-cal-2026-07-21/quality_report.json",
+        "lineage_path": "/tmp/one-trading-m5-ref-lab-dWIXGI/lineage/trading_calendar/date=2026-07-21/lab-cal-2026-07-21.json",
+        "kept_prior": false,
+        "error": null,
+        "checks": [
+          {
+            "code": "not_empty",
+            "passed": true,
+            "detail": "183 rows"
+          },
+          {
+            "code": "required_columns",
+            "passed": true,
+            "detail": "ok"
+          },
+          {
+            "code": "pk_unique",
+            "passed": true,
+            "detail": "unique=183 rows=183"
+          },
+          {
+            "code": "enum:exchange",
+            "passed": true,
+            "detail": "ok"
+          },
+          {
+            "code": "enum:session_type",
+            "passed": true,
+            "detail": "ok"
+          },
+          {
+            "code": "calendar_session_consistency",
+            "passed": true,
+            "detail": "ok"
+          }
+        ],
+        "staging_dir": "/tmp/one-trading-m5-ref-lab-dWIXGI/.staging/trading_calendar/lab-cal-2026-07-21"
+      },
+      "kline_shadow": {
+        "exchange": "SH",
+        "compare_span": [
+          "2026-06-01",
+          "2026-07-21"
+        ],
+        "calendar_open_days_in_span": 36,
+        "kline_partitions_in_span": 36,
+        "open_with_partition": 36,
+        "open_missing_partition": [],
+        "open_missing_partition_count": 0,
+        "closed_but_partition_exists": [],
+        "closed_but_partition_exists_count": 0,
+        "coverage_open_with_data": 1.0,
+        "note": "shadow_only; missing partitions may mean incomplete backfill, not calendar error"
+      },
+      "weekend_open_rows": 0,
+      "fixture_vs_public": {
+        "overlap_days": 14,
+        "is_open_disagreements": 0,
+        "disagreement_dates": [],
+        "note": "lab_fixture uses weekend-only closes; public includes holidays — disagreements on weekday holidays are expected and good"
+      }
+    },
+    "listing_delisting_events": {
+      "mode": "shadow_from_instruments",
+      "coverage": {
+        "kind": "listing_delisting_events_shadow",
+        "instruments_total": 5529,
+        "events_built": 5528,
+        "invalid_symbol_rows": 0,
+        "sentinel_listing_date_1970": 1,
+        "null_listing_date": 0,
+        "coverage_ratio_vs_instruments": 0.9998191354675349,
+        "delist_events": 0,
+        "relist_events": 0,
+        "code_change_events": 0,
+        "instruments_by_exchange": [
+          {
+            "exchange": "BJ",
+            "len": 328
+          },
+          {
+            "exchange": "SH",
+            "len": 2308
+          },
+          {
+            "exchange": "SZ",
+            "len": 2893
+          }
+        ],
+        "events_by_exchange": [
+          {
+            "exchange": "BJ",
+            "len": 328
+          },
+          {
+            "exchange": "SH",
+            "len": 2308
+          },
+          {
+            "exchange": "SZ",
+            "len": 2892
+          }
+        ],
+        "gaps": [
+          "no_delist_history_in_snapshot",
+          "no_relist_history",
+          "no_code_change_history",
+          "bj_and_star_coverage_depends_on_snapshot_freshness",
+          "sentinel_listing_dates_present"
+        ],
+        "admission": "LAB_SHADOW_ONLY"
+      },
+      "publish": {
+        "ok": true,
+        "dataset_id": "listing_delisting_events",
+        "run_id": "lab-list-2026-07-21",
+        "published_path": "/tmp/one-trading-m5-ref-lab-dWIXGI/reference/listing_delisting_events/events.parquet",
+        "row_count": 5528,
+        "quality_report_path": "/tmp/one-trading-m5-ref-lab-dWIXGI/.staging/listing_delisting_events/lab-list-2026-07-21/quality_report.json",
+        "lineage_path": "/tmp/one-trading-m5-ref-lab-dWIXGI/lineage/listing_delisting_events/date=2026-07-21/lab-list-2026-07-21.json",
+        "kept_prior": false,
+        "error": null,
+        "checks": [
+          {
+            "code": "not_empty",
+            "passed": true,
+            "detail": "5528 rows"
+          },
+          {
+            "code": "required_columns",
+            "passed": true,
+            "detail": "ok"
+          },
+          {
+            "code": "pk_unique",
+            "passed": true,
+            "detail": "unique=5528 rows=5528"
+          },
+          {
+            "code": "enum:event_type",
+            "passed": true,
+            "detail": "ok"
+          },
+          {
+            "code": "enum:exchange",
+            "passed": true,
+            "detail": "ok"
+          },
+          {
+            "code": "symbol_pattern",
+            "passed": true,
+            "detail": "ok"
+          },
+          {
+            "code": "listing_code_change",
+            "passed": true,
+            "detail": "ok"
+          }
+        ],
+        "staging_dir": "/tmp/one-trading-m5-ref-lab-dWIXGI/.staging/listing_delisting_events/lab-list-2026-07-21"
+      }
+    },
+    "instrument_status_history": {
+      "mode": "shadow_from_kline_halt_heuristic",
+      "coverage": {
+        "kind": "instrument_status_history_shadow",
+        "rows": 467,
+        "symbols": 343,
+        "sample_days_requested": 8,
+        "kline_partitions_available": 255,
+        "date_min": "2026-07-10",
+        "date_max": "2026-07-21",
+        "gaps": [
+          "not_exchange_status_feed",
+          "open_high_zero_often_empty_because_prod_strips_halt_bars",
+          "missing_symbol_fallback_confounds_halt_with_incomplete_universe_or_delist",
+          "no_st_star_st_transition_timeline",
+          "no_delisted_terminal_state_from_bars_alone",
+          "point_day_intervals_only"
+        ],
+        "admission": "LAB_SHADOW_ONLY",
+        "built_at": "2026-07-21T21:30:34.517962+08:00"
+      },
+      "publish": {
+        "ok": true,
+        "dataset_id": "instrument_status_history",
+        "run_id": "lab-status-2026-07-21",
+        "published_path": "/tmp/one-trading-m5-ref-lab-dWIXGI/reference/instrument_status_history/status_history.parquet",
+        "row_count": 467,
+        "quality_report_path": "/tmp/one-trading-m5-ref-lab-dWIXGI/.staging/instrument_status_history/lab-status-2026-07-21/quality_report.json",
+        "lineage_path": "/tmp/one-trading-m5-ref-lab-dWIXGI/lineage/instrument_status_history/date=2026-07-21/lab-status-2026-07-21.json",
+        "kept_prior": false,
+        "error": null,
+        "checks": [
+          {
+            "code": "not_empty",
+            "passed": true,
+            "detail": "467 rows"
+          },
+          {
+            "code": "required_columns",
+            "passed": true,
+            "detail": "ok"
+          },
+          {
+            "code": "pk_unique",
+            "passed": true,
+            "detail": "unique=467 rows=467"
+          },
+          {
+            "code": "enum:status",
+            "passed": true,
+            "detail": "ok"
+          },
+          {
+            "code": "status_intervals",
+            "passed": true,
+            "detail": "ok"
+          },
+          {
+            "code": "symbol_pattern",
+            "passed": true,
+            "detail": "ok"
+          }
+        ],
+        "staging_dir": "/tmp/one-trading-m5-ref-lab-dWIXGI/.staging/instrument_status_history/lab-status-2026-07-21"
+      }
+    }
+  },
+  "admission": {
+    "trading_calendar": {
+      "status": "LAB_PASS_CANDIDATE",
+      "reason": "public SZSE month list normalized and published into isolated lab_dir",
+      "blockers_for_production": [
+        "confirm exchange ToS / redistribution rights",
+        "verify SH/BJ identity vs SZSE calendar on special sessions",
+        "extend history depth beyond current lab window",
+        "optional second-source cross-check (SSE official) still missing"
+      ]
+    },
+    "listing_delisting_events": {
+      "status": "LAB_SHADOW_ONLY",
+      "reason": "seeded from current instruments snapshot; no delist history",
+      "blockers_for_production": [
+        "no_delist_history_in_snapshot",
+        "no_relist_history",
+        "no_code_change_history",
+        "bj_and_star_coverage_depends_on_snapshot_freshness",
+        "sentinel_listing_dates_present"
+      ]
+    },
+    "instrument_status_history": {
+      "status": "LAB_SHADOW_ONLY",
+      "reason": "bar heuristic intervals only; not an exchange status feed",
+      "blockers_for_production": [
+        "not_exchange_status_feed",
+        "open_high_zero_often_empty_because_prod_strips_halt_bars",
+        "missing_symbol_fallback_confounds_halt_with_incomplete_universe_or_delist",
+        "no_st_star_st_transition_timeline",
+        "no_delisted_terminal_state_from_bars_alone",
+        "point_day_intervals_only"
+      ]
+    }
+  },
+  "finished_at": "2026-07-21T21:30:34.521538+08:00",
+  "production_publish": {
+    "status": "NO_GO",
+    "reason": "Only trading_calendar has a public producer candidate; listing/status remain shadow-only; rights and second-source checks open"
+  }
+}
