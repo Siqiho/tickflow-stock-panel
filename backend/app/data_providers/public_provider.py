@@ -59,7 +59,12 @@ class PublicProvider:
             asset_types=("stock",),
             operations=("sealed_l1",),
             source_units={"book_volume": "unknown"},
-            canonical_units={"book_volume": "unknown", "realtime_timestamp": "iso8601"},
+            canonical_units={
+                "book_volume": "unknown",
+                "realtime_timestamp": "iso8601",
+                "realtime_timezone": "UTC",
+                "market_timezone": "Asia/Shanghai",
+            },
         ),
         ProviderDatasetManifest(
             provider="public",

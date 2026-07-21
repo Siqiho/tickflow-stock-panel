@@ -74,6 +74,13 @@ def test_manifest_validates_required_values_unique_operations_and_string_unit_ma
             asset_types=("stock",),
             operations=("daily", "daily"),
         )
+    with pytest.raises(ValidationError, match="unique"):
+        ProviderDatasetManifest(
+            provider="fixture",
+            dataset_id="stock_daily",
+            asset_types=("stock",),
+            operations=("daily", " daily "),
+        )
     with pytest.raises(ValidationError, match="source_units"):
         ProviderDatasetManifest(
             provider="fixture",
@@ -105,6 +112,7 @@ def test_normalize_daily_converts_declared_units_only_for_publication():
         data, source="fixture", manifest=_daily_manifest(), for_publication=True
     )
 
+    assert staged.columns == ["symbol", "date", "open", "high", "low", "close", "volume", "amount"]
     assert staged["volume"].item() == 250.0
     assert staged["amount"].item() == 2.5
     assert published["volume"].item() == 2.5
@@ -182,6 +190,16 @@ def test_book_and_financial_manifests_keep_independent_truthful_metadata():
     assert tickflow_daily.source_units["ratio"] == "fraction"
     assert tickflow_daily.canonical_units["ratio"] == "percentage_point"
     assert tickflow_daily.verified_at is None
+    for provider_dataset in (
+        ("public", "quote_snapshot"),
+        ("public", "sealed_l1"),
+        ("tickflow", "quote_snapshot"),
+        ("tickflow", "depth5"),
+    ):
+        realtime_units = by_key[provider_dataset].canonical_units
+        assert realtime_units["realtime_timestamp"] == "iso8601"
+        assert realtime_units["realtime_timezone"] == "UTC"
+        assert realtime_units["market_timezone"] == "Asia/Shanghai"
     for provider in ("public", "tickflow"):
         for dataset_id in (
             "financial_metrics",

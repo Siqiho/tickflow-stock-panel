@@ -127,7 +127,12 @@ class TickFlowProvider:
             asset_types=("stock",),
             operations=("depth5",),
             source_units={"book_volume": "unknown"},
-            canonical_units={"book_volume": "unknown", "realtime_timestamp": "iso8601"},
+            canonical_units={
+                "book_volume": "unknown",
+                "realtime_timestamp": "iso8601",
+                "realtime_timezone": "UTC",
+                "market_timezone": "Asia/Shanghai",
+            },
             verified_at=None,
         ),
         _tickflow_financial_manifest("financial_metrics"),

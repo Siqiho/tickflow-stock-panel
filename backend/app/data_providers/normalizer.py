@@ -22,6 +22,9 @@ DAILY_COLS = [
     "close",
     "volume",
     "amount",
+]
+PUBLICATION_DAILY_COLS = [
+    *DAILY_COLS,
     "change_pct",
     "turnover_rate",
 ]
@@ -120,7 +123,8 @@ def normalize_daily(
                     .alias(column)
                 )
     df = filter_halt_days(df)
-    keep = [c for c in DAILY_COLS if c in df.columns]
+    columns = PUBLICATION_DAILY_COLS if for_publication else DAILY_COLS
+    keep = [c for c in columns if c in df.columns]
     return df.select(keep) if keep else pl.DataFrame()
 
 

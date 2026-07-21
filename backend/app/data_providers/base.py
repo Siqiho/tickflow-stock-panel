@@ -52,11 +52,16 @@ class ProviderDatasetManifest(BaseModel):
     @field_validator("asset_types", "operations")
     @classmethod
     def validate_non_empty_values(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        if not values or any(not isinstance(value, str) or not value.strip() for value in values):
+        if not values:
             raise ValueError("asset_types and operations must contain non-empty strings")
-        if len(values) != len(set(values)):
+        normalized: list[str] = []
+        for value in values:
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("asset_types and operations must contain non-empty strings")
+            normalized.append(value.strip())
+        if len(normalized) != len(set(normalized)):
             raise ValueError("operations and asset_types must be unique")
-        return tuple(value.strip() for value in values)
+        return tuple(normalized)
 
     @field_validator("source_units", "canonical_units")
     @classmethod
