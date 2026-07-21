@@ -3,6 +3,7 @@ import { renderHook, waitFor } from '@testing-library/react'
 import type { PropsWithChildren } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api'
+import { QK } from '../queryKeys'
 import { useDataCatalog } from '../useSharedQueries'
 
 const catalogResponse = {
@@ -68,6 +69,11 @@ afterEach(() => {
 })
 
 describe('data catalog client', () => {
+  it('uses structurally distinct run keys for all runs and dataset id all', () => {
+    expect(QK.dataCatalogRuns()).not.toEqual(QK.dataCatalogRuns('all'))
+    expect(QK.dataCatalogRuns()).not.toEqual(QK.dataCatalogRuns('stock_daily'))
+  })
+
   it('keeps the last catalog visible and marks it stale when a refetch fails', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify(catalogResponse), { status: 200 }))

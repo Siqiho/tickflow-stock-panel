@@ -43,7 +43,9 @@ export const QK = {
   dataCatalog:          ['data-catalog'] as const,
   dataCatalogDataset:   (id: string) => ['data-catalog', 'dataset', id] as const,
   dataCatalogSchema:    (id: string) => ['data-catalog', 'schema', id] as const,
-  dataCatalogRuns:      (id?: string) => ['data-catalog', 'runs', id ?? 'all'] as const,
+  dataCatalogRuns:      (id?: string) => id === undefined
+    ? ['data-catalog', 'runs', 'all'] as const
+    : ['data-catalog', 'runs', 'dataset', id] as const,
   pipelineJobs:         ['pipeline-jobs'] as const,
   pipelineJob:          (id: string) => ['pipeline-job', id] as const,
   extData:              ['ext-data'] as const,
