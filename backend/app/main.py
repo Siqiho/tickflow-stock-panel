@@ -319,7 +319,7 @@ async def lifespan(app: FastAPI):
                     continue
                 try:
                     getattr(resource, method_name)(**kwargs)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.warning("shutdown resource failed (%s): %s", method_name, exc)
             logger.info("shutdown")
         finally:
