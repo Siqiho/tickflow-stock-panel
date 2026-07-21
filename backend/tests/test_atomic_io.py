@@ -57,3 +57,15 @@ def test_lineage_record_contains_required_provenance(tmp_path):
     assert record["source"] == "tickflow"
     assert record["row_count"] == 5522
     assert record["fetched_at"]
+
+
+@pytest.mark.parametrize("unit_version", [None, "", "   "])
+def test_lineage_record_rejects_missing_unit_version_before_disk_io(tmp_path, unit_version):
+    with pytest.raises(ValueError, match="unit_version"):
+        write_lineage_record(
+            tmp_path,
+            "kline_daily",
+            {"date": "2026-07-17", "source": "fixture", "unit_version": unit_version},
+        )
+
+    assert not (tmp_path / "lineage").exists()

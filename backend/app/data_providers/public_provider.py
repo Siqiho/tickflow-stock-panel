@@ -1,4 +1,5 @@
 """Typed adapter over one-trading's admitted public data services."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -7,7 +8,28 @@ from typing import Any
 
 import polars as pl
 
-from app.data_providers.base import AssetType, ProviderCapabilities
+from app.data_providers.base import AssetType, ProviderCapabilities, ProviderDatasetManifest
+
+_CN_QUOTE_UNITS = {
+    "volume": "lot",
+    "amount": "CNY",
+    "ratio": "percentage_point",
+    "daily_timestamp": "date",
+    "realtime_timestamp": "iso8601",
+    "realtime_timezone": "UTC",
+    "market_timezone": "Asia/Shanghai",
+}
+
+
+def _public_financial_manifest(dataset_id: str) -> ProviderDatasetManifest:
+    return ProviderDatasetManifest(
+        provider="public",
+        dataset_id=dataset_id,
+        asset_types=("stock",),
+        operations=("financial",),
+        source_units={"monetary_currency": "unknown", "monetary_scale": "unknown"},
+        canonical_units={"monetary_currency": "unknown", "monetary_scale": "unknown"},
+    )
 
 
 class PublicProvider:
@@ -21,6 +43,44 @@ class PublicProvider:
         pools=True,
     )
     operations = frozenset({"quote_snapshot", "sealed_l1", "adj_factor", "financial", "pools"})
+    dataset_manifests = (
+        ProviderDatasetManifest(
+            provider="public",
+            dataset_id="quote_snapshot",
+            asset_types=("stock", "index", "etf"),
+            operations=("quote_snapshot",),
+            # Quote rows carry per-row provenance and are already canonical.
+            source_units={"volume": "unknown", "amount": "unknown", "ratio": "percentage_point"},
+            canonical_units=_CN_QUOTE_UNITS,
+        ),
+        ProviderDatasetManifest(
+            provider="public",
+            dataset_id="sealed_l1",
+            asset_types=("stock",),
+            operations=("sealed_l1",),
+            source_units={"book_volume": "unknown"},
+            canonical_units={"book_volume": "unknown", "realtime_timestamp": "iso8601"},
+        ),
+        ProviderDatasetManifest(
+            provider="public",
+            dataset_id="stock_adj_factor",
+            asset_types=("stock",),
+            operations=("adj_factor",),
+            source_units={"daily_timestamp": "date"},
+            canonical_units={"daily_timestamp": "date"},
+        ),
+        _public_financial_manifest("financial_metrics"),
+        _public_financial_manifest("financial_income"),
+        _public_financial_manifest("financial_balance_sheet"),
+        _public_financial_manifest("financial_cash_flow"),
+        _public_financial_manifest("financial_shares"),
+        ProviderDatasetManifest(
+            provider="public",
+            dataset_id="pools",
+            asset_types=("stock",),
+            operations=("pools",),
+        ),
+    )
 
     def supports(self, operation: str) -> bool:
         return operation in self.operations
@@ -74,7 +134,7 @@ class PublicProvider:
 
     # Protocol compatibility: public capability is intentionally limited to
     # typed operations above, not a second general-purpose daily provider.
-    def get_instruments(self, asset_type: AssetType) -> pl.DataFrame:  # noqa: ARG002
+    def get_instruments(self, asset_type: AssetType) -> pl.DataFrame:
         return pl.DataFrame()
 
     def get_daily(
@@ -83,7 +143,7 @@ class PublicProvider:
         start_time: datetime | None,
         end_time: datetime | None,
         asset_type: AssetType,
-    ) -> pl.DataFrame:  # noqa: ARG002
+    ) -> pl.DataFrame:
         return pl.DataFrame()
 
     def get_adj_factors(
@@ -92,7 +152,7 @@ class PublicProvider:
         start_time: datetime | None,
         end_time: datetime | None,
         asset_type: AssetType,
-    ) -> pl.DataFrame:  # noqa: ARG002
+    ) -> pl.DataFrame:
         return pl.DataFrame()
 
     def get_minute(
@@ -102,7 +162,7 @@ class PublicProvider:
         end_time: datetime | None,
         asset_type: AssetType,
         freq: str = "1m",
-    ) -> pl.DataFrame:  # noqa: ARG002
+    ) -> pl.DataFrame:
         return pl.DataFrame()
 
     def get_realtime(

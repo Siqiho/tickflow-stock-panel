@@ -1,8 +1,9 @@
 """Crash-safe local artifact writers."""
+
 from __future__ import annotations
 
-import os
 import json
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +48,9 @@ def write_lineage_record(
 ) -> Path:
     """Persist one immutable provenance sidecar for a produced data artifact."""
     payload = dict(record)
+    unit_version = payload.get("unit_version")
+    if not isinstance(unit_version, str) or not unit_version.strip():
+        raise ValueError("lineage record requires a non-empty unit_version")
     payload.setdefault("fetched_at", datetime.now().astimezone().isoformat())
     ds = str(payload.get("date") or "unknown")
     rid = run_id or uuid.uuid4().hex

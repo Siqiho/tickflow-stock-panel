@@ -4,10 +4,12 @@ Production default remains TickFlow. Custom HTTP sources are loaded from
 `data/data_sources/*.yaml` via `app.data_providers.custom` and are NEVER the
 implicit default. Callers must pass an explicit custom source name.
 """
+
 from __future__ import annotations
 
-from app.data_providers.tickflow_provider import TickFlowProvider
+from app.data_providers.base import ProviderDatasetManifest
 from app.data_providers.public_provider import PublicProvider
+from app.data_providers.tickflow_provider import TickFlowProvider
 
 _PROVIDERS = {
     "tickflow": TickFlowProvider,
@@ -44,3 +46,29 @@ def list_provider_names() -> list[str]:
 
     load_custom_all()
     return ["tickflow", "public", *sorted(custom_names())]
+
+
+def get_provider_manifests(name: str) -> list[ProviderDatasetManifest]:
+    """Return detached built-in manifests without loading custom-provider configuration."""
+    key = (name or "").strip().lower()
+    provider_type = _PROVIDERS.get(key)
+    if provider_type is None:
+        return []
+    manifests = sorted(
+        provider_type.dataset_manifests,
+        key=lambda manifest: (manifest.provider, manifest.dataset_id, manifest.operations),
+    )
+    return [manifest.model_copy(deep=True) for manifest in manifests]
+
+
+def list_provider_manifests() -> list[ProviderDatasetManifest]:
+    """List detached built-in metadata in deterministic order, with no provider calls."""
+    manifests = [
+        manifest.model_copy(deep=True)
+        for provider_type in _PROVIDERS.values()
+        for manifest in provider_type.dataset_manifests
+    ]
+    return sorted(
+        manifests,
+        key=lambda manifest: (manifest.provider, manifest.dataset_id, manifest.operations),
+    )
