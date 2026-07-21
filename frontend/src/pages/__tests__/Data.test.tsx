@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -51,13 +51,45 @@ function createClient() {
   return client
 }
 
-function renderData(client = createClient()) {
+const unselectedCatalogKeys = [
+  QK.dataCatalogDataset('etf_daily'),
+  QK.dataCatalogSchema('etf_daily'),
+  QK.dataCatalogRuns('etf_daily'),
+]
+
+function seedUnselectedCatalogQueries(client: QueryClient) {
+  for (const queryKey of unselectedCatalogKeys) client.setQueryData(queryKey, { preserved: true })
+  return unselectedCatalogKeys.map(() => vi.fn(async () => ({ refetched: true })))
+}
+
+function expectUnselectedCatalogQueriesFresh(
+  client: QueryClient,
+  queryFns: ReturnType<typeof seedUnselectedCatalogQueries>,
+) {
+  unselectedCatalogKeys.forEach((queryKey, index) => {
+    expect(client.getQueryState(queryKey)?.isInvalidated).toBe(false)
+    expect(queryFns[index]).not.toHaveBeenCalled()
+  })
+}
+
+function UnselectedCatalogProbe({ queryFns }: { queryFns: ReturnType<typeof seedUnselectedCatalogQueries> }) {
+  useQuery({ queryKey: unselectedCatalogKeys[0], queryFn: queryFns[0] })
+  useQuery({ queryKey: unselectedCatalogKeys[1], queryFn: queryFns[1] })
+  useQuery({ queryKey: unselectedCatalogKeys[2], queryFn: queryFns[2] })
+  return null
+}
+
+function renderData(
+  client = createClient(),
+  unselectedQueryFns?: ReturnType<typeof seedUnselectedCatalogQueries>,
+) {
   return {
     client,
     ...render(
       <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <QueryClientProvider client={client}>
           <Data />
+          {unselectedQueryFns && <UnselectedCatalogProbe queryFns={unselectedQueryFns} />}
         </QueryClientProvider>
       </MemoryRouter>,
     ),
@@ -78,6 +110,8 @@ beforeEach(() => {
     unit_version: 'cn_market_v1',
     fields: [],
   }))
+  vi.spyOn(api, 'syncIndexDaily').mockResolvedValue({ status: 'ok', index_count: 1, rows_written: 1 })
+  vi.spyOn(api, 'dataClear').mockResolvedValue({ deleted_files: 1 })
 })
 
 afterEach(() => {
@@ -144,6 +178,7 @@ describe('Data workbench integration', () => {
 
   it('invalidates only explicit workbench keys when a pipeline reaches a terminal state', async () => {
     const client = createClient()
+    const unselectedQueryFns = seedUnselectedCatalogQueries(client)
     client.setQueryData(QK.pipelineJobs, { active_id: 'job-1', jobs: [] })
     vi.spyOn(api, 'pipelineJob').mockResolvedValue({
       id: 'job-1',
@@ -166,7 +201,7 @@ describe('Data workbench integration', () => {
     })
     const invalidate = vi.spyOn(client, 'invalidateQueries')
 
-    renderData(client)
+    renderData(client, unselectedQueryFns)
 
     await waitFor(() => expect(api.pipelineJob).toHaveBeenCalledWith('job-1'))
     await waitFor(() => {
@@ -177,6 +212,92 @@ describe('Data workbench integration', () => {
       expect(invalidatedKeys).toContainEqual(QK.pipelineJobs)
     })
     expect(invalidate.mock.calls.every(([filters]) => Boolean(filters && 'queryKey' in filters))).toBe(true)
+    expectUnselectedCatalogQueriesFresh(client, unselectedQueryFns)
+  })
+
+  it('normalizes 36 months to one year before calculating index sync days', async () => {
+    const client = createClient()
+    client.setQueryData(QK.capabilities, { capabilities: { 'kline.daily.batch': {} }, features: {} })
+    client.setQueryData(QK.dataStatus, {
+      ...statusFixture,
+      daily: {
+        rows: 1,
+        earliest_date: '2026-01-01',
+        latest_date: '2026-07-21',
+        symbols_covered: 1,
+        trading_days: 1,
+      },
+      index_daily: {
+        rows: 1,
+        earliest_date: '2026-01-01',
+        latest_date: '2026-07-21',
+        symbols_covered: 1,
+        trading_days: 1,
+      },
+    })
+    renderData(client)
+
+    fireEvent.click(await screen.findByRole('button', { name: '指数手动获取' }))
+    const modalHeading = screen.getByRole('heading', { name: '指数 · 手动获取' })
+    const modal = modalHeading.parentElement?.parentElement
+    expect(modal).not.toBeNull()
+    const plus = within(modal!).getByRole('button', { name: '+' })
+    for (let count = 6; count < 36; count += 1) fireEvent.click(plus)
+    expect(within(modal!).getByText('36')).toBeInTheDocument()
+
+    fireEvent.click(within(modal!).getByRole('button', { name: '年' }))
+    expect(within(modal!).queryByText('36')).not.toBeInTheDocument()
+    expect(within(modal!).getByText('1')).toBeInTheDocument()
+    fireEvent.click(within(modal!).getByRole('button', { name: '获取数据' }))
+
+    await waitFor(() => expect(api.syncIndexDaily).toHaveBeenCalledTimes(1))
+    const expectedTarget = new Date('2026-01-01')
+    expectedTarget.setDate(expectedTarget.getDate() - 365)
+    const expectedDays = Math.min(5000, Math.max(30, Math.ceil((Date.now() - expectedTarget.getTime()) / 86_400_000) + 1))
+    expect(api.syncIndexDaily).toHaveBeenCalledWith(expectedDays)
+    expect(expectedDays).toBeLessThan(5000)
+  })
+
+  it('keeps unrelated catalog children fresh after index sync', async () => {
+    const client = createClient()
+    const unselectedQueryFns = seedUnselectedCatalogQueries(client)
+    client.setQueryData(QK.capabilities, { capabilities: { 'kline.daily.batch': {} }, features: {} })
+    client.setQueryData(QK.dataStatus, {
+      ...statusFixture,
+      daily: {
+        rows: 1,
+        earliest_date: '2026-01-01',
+        latest_date: '2026-07-21',
+        symbols_covered: 1,
+        trading_days: 1,
+      },
+      index_daily: {
+        rows: 1,
+        earliest_date: '2026-01-01',
+        latest_date: '2026-07-21',
+        symbols_covered: 1,
+        trading_days: 1,
+      },
+    })
+    renderData(client, unselectedQueryFns)
+
+    fireEvent.click(await screen.findByRole('button', { name: '指数手动获取' }))
+    fireEvent.click(screen.getByRole('button', { name: '获取数据' }))
+
+    await waitFor(() => expect(api.syncIndexDaily).toHaveBeenCalledTimes(1))
+    await waitFor(() => expectUnselectedCatalogQueriesFresh(client, unselectedQueryFns))
+  })
+
+  it('keeps unrelated catalog children fresh after destructive clear', async () => {
+    const client = createClient()
+    const unselectedQueryFns = seedUnselectedCatalogQueries(client)
+    renderData(client, unselectedQueryFns)
+
+    fireEvent.click(await screen.findByRole('button', { name: '清除数据' }))
+    fireEvent.click(screen.getAllByRole('button', { name: '清除数据' }).at(-1)!)
+
+    await waitFor(() => expect(api.dataClear).toHaveBeenCalledTimes(1))
+    await waitFor(() => expectUnselectedCatalogQueriesFresh(client, unselectedQueryFns))
   })
 
   it('keeps maintenance and legacy history usable when catalog and run queries fail', async () => {

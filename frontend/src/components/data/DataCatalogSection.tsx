@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react'
 import { AlertTriangle, Database } from 'lucide-react'
 import type { CatalogResponse, DatasetCatalogEntry } from '@/lib/api'
 import { DatasetCatalogCard } from './DatasetCatalogCard'
@@ -32,14 +31,12 @@ export function DataCatalogSection({
   isStale = false,
   error = null,
   onSelectDataset,
-  actions,
   headingLevel = 2,
 }: {
   catalog?: CatalogResponse
   isStale?: boolean
   error?: Error | null
   onSelectDataset?: (entry: DatasetCatalogEntry) => void
-  actions?: ReactNode
   headingLevel?: 2 | 3
 }) {
   if (!catalog) {
@@ -70,15 +67,12 @@ export function DataCatalogSection({
           </Heading>
           <p className="mt-1 text-[11px] text-muted">本地数据、可用性、覆盖与质量事实</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {stale && (
-            <span className="inline-flex items-center gap-1.5 rounded-btn bg-warning/10 px-2 py-1 text-xs font-medium text-warning">
-              <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5" />
-              状态可能过期
-            </span>
-          )}
-          {actions}
-        </div>
+        {stale && (
+          <span className="inline-flex items-center gap-1.5 rounded-btn bg-warning/10 px-2 py-1 text-xs font-medium text-warning">
+            <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5" />
+            状态可能过期
+          </span>
+        )}
       </div>
 
       {entries.length === 0 ? (

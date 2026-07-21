@@ -166,13 +166,17 @@ export function Data() {
   const clearData = useMutation({
     mutationFn: api.dataClear,
     onSuccess: async () => {
-      const keys = [QK.dataStatus, QK.dataCatalog, QK.dataCatalogRuns(), QK.pipelineJobs]
-      await Promise.all(keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })))
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: QK.dataStatus, exact: true }),
+        queryClient.invalidateQueries({ queryKey: QK.dataCatalog, exact: true }),
+        queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(), exact: true }),
+        queryClient.invalidateQueries({ queryKey: QK.pipelineJobs, exact: true }),
+      ])
       if (selectedDatasetId) {
         await Promise.all([
-          queryClient.invalidateQueries({ queryKey: QK.dataCatalogDataset(selectedDatasetId) }),
-          queryClient.invalidateQueries({ queryKey: QK.dataCatalogSchema(selectedDatasetId) }),
-          queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(selectedDatasetId) }),
+          queryClient.invalidateQueries({ queryKey: QK.dataCatalogDataset(selectedDatasetId), exact: true }),
+          queryClient.invalidateQueries({ queryKey: QK.dataCatalogSchema(selectedDatasetId), exact: true }),
+          queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(selectedDatasetId), exact: true }),
         ])
       }
       setShowClearConfirm(false)
@@ -182,13 +186,15 @@ export function Data() {
     mutationFn: () => api.rescanDataCatalog(),
     onSuccess: async (response) => {
       queryClient.setQueryData(QK.dataCatalog, response)
-      const keys = [QK.dataStatus, QK.dataCatalogRuns()]
-      await Promise.all(keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })))
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: QK.dataStatus, exact: true }),
+        queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(), exact: true }),
+      ])
       if (selectedDatasetId) {
         await Promise.all([
-          queryClient.invalidateQueries({ queryKey: QK.dataCatalogDataset(selectedDatasetId) }),
-          queryClient.invalidateQueries({ queryKey: QK.dataCatalogSchema(selectedDatasetId) }),
-          queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(selectedDatasetId) }),
+          queryClient.invalidateQueries({ queryKey: QK.dataCatalogDataset(selectedDatasetId), exact: true }),
+          queryClient.invalidateQueries({ queryKey: QK.dataCatalogSchema(selectedDatasetId), exact: true }),
+          queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(selectedDatasetId), exact: true }),
         ])
       }
     },
@@ -237,11 +243,11 @@ export function Data() {
     mutationFn: () => api.syncIndexDaily(indexSyncDays),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: QK.dataStatus }),
-        queryClient.invalidateQueries({ queryKey: QK.dataCatalog }),
-        queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns() }),
-        queryClient.invalidateQueries({ queryKey: QK.indexList }),
-        queryClient.invalidateQueries({ queryKey: QK.indexQuotes }),
+        queryClient.invalidateQueries({ queryKey: QK.dataStatus, exact: true }),
+        queryClient.invalidateQueries({ queryKey: QK.dataCatalog, exact: true }),
+        queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(), exact: true }),
+        queryClient.invalidateQueries({ queryKey: QK.indexList, exact: true }),
+        queryClient.invalidateQueries({ queryKey: QK.indexQuotes, exact: true }),
       ])
     },
   })
@@ -274,9 +280,11 @@ export function Data() {
   const terminalJobStatus = job.data?.status
   useEffect(() => {
     if (!terminalJobStatus || !['succeeded', 'degraded', 'failed'].includes(terminalJobStatus)) return undefined
-    const keys = [QK.dataStatus, QK.dataCatalog, QK.dataCatalogRuns(), QK.pipelineJobs]
-    for (const queryKey of keys) void queryClient.invalidateQueries({ queryKey })
-    if (selectedDatasetId) void queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(selectedDatasetId) })
+    void queryClient.invalidateQueries({ queryKey: QK.dataStatus, exact: true })
+    void queryClient.invalidateQueries({ queryKey: QK.dataCatalog, exact: true })
+    void queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(), exact: true })
+    void queryClient.invalidateQueries({ queryKey: QK.pipelineJobs, exact: true })
+    if (selectedDatasetId) void queryClient.invalidateQueries({ queryKey: QK.dataCatalogRuns(selectedDatasetId), exact: true })
     const timer = window.setTimeout(() => setActiveJobId(null), 5_000)
     return () => window.clearTimeout(timer)
   }, [queryClient, selectedDatasetId, terminalJobStatus])
@@ -578,7 +586,7 @@ function IndexSettings({
   return (
     <div className="space-y-4 rounded-card border border-border bg-base/30 p-4">
       <div><div className="text-sm font-medium text-foreground">指数日 K</div><div className="mt-1 text-[11px] text-muted">先刷新 CN_Index 维表，再向前扩展指数历史；指数不需要复权。</div></div>
-      <div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => setIndexExtendValue((value) => Math.max(1, value - 1))} disabled={disabled} className="rounded-btn border border-border bg-elevated px-2 py-1 text-xs">−</button><span className="font-mono text-xs">{indexExtendValue}</span><button type="button" onClick={() => setIndexExtendValue((value) => Math.min(indexExtendUnit === 'year' ? 10 : 36, value + 1))} disabled={disabled} className="rounded-btn border border-border bg-elevated px-2 py-1 text-xs">+</button>{(['month', 'year'] as const).map((unit) => <button type="button" key={unit} onClick={() => setIndexExtendUnit(unit)} disabled={disabled} className={`rounded-btn border border-border px-2 py-1 text-xs ${indexExtendUnit === unit ? 'bg-accent/15 text-accent' : 'bg-elevated text-secondary'}`}>{unit === 'month' ? '月' : '年'}</button>)}</div>
+      <div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => setIndexExtendValue((value) => Math.max(1, value - 1))} disabled={disabled} className="rounded-btn border border-border bg-elevated px-2 py-1 text-xs">−</button><span className="font-mono text-xs">{indexExtendValue}</span><button type="button" onClick={() => setIndexExtendValue((value) => Math.min(indexExtendUnit === 'year' ? 10 : 36, value + 1))} disabled={disabled} className="rounded-btn border border-border bg-elevated px-2 py-1 text-xs">+</button>{(['month', 'year'] as const).map((unit) => <button type="button" key={unit} onClick={() => { setIndexExtendUnit(unit); if (unit === 'year' && indexExtendValue > 10) setIndexExtendValue(1); if (unit === 'month' && indexExtendValue > 36) setIndexExtendValue(6) }} disabled={disabled} className={`rounded-btn border border-border px-2 py-1 text-xs ${indexExtendUnit === unit ? 'bg-accent/15 text-accent' : 'bg-elevated text-secondary'}`}>{unit === 'month' ? '月' : '年'}</button>)}</div>
       <div className="text-[10px] text-muted">预计扩展至 <span className="font-mono text-secondary">{indexTargetDateText}</span>{indexEarliestDate && <>（当前最早：<span className="font-mono text-secondary">{indexEarliestDate}</span>）</>}</div>
       <div className="rounded-btn border border-border p-3"><div className="flex items-center justify-between gap-3"><div><div className="text-xs font-medium">批次大小</div><div className="text-[10px] text-muted">当前生效：{indexDailyBatchSize}</div></div><div className="flex gap-2"><input aria-label="指数批次大小" type="number" min={1} max={10000} value={indexBatchInput} onChange={(event) => setIndexBatchInput(event.target.value)} disabled={updateBatchSize.isPending || blocked} className="w-20 rounded-btn border border-border bg-elevated px-2 py-1 text-xs" /><button type="button" onClick={() => { const size = Math.max(1, Math.min(10000, Number(indexBatchInput) || 100)); setIndexBatchInput(String(size)); updateBatchSize.mutate(size) }} disabled={updateBatchSize.isPending || blocked} className="rounded-btn border border-border bg-elevated px-2 py-1 text-xs">{updateBatchSize.isPending ? '保存中…' : '保存'}</button></div></div></div>
       <button type="button" onClick={() => sync.mutate()} disabled={disabled} className="w-full rounded-btn bg-accent px-3 py-1.5 text-xs font-medium text-base disabled:opacity-40">{sync.isPending ? '获取中…' : '获取数据'}</button>
