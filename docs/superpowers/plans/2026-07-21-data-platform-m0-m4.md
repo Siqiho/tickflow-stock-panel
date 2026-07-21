@@ -366,6 +366,11 @@ Migration files are discovered by their numeric prefix and applied one by one. B
 `unit_contracts.py` exports the four required literal aliases plus:
 
 ```python
+VolumeUnit = Literal["share", "lot", "contract", "unknown"]
+AmountUnit = Literal["CNY", "TEN_THOUSAND_CNY", "USD", "HKD", "unknown"]
+RatioScale = Literal["fraction", "percentage_point", "unknown"]
+TimestampUnit = Literal["date", "s", "ms", "iso8601"]
+
 class UnitContractError(ValueError): ...
 
 CN_CANONICAL_UNITS: Mapping[str, str]
@@ -381,6 +386,8 @@ ensure_publishable_units(
 ) -> None
 ```
 
+- UTC and `Asia/Shanghai` are timezone metadata, not `TimestampUnit` members. Do not add `market_date`, `utc`, or timestamp `unknown` spellings.
+- Existing lowercase row-provenance values such as `cny` and `ten_thousand_cny` remain backward compatible in response rows; an internal boundary parser may map them to the exact uppercase `AmountUnit` members without rewriting current payloads.
 - CN conversion is `share -> lot` by `/100`, `TEN_THOUSAND_CNY -> CNY` by `*10_000`, and `fraction -> percentage_point` by `*100`. Null stays null.
 - Unknown required source units raise `UnitContractError` before any provider/network call. Non-CN publication raises if it attempts to use CN canonical `lot` or `CNY`.
 - `normalize_daily` gains keyword-only `manifest: ProviderDatasetManifest | None = None`, `market: str = "CN"`, and `for_publication: bool = False`. Staging/legacy normalization remains compatible with the default. When `for_publication=True`, a manifest is required, volume/amount must be publishable, conversion is applied, and `change_pct`/`turnover_rate` use the declared ratio scale.
