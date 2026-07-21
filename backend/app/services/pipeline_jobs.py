@@ -14,6 +14,7 @@ import json
 import logging
 import threading
 import uuid
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -23,6 +24,7 @@ from app.services.atomic_io import atomic_write_json
 logger = logging.getLogger(__name__)
 
 JobStatus = Literal["pending", "running", "succeeded", "degraded", "failed"]
+ControlPlaneSink = Callable[[dict[str, Any]], None]
 
 
 def terminal_status(result: dict[str, Any]) -> Literal["succeeded", "degraded"]:
@@ -56,7 +58,25 @@ class JobStore:
         self._active_jobs: dict[str, dict[str, Any]] = {}   # running/pending
         self._active_id: str | None = None
         self._lock = threading.Lock()
+        self._control_plane_sink: ControlPlaneSink | None = None
         self._store_dir.mkdir(parents=True, exist_ok=True)
+
+    def set_control_plane_sink(self, sink: ControlPlaneSink | None) -> None:
+        """Set the optional best-effort sink used only by opted-in pipeline jobs."""
+        with self._lock:
+            self._control_plane_sink = sink
+
+    def _notify_control_plane(self, job: dict[str, Any]) -> None:
+        if "_catalog_mirror" not in job:
+            return
+        with self._lock:
+            sink = self._control_plane_sink
+        if sink is None:
+            return
+        try:
+            sink(dict(job))
+        except Exception:
+            logger.exception("control-plane job mirror failed: job_id=%s", job.get("id"))
 
     # ===== persistence =====
 
@@ -105,7 +125,7 @@ class JobStore:
 
     # ===== lifecycle =====
 
-    def create(self) -> str:
+    def create(self, *, mirror: Mapping[str, str] | None = None) -> str:
         with self._lock:
             if self._active_id and self._active_jobs.get(self._active_id, {}).get("status") == "running":
                 return self._active_id
@@ -124,8 +144,12 @@ class JobStore:
                 "result": None,
                 "error": None,
             }
+            if mirror is not None:
+                self._active_jobs[job_id]["_catalog_mirror"] = dict(mirror)
             self._active_id = job_id
-            return job_id
+            created = dict(self._active_jobs[job_id])
+        self._notify_control_plane(created)
+        return job_id
 
     def start(self, job_id: str) -> None:
         with self._lock:
@@ -134,6 +158,8 @@ class JobStore:
                 return
             j["status"] = "running"
             j["started_at"] = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+            started = dict(j)
+        self._notify_control_plane(started)
 
     def succeed(self, job_id: str, result: Any) -> None:
         self._finish(job_id, status="succeeded", result=result)
@@ -165,6 +191,8 @@ class JobStore:
                 self._active_id = None
             self._delete_oldest()
             self._write_file(j)
+            finished = dict(j)
+        self._notify_control_plane(finished)
 
     def fail(self, job_id: str, error: str) -> None:
         with self._lock:
@@ -179,6 +207,8 @@ class JobStore:
                 self._active_id = None
             self._delete_oldest()
             self._write_file(j)
+            failed = dict(j)
+        self._notify_control_plane(failed)
 
     # ===== progress =====
 

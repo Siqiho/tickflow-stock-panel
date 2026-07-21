@@ -11,14 +11,40 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
-from app.api import analysis, auth as auth_api, backtest, data, ext_data, financials, indices, intraday, kline, market_recap, monitor_rules, alerts, overview, pipeline, rps, screener, settings as settings_api, signals, stock_analysis, strategy, watchlist
-from app.api.routes import router as core_router
-from app.api import free_ext
-from app.api import custom_sources
+from app.api import (
+    alerts,
+    analysis,
+    backtest,
+    custom_sources,
+    data,
+    ext_data,
+    financials,
+    free_ext,
+    indices,
+    intraday,
+    kline,
+    market_recap,
+    monitor_rules,
+    overview,
+    pipeline,
+    rps,
+    screener,
+    signals,
+    stock_analysis,
+    strategy,
+    watchlist,
+)
+from app.api import auth as auth_api
 from app.api import runtime_logs as runtime_logs_api
+from app.api import settings as settings_api
+from app.api.routes import router as core_router
 from app.config import settings
-from app.services import runtime_logging as runtime_logging_service
+from app.data_catalog import api as catalog_api
+from app.data_catalog.control_db import CatalogControlDB
+from app.data_catalog.models import SyncRun
+from app.data_catalog.service import CatalogService
 from app.jobs import daily_pipeline
+from app.services import runtime_logging as runtime_logging_service
 from app.services.quote_service import QuoteService
 from app.tickflow import client as tf_client
 from app.tickflow.policy import detect_capabilities
@@ -57,6 +83,43 @@ async def lifespan(app: FastAPI):
     capset = detect_capabilities()
     app.state.capabilities = capset
     logger.info("ready; %d capabilities active", len(capset.all()))
+
+    # Control plane: persisted catalog snapshots and best-effort daily-pipeline run history.
+    control_db = CatalogControlDB(store.data_dir)
+    catalog_service = CatalogService(store.data_dir, control_db)
+    if not control_db.has_dataset_states():
+        catalog_service.rescan()
+    app.state.catalog_control_db = control_db
+    app.state.catalog_service = catalog_service
+
+    from app.services.pipeline_jobs import job_store
+
+    def mirror_pipeline_run(job: dict) -> None:
+        metadata = job.get("_catalog_mirror")
+        if not metadata:
+            return
+        status = job["status"]
+        quality_status = {
+            "succeeded": "healthy",
+            "degraded": "degraded",
+            "failed": "failed",
+        }.get(status, "unknown")
+        control_db.upsert_sync_run(
+            SyncRun(
+                run_id=f"pipeline-{job['id']}",
+                dataset_id=metadata["dataset_id"],
+                provider="local",
+                operation=metadata["operation"],
+                started_at=job.get("started_at"),
+                finished_at=job.get("finished_at"),
+                status=status,
+                quality_status=quality_status,
+                error_code="pipeline_failed" if status == "failed" else None,
+                error_message=job.get("error"),
+            )
+        )
+
+    job_store.set_control_plane_sink(mirror_pipeline_run)
 
     # 全局行情服务
     qs = QuoteService()
@@ -115,9 +178,9 @@ async def lifespan(app: FastAPI):
     app.state.financial_scheduler = financial_scheduler
 
     # 策略引擎
+    from app.services.screener import ScreenerService
     from app.strategy.engine import StrategyEngine
     from app.strategy.monitor import StrategyMonitorService
-    from app.services.screener import ScreenerService
 
     _screener_svc = ScreenerService(repo)
     strategy_dirs = [
@@ -134,9 +197,9 @@ async def lifespan(app: FastAPI):
     logger.info("strategy engine loaded: %d strategies", len(strategy_engine.list_strategies()))
 
     # 通用监控规则引擎: 启动时 reload 规则到内存态 (修复重启后告警失效)
-    from app.strategy.monitor import MonitorRuleEngine
-    from app.strategy import monitor_rules as mr_store
     from app.services import preferences
+    from app.strategy import monitor_rules as mr_store
+    from app.strategy.monitor import MonitorRuleEngine
     monitor_engine = MonitorRuleEngine()
     monitor_engine.set_strategy_engine(strategy_engine)
     monitor_engine.set_data_dir(store.data_dir)
@@ -167,6 +230,8 @@ async def lifespan(app: FastAPI):
 
     if app.state.scheduler:
         app.state.scheduler.shutdown(wait=False)
+    from app.services.pipeline_jobs import job_store
+    job_store.set_control_plane_sink(None)
     ps = getattr(app.state, "pull_scheduler", None)
     if ps:
         ps.stop()
@@ -292,6 +357,7 @@ app.include_router(overview.router)
 app.include_router(analysis.router)
 app.include_router(pipeline.router)
 app.include_router(data.router)
+app.include_router(catalog_api.router)
 app.include_router(ext_data.router)
 app.include_router(financials.router)
 app.include_router(stock_analysis.router)

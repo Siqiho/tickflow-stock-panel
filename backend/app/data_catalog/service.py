@@ -158,7 +158,9 @@ class CatalogService:
                         error_message=message,
                     )
                 )
-            return self.list_catalog()
+            # A failed local scan must never discard the prior committed snapshot.
+            # Make the retained response explicit so callers do not mistake it for a fresh scan.
+            return self.list_catalog().model_copy(update={"stale": True})
 
         finished_at = _utc_now()
         persisted = []

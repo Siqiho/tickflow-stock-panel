@@ -855,7 +855,10 @@ def _run_tracked(fn, job_label: str) -> None:
     """调度触发时包装 JobStore 跟踪，确保同步历史有记录。"""
     from app.services.pipeline_jobs import job_store
 
-    job_id = job_store.create()
+    operation = "instruments" if job_label == "instruments_sync" else "daily_pipeline"
+    job_id = job_store.create(
+        mirror={"dataset_id": "daily_pipeline", "operation": operation}
+    )
     job_store.start(job_id)
 
     def progress(stage: str, pct: int, msg: str, stage_pct: int | None = None,

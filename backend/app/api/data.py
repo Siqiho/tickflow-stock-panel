@@ -5,11 +5,10 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from app.indicators.pipeline import ENRICHED_COLUMNS
 
@@ -636,34 +635,21 @@ def _last_finished(job_label: str) -> str | None:
 
 @router.get("/status")
 def status(request: Request) -> dict:
-    repo = request.app.state.repo
+    service = getattr(request.app.state, "catalog_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail={"code": "catalog_unavailable"})
     scheduler = getattr(request.app.state, "scheduler", None)
-    data_dir = repo.store.data_dir
-
-    return {
-        "daily":       _get_table_stats("daily",       lambda: _safe_aggregate_daily(repo)),
-        "enriched":    _get_table_stats("enriched",    lambda: _safe_aggregate_enriched(repo)),
-    "index_daily":       _get_table_stats("index_daily",       lambda: _safe_aggregate_index_daily(repo)),
-    "index_enriched":    _get_table_stats("index_enriched",    lambda: _safe_aggregate_index_enriched(repo)),
-    "index_instruments": _get_table_stats("index_instruments", lambda: _safe_aggregate_index_instruments(repo)),
-    "etf_daily":         _get_table_stats("etf_daily",         lambda: _safe_aggregate_etf_daily(repo)),
-    "etf_enriched":      _get_table_stats("etf_enriched",      lambda: _safe_aggregate_etf_enriched(repo)),
-    "etf_instruments":   _get_table_stats("etf_instruments",   lambda: _safe_aggregate_etf_instruments(repo)),
-    "minute":      _get_table_stats("minute",      lambda: _safe_aggregate_minute(repo)),
-        "adj_factor":  _get_table_stats("adj_factor",  lambda: _safe_aggregate_adj_factor(repo)),
-        "instruments": _get_table_stats("instruments", lambda: _safe_aggregate_instruments(repo)),
-        "financials":  _get_table_stats("financials",  lambda: _safe_aggregate_financials(repo)),
-
-        # 文件层面信息(缓存)
-        "storage": _get_storage(data_dir),
-
-        # 调度
-        "next_instruments_run": _next_cron_run(scheduler, "pre_market_instruments"),
-        "next_pipeline_run":    _next_cron_run(scheduler, "daily_pipeline"),
-        "last_instruments_run": _last_finished("instruments"),
-        "last_pipeline_run":    _last_finished("pipeline"),
-        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
-    }
+    payload = service.compatibility_status()
+    payload["next_instruments_run"] = _next_cron_run(scheduler, "pre_market_instruments")
+    payload["next_pipeline_run"] = _next_cron_run(scheduler, "daily_pipeline")
+    for run in service.list_runs("daily_pipeline"):
+        if run.finished_at is None:
+            continue
+        if run.operation == "instruments" and payload["last_instruments_run"] is None:
+            payload["last_instruments_run"] = run.finished_at
+        if run.operation == "daily_pipeline" and payload["last_pipeline_run"] is None:
+            payload["last_pipeline_run"] = run.finished_at
+    return payload
 
 
 @router.post("/clear")

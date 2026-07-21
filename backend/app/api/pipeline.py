@@ -46,7 +46,9 @@ async def run_now(request: Request) -> dict:
                 except Exception:
                     pass
 
-    job_id = job_store.create()
+    job_id = job_store.create(
+        mirror={"dataset_id": "daily_pipeline", "operation": "daily_pipeline"}
+    )
 
     # 如果是复用的 active job,直接返回(不重启)
     existing = job_store.get(job_id)
