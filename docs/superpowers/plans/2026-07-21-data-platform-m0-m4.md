@@ -428,8 +428,10 @@ Lineage scope is deliberately bounded: make the shared writer fail before disk I
 
 - Create: `backend/app/data_catalog/scanner.py`
 - Create: `backend/app/data_catalog/service.py`
+- Modify only if needed for atomic scan persistence helpers: `backend/app/data_catalog/control_db.py`
 - Create: `backend/tests/data_catalog/test_scanner.py`
 - Create: `backend/tests/data_catalog/test_service.py`
+- Modify only if `control_db.py` changes: `backend/tests/data_catalog/test_control_db.py`
 
 **Interfaces:**
 
@@ -441,6 +443,77 @@ Lineage scope is deliberately bounded: make the shared writer fail before disk I
 - Service merges definitions, provider manifests/entitlement, local state, quality, and lineage. `local_materialized=true` does not imply `serving_ready=true`; failed/degraded quality preserves that distinction with a reason code.
 - Hot methods (`list_catalog`, `get_dataset`, `get_schema`, `list_runs`, `compatibility_status`) read SQLite only. They do not call `Path.rglob`, PyArrow/Polars, DuckDB, or a network client.
 - `compatibility_status` preserves the existing `/api/data/status` top-level and nested storage keys while sourcing values from cached states.
+
+**Exact scanner/service contract:**
+
+```python
+@dataclass(frozen=True)
+class DatasetScanResult:
+    state: DatasetState
+    artifacts: tuple[ArtifactRecord, ...]
+    coverage: tuple[MarketCoverage, ...]
+    lineage: tuple[LineageSummary, ...]
+    depth5_available: bool = False
+
+@dataclass(frozen=True)
+class CatalogScanSnapshot:
+    datasets: dict[str, DatasetScanResult]
+    storage: StorageBreakdown
+    dataset_storage: dict[str, dict[str, int]]  # {dataset_id: {bytes, files}}
+    refreshed_at: str
+
+class CatalogScanner:
+    def __init__(self, data_dir: Path, definitions=DATASET_DEFINITIONS): ...
+    def scan_all(self, run_ids: Mapping[str, str]) -> CatalogScanSnapshot: ...
+    def scan_dataset(
+        self,
+        dataset_id: str,
+        run_id: str,
+        *,
+        expected_by_market: Mapping[str, int] | None = None,
+    ) -> DatasetScanResult: ...
+
+class CatalogService:
+    def __init__(
+        self,
+        data_dir: Path,
+        control_db: CatalogControlDB,
+        *,
+        scanner: CatalogScanner | None = None,
+        definitions=DATASET_DEFINITIONS,
+        manifests: Sequence[ProviderDatasetManifest] | None = None,
+        entitlement_resolver: Callable[[ProviderDatasetManifest], bool] | None = None,
+    ): ...
+    def rescan(self, dataset_id: str | None = None) -> CatalogResponse: ...
+    def list_catalog(self) -> CatalogResponse: ...
+    def get_dataset(self, dataset_id: str) -> DatasetCatalogEntry | None: ...
+    def get_schema(self, dataset_id: str) -> list[FieldContract] | None: ...
+    def list_runs(self, dataset_id: str | None = None, limit: int = 100) -> list[SyncRun]: ...
+    def compatibility_status(self) -> dict[str, Any]: ...
+```
+
+Scanner behavior is fixed as follows:
+
+- Full scan takes one `os.scandir`/`os.walk`-style snapshot of regular files without following symlinks. File ownership is determined from canonical path components, not substring matching.
+- Files owned by a dataset root are managed; `lineage`, `job_store`, `logs`, `user_data`, and `control` are named operational categories; every other unowned regular file goes to `operational_other`. No file is omitted or assigned twice.
+- The exact-byte invariant applies to the filesystem snapshot captured before persistence. The catalog database/WAL may grow when that snapshot is saved; its new size appears on the next rescan. Expose `refreshed_at` so this snapshot semantics is explicit and avoid impossible self-referential writes.
+- All owned regular files contribute bytes/files; Parquet files additionally contribute SHA-256, metadata row counts, schema, symbol/time statistics, and partition values. Read only the necessary columns. A corrupt/unreadable owned Parquet makes that dataset `quality_status="failed"` and records a bounded error list in payload rather than crashing the whole full scan.
+- Dataset state payload keys are stable: `file_count`, `field_count`, `trading_days`, `named_count`, `coverage`, `lineage`, `scan_errors`, and `depth5_available`. Omit no key; use zero/empty values.
+- `published_at` is the file mtime in UTC. Artifact paths are relative POSIX paths under `data_dir`. Full scan assigns one supplied run ID per dataset.
+- True depth5 proof requires either both list columns `bid_prices` + `ask_prices`, or explicit bid/ask level-five price fields (`bid_price5`/`ask_price5` or underscore variants). Otherwise a file under physical `depth5` is `sealed_l1`. Schema is authoritative; ambiguous lineage never upgrades to depth5.
+- Lineage candidates are `lineage/<dataset_id>/` plus roots used by current writers (for example `lineage/kline_daily/`). Malformed sidecars are recorded as bounded scan errors. Quality words map conservatively: explicit fail/error -> failed, degraded/warn -> degraded, explicit healthy/pass/success -> healthy; otherwise readable/schema-valid Parquet is healthy and absent data is unknown.
+- SH/SZ/BJ/OTHER comes from canonical symbol suffix. Full scan uses the corresponding instrument result for expected counts. Dataset-specific scan uses `expected_by_market` supplied from cached instrument state and never scans a second dataset root.
+
+Service persistence/cache behavior is fixed as follows:
+
+- `rescan` creates a local `catalog_rescan` SyncRun per scanned dataset. Scanner work completes before the last successful state/artifact snapshot is replaced. A fatal scan exception records a failed run but leaves prior dataset state/artifacts/meta intact.
+- A full rescan stores `storage_breakdown`, `dataset_storage`, and `catalog_refreshed_at` in `catalog_meta`. A dataset-specific rescan updates only that dataset's state/artifacts/storage entry, then rebuilds category totals from cached per-dataset values plus cached operational categories; it never walks unrelated roots.
+- If needed, add one typed bulk persistence method to `CatalogControlDB` so state + run + artifact replacement + meta updates commit atomically. Do not expose raw SQL from the service or change existing method behavior.
+- Hot methods read only `CatalogControlDB`; they do not call scanner, filesystem APIs, PyArrow/Polars/DuckDB, provider constructors, custom YAML, or network code.
+- Availability resolution: a matching manifest means provider-supported; provider-less derived/local definitions are supported by provider `local`. Default entitlement is true only for public/local or a manifest with no entitlement requirement; Task 5 injects the real capability resolver. `serving_ready` depends only on local materialization and quality (`healthy` or `degraded`), never on current entitlement. A local quality failure therefore remains locally materialized but not serving-ready.
+- Reason code follows the independent-state semantics: when local files exist, quality decides (`quality_failed` or `quality_unknown`) regardless of entitlement; when no local files exist, use `provider_unsupported`, then `not_entitled`, otherwise `not_materialized`. A serving-ready dataset has no reason code. Provider selection is deterministic and prefers latest lineage source, then an entitled manifest, then sorted supported manifests.
+- Compatibility top-level keys stay exactly: `daily`, `enriched`, `index_daily`, `index_enriched`, `index_instruments`, `etf_daily`, `etf_enriched`, `etf_instruments`, `minute`, `adj_factor`, `instruments`, `financials`, `storage`, `next_pipeline_run`, `next_instruments_run`, `last_pipeline_run`, `last_instruments_run`, `checked_at`. Next-run values are `None` in Task 4; Task 5 overlays the scheduler.
+- Legacy table stats retain `rows`, `earliest_date`, `latest_date`, `symbols_covered`, and `trading_days`; enriched adds `fields`; instrument stats retain `rows`, `symbols_covered`, `latest_as_of`, `named`; financials contains all five tables including `shares`. Legacy storage retains every current `*_files`, `*_size_mb`, and `total_size_mb` key, derived from cached per-dataset raw bytes without scanning or double summing.
 
 - [ ] Write failing scanner tests using small real Parquet fixtures: exact byte totals/no duplicates, stock/index/ETF separation, shares table, L1-vs-depth schema, coverage, and dataset-specific refresh isolation.
 - [ ] Write failing service tests for the four independent availability flags, local-but-quality-failed behavior, hot-read no-filesystem guarantee, and unchanged legacy status key shape.
