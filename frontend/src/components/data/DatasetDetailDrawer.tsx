@@ -1,0 +1,115 @@
+import { useEffect } from 'react'
+import { X } from 'lucide-react'
+import type { CatalogSchemaResponse, DatasetCatalogEntry, FieldContract, SyncRun } from '@/lib/api'
+import { DatasetRunHistory } from './DatasetRunHistory'
+import { catalogDisplayTitle } from './DatasetCatalogCard'
+import { QualityLineagePanel } from './QualityLineagePanel'
+
+function metadataValue(value: string | null): string {
+  return value ?? '未声明'
+}
+
+function FieldTable({ fields }: { fields: FieldContract[] }) {
+  return (
+    <div className="overflow-x-auto rounded-btn border border-border">
+      <table className="min-w-[760px] w-full text-left text-[11px]">
+        <thead className="bg-elevated/70 text-muted">
+          <tr>
+            {['字段', '类型', '语义', '单位', '缩放', '币种', '时区'].map((label) => (
+              <th key={label} scope="col" className="px-3 py-2 font-medium">{label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {fields.map((field) => (
+            <tr key={field.name}>
+              <th scope="row" className="px-3 py-2 font-mono font-medium text-foreground">{field.name}</th>
+              <td className="px-3 py-2 font-mono text-secondary">{field.dtype}</td>
+              <td className="px-3 py-2 text-secondary">{field.semantic}</td>
+              <td className="px-3 py-2 font-mono text-secondary">{metadataValue(field.unit)}</td>
+              <td className="px-3 py-2 font-mono text-secondary">{metadataValue(field.scale)}</td>
+              <td className="px-3 py-2 font-mono text-secondary">{metadataValue(field.currency)}</td>
+              <td className="px-3 py-2 font-mono text-secondary">{metadataValue(field.timezone)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+export function DatasetDetailDrawer({
+  entry,
+  schema,
+  runs = [],
+  onClose,
+}: {
+  entry: DatasetCatalogEntry | null
+  schema?: CatalogSchemaResponse | null
+  runs?: SyncRun[]
+  onClose: () => void
+}) {
+  useEffect(() => {
+    if (!entry) return undefined
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [entry, onClose])
+
+  if (!entry) return null
+
+  const title = catalogDisplayTitle(entry)
+  const headingId = `dataset-detail-${entry.descriptor.dataset_id}`
+  const fields = schema?.fields ?? entry.descriptor.fields
+
+  return (
+    <div className="fixed inset-0 z-50 bg-foreground/20" aria-hidden={false}>
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+        className="ml-auto flex h-full w-full max-w-3xl flex-col border-l border-border bg-surface shadow-xl"
+      >
+        <header className="flex items-start justify-between gap-4 border-b border-border px-4 py-4 sm:px-6">
+          <div className="min-w-0">
+            <h2 id={headingId} className="truncate text-base font-semibold text-foreground">{title} 详情</h2>
+            <p className="mt-1 break-all font-mono text-[11px] text-muted">{entry.descriptor.dataset_id}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={`关闭${title}详情`}
+            className="rounded-btn p-2 text-secondary outline-none transition-colors hover:bg-elevated hover:text-foreground focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </header>
+
+        <div className="scrollbar-gutter-stable flex-1 space-y-7 overflow-y-auto px-4 py-5 sm:px-6">
+          <section aria-labelledby={`${headingId}-contract`}>
+            <h3 id={`${headingId}-contract`} className="text-xs font-medium uppercase tracking-widest text-secondary">数据契约</h3>
+            <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 text-xs sm:grid-cols-2">
+              <div><dt className="text-muted">主键</dt><dd className="mt-0.5 font-mono">{entry.descriptor.primary_key.join(', ') || '未声明'}</dd></div>
+              <div><dt className="text-muted">点时态</dt><dd className="mt-0.5">{entry.descriptor.point_in_time ? '是' : '否'}</dd></div>
+              <div><dt className="text-muted">复权</dt><dd className="mt-0.5 font-mono">{metadataValue(entry.descriptor.adjustment)}</dd></div>
+              <div><dt className="text-muted">Provider</dt><dd className="mt-0.5 break-all font-mono">{metadataValue(entry.provider)}</dd></div>
+              <div><dt className="text-muted">Schema 版本</dt><dd className="mt-0.5 font-mono">{schema?.schema_version ?? entry.descriptor.schema_version}</dd></div>
+              <div><dt className="text-muted">单位版本</dt><dd className="mt-0.5 font-mono">{schema?.unit_version ?? entry.descriptor.unit_version}</dd></div>
+              <div className="sm:col-span-2"><dt className="text-muted">可用性原因代码</dt><dd className="mt-0.5 break-all font-mono">{metadataValue(entry.descriptor.availability.reason_code)}</dd></div>
+            </dl>
+          </section>
+
+          <section aria-labelledby={`${headingId}-fields`}>
+            <h3 id={`${headingId}-fields`} className="mb-3 text-xs font-medium uppercase tracking-widest text-secondary">字段</h3>
+            <FieldTable fields={fields} />
+          </section>
+
+          <QualityLineagePanel entry={entry} />
+          <DatasetRunHistory runs={runs} />
+        </div>
+      </section>
+    </div>
+  )
+}
