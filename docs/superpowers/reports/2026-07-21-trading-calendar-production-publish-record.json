@@ -1,0 +1,51 @@
+{
+  "status": "PUBLISHED",
+  "approved_scope": {
+    "dataset": "trading_calendar",
+    "window": [
+      "2025-01-01",
+      "2026-07-21"
+    ],
+    "register_workbench": false,
+    "deploy": false
+  },
+  "commit": "065036f31d35ead046084df32aaffd676e4576f6",
+  "run_id": "cal-prod-20260721T141834Z",
+  "as_of": "2026-07-21",
+  "source": "szse_month_list",
+  "unit_version": "trading_calendar_v1",
+  "published_path": "/Users/simon/Trading/one-trading/data/reference/trading_calendar/calendar.parquet",
+  "lineage_path": "/Users/simon/Trading/one-trading/data/lineage/trading_calendar/date=2026-07-21/cal-prod-20260721T141834Z.json",
+  "row_count": 1701,
+  "open_days_sh": 374,
+  "exchanges": [
+    "BJ",
+    "SH",
+    "SZ"
+  ],
+  "backup_path": "/Users/simon/备份/codex/20260721-221745-one-trading-before-trading-calendar-publish",
+  "dry_dir": "/tmp/one-trading-cal-prod-dryrun-20260721T141834Z",
+  "dual_source": {
+    "szse_eq_tencent_sh": true,
+    "tencent_sh_eq_sz": true,
+    "open_days": 374
+  },
+  "new_files": [
+    ".staging/trading_calendar/cal-prod-20260721T141834Z/meta.json",
+    ".staging/trading_calendar/cal-prod-20260721T141834Z/normalized.parquet",
+    ".staging/trading_calendar/cal-prod-20260721T141834Z/quality_report.json",
+    "lineage/trading_calendar/date=2026-07-21/cal-prod-20260721T141834Z.json",
+    "reference/trading_calendar/calendar.parquet"
+  ],
+  "quality_report_path": "/Users/simon/Trading/one-trading/data/.staging/trading_calendar/cal-prod-20260721T141834Z/quality_report.json",
+  "staging_dir": "/Users/simon/Trading/one-trading/data/.staging/trading_calendar/cal-prod-20260721T141834Z",
+  "published_at": "2026-07-21T22:18:36+08:00",
+  "rollback": {
+    "type": "first_publish_delete",
+    "commands": [
+      "rm -f /Users/simon/Trading/one-trading/data/reference/trading_calendar/calendar.parquet",
+      "rm -rf /Users/simon/Trading/one-trading/data/lineage/trading_calendar/date=2026-07-21",
+      "rm -rf /Users/simon/Trading/one-trading/data/.staging/trading_calendar/cal-prod-20260721T141834Z"
+    ]
+  }
+}
