@@ -227,3 +227,40 @@ def test_wal_reader_completes_while_writer_transaction_is_open(tmp_path: Path) -
     assert not writer_error
     assert observed == [12]
     assert db.get_dataset_state("stock_daily").row_count == 99  # type: ignore[union-attr]
+
+
+def test_commit_scan_results_atomically_replaces_snapshots_runs_and_meta(tmp_path: Path) -> None:
+    db = CatalogControlDB(tmp_path)
+    state = make_state()
+    run = make_run()
+    artifact = make_artifact("part.parquet")
+
+    db.commit_scan_results(
+        [(state, run, (artifact,))],
+        {
+            "dataset_storage": {"stock_daily": {"bytes": 123, "files": 1}},
+            "catalog_refreshed_at": {"value": "2026-07-21T10:00:00Z"},
+        },
+    )
+
+    assert db.get_dataset_state("stock_daily") == state
+    assert db.get_sync_run("run-1") == run
+    assert db.list_artifacts("stock_daily") == [artifact]
+    assert db.get_meta("dataset_storage") == {"stock_daily": {"bytes": 123, "files": 1}}
+
+
+def test_commit_scan_results_rolls_back_every_table_when_meta_serialization_fails(
+    tmp_path: Path,
+) -> None:
+    db = CatalogControlDB(tmp_path)
+
+    with pytest.raises(TypeError):
+        db.commit_scan_results(
+            [(make_state(), make_run(), (make_artifact("part.parquet"),))],
+            {"invalid": {"not_json": object()}},
+        )
+
+    assert db.get_dataset_state("stock_daily") is None
+    assert db.get_sync_run("run-1") is None
+    assert db.list_artifacts("stock_daily") == []
+    assert db.get_meta("invalid") is None

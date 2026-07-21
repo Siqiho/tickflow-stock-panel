@@ -5,7 +5,7 @@ import json
 import re
 import sqlite3
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -281,6 +281,131 @@ class CatalogControlDB:
     def get_meta(self, key: str) -> dict[str, Any] | None:
         row = self._read_one("SELECT value_json FROM catalog_meta WHERE key = ?", (key,))
         return json.loads(row["value_json"]) if row is not None else None
+
+    def commit_scan_results(
+        self,
+        results: Sequence[tuple[DatasetState, SyncRun, Sequence[ArtifactRecord]]],
+        meta_updates: Mapping[str, dict[str, Any]],
+    ) -> None:
+        """Atomically publish completed dataset scans and their cached metadata."""
+        for state, run, artifacts in results:
+            if run.dataset_id != state.dataset_id:
+                raise ValueError("run dataset_id must match state dataset_id")
+            if state.last_run_id != run.run_id:
+                raise ValueError("state last_run_id must match run run_id")
+            for artifact in artifacts:
+                if artifact.dataset_id != state.dataset_id:
+                    raise ValueError("artifact dataset_id must match state dataset_id")
+                if artifact.run_id != run.run_id:
+                    raise ValueError("artifact run_id must match run run_id")
+
+        with self.transaction() as connection:
+            for state, run, artifacts in results:
+                connection.execute(
+                    """
+                    INSERT INTO sync_runs (
+                        run_id, dataset_id, provider, operation, started_at, finished_at, status,
+                        rows_fetched, rows_published, quality_status, error_code, error_message
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id) DO UPDATE SET
+                        dataset_id = excluded.dataset_id,
+                        provider = excluded.provider,
+                        operation = excluded.operation,
+                        started_at = excluded.started_at,
+                        finished_at = excluded.finished_at,
+                        status = excluded.status,
+                        rows_fetched = excluded.rows_fetched,
+                        rows_published = excluded.rows_published,
+                        quality_status = excluded.quality_status,
+                        error_code = excluded.error_code,
+                        error_message = excluded.error_message
+                    """,
+                    (
+                        run.run_id,
+                        run.dataset_id,
+                        run.provider,
+                        run.operation,
+                        run.started_at,
+                        run.finished_at,
+                        run.status,
+                        run.rows_fetched,
+                        run.rows_published,
+                        run.quality_status,
+                        run.error_code,
+                        run.error_message,
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO dataset_state (
+                        dataset_id, schema_version, unit_version, quality_status, row_count,
+                        symbol_count, expected_symbol_count, earliest_time, latest_time,
+                        managed_bytes, last_run_id, updated_at, payload_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(dataset_id) DO UPDATE SET
+                        schema_version = excluded.schema_version,
+                        unit_version = excluded.unit_version,
+                        quality_status = excluded.quality_status,
+                        row_count = excluded.row_count,
+                        symbol_count = excluded.symbol_count,
+                        expected_symbol_count = excluded.expected_symbol_count,
+                        earliest_time = excluded.earliest_time,
+                        latest_time = excluded.latest_time,
+                        managed_bytes = excluded.managed_bytes,
+                        last_run_id = excluded.last_run_id,
+                        updated_at = excluded.updated_at,
+                        payload_json = excluded.payload_json
+                    """,
+                    (
+                        state.dataset_id,
+                        state.schema_version,
+                        state.unit_version,
+                        state.quality_status,
+                        state.row_count,
+                        state.symbol_count,
+                        state.expected_symbol_count,
+                        state.earliest_time,
+                        state.latest_time,
+                        state.managed_bytes,
+                        state.last_run_id,
+                        state.updated_at,
+                        self._json_dumps(state.payload),
+                    ),
+                )
+                connection.execute(
+                    "DELETE FROM artifacts WHERE dataset_id = ?", (state.dataset_id,)
+                )
+                connection.executemany(
+                    """
+                    INSERT INTO artifacts (
+                        dataset_id, path, run_id, sha256, row_count, bytes,
+                        partition_value, published_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            artifact.dataset_id,
+                            artifact.path,
+                            artifact.run_id,
+                            artifact.sha256,
+                            artifact.row_count,
+                            artifact.bytes,
+                            artifact.partition_value,
+                            artifact.published_at,
+                        )
+                        for artifact in artifacts
+                    ],
+                )
+            for key, value in meta_updates.items():
+                connection.execute(
+                    """
+                    INSERT INTO catalog_meta (key, value_json, updated_at) VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value_json = excluded.value_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (key, self._json_dumps(value), self._utc_now()),
+                )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, isolation_level=None, timeout=5.0)

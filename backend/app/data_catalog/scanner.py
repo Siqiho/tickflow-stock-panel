@@ -1,0 +1,686 @@
+"""Explicit local-file scanner for catalog refreshes."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import stat
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+from .definitions import DATASET_DEFINITIONS, DatasetDefinition
+from .models import (
+    ArtifactRecord,
+    DatasetState,
+    LineageSummary,
+    MarketCoverage,
+    StorageBreakdown,
+    StorageCategory,
+)
+
+_MARKETS = ("SH", "SZ", "BJ", "OTHER")
+_MAX_SCAN_ERRORS = 20
+_OPERATIONAL_CATEGORIES = {
+    "lineage": "Lineage",
+    "job_store": "Job store",
+    "logs": "Logs",
+    "user_data": "User data",
+    "control": "SQLite control files",
+    "operational_other": "Other operational files",
+}
+_MANAGED_TITLES = {
+    "stocks": "Stocks",
+    "etfs": "ETFs",
+    "indices": "Indices",
+    "quote_snapshot": "Quote snapshot",
+    "sealed_l1": "Sealed L1",
+    "depth5": "True depth5",
+    "pools": "Pools",
+    "financials": "Financials",
+    "ext_data": "External data",
+}
+
+
+@dataclass(frozen=True)
+class DatasetScanResult:
+    state: DatasetState
+    artifacts: tuple[ArtifactRecord, ...]
+    coverage: tuple[MarketCoverage, ...]
+    lineage: tuple[LineageSummary, ...]
+    depth5_available: bool = False
+
+
+@dataclass(frozen=True)
+class CatalogScanSnapshot:
+    datasets: dict[str, DatasetScanResult]
+    storage: StorageBreakdown
+    dataset_storage: dict[str, dict[str, int]]
+    refreshed_at: str
+
+
+@dataclass(frozen=True)
+class _FileSnapshot:
+    path: Path
+    relative: PurePosixPath
+    bytes: int
+    published_at: str
+
+
+@dataclass(frozen=True)
+class _ParquetFacts:
+    columns: tuple[str, ...]
+    row_count: int
+    symbols: tuple[str, ...]
+    times: tuple[str, ...]
+    named_count: int
+
+
+class CatalogScanner:
+    def __init__(
+        self,
+        data_dir: Path,
+        definitions: tuple[DatasetDefinition, ...] = DATASET_DEFINITIONS,
+    ) -> None:
+        self.data_dir = Path(data_dir)
+        self.definitions = tuple(definitions)
+        self._by_id = {
+            definition.descriptor.dataset_id: definition for definition in self.definitions
+        }
+
+    def scan_all(self, run_ids: Mapping[str, str]) -> CatalogScanSnapshot:
+        missing = sorted(set(self._by_id) - set(run_ids))
+        if missing:
+            raise ValueError(f"missing scan run IDs: {', '.join(missing)}")
+        refreshed_at = _utc_now()
+        files = self._walk_snapshot(self.data_dir)
+        fact_cache: dict[Path, _ParquetFacts | Exception] = {}
+        owned: dict[str, list[_FileSnapshot]] = {dataset_id: [] for dataset_id in self._by_id}
+        category_counts = self._empty_category_counts()
+
+        for file in files:
+            dataset_id = self._owner_for_file(file, fact_cache)
+            if dataset_id is None:
+                category = self._operational_category(file.relative)
+            else:
+                owned[dataset_id].append(file)
+                category = self._by_id[dataset_id].storage_category
+            category_counts[category]["bytes"] += file.bytes
+            category_counts[category]["files"] += 1
+
+        results = {
+            dataset_id: self._scan_files(
+                definition,
+                tuple(owned[dataset_id]),
+                files,
+                run_ids[dataset_id],
+                refreshed_at,
+                fact_cache,
+                expected_by_market=None,
+            )
+            for dataset_id, definition in self._by_id.items()
+        }
+        results = self._apply_full_scan_expectations(results)
+        dataset_storage = {
+            dataset_id: {
+                "bytes": sum(file.bytes for file in dataset_files),
+                "files": len(dataset_files),
+            }
+            for dataset_id, dataset_files in owned.items()
+        }
+        storage = self._storage_breakdown(category_counts)
+        if storage.total_bytes != sum(file.bytes for file in files):
+            raise RuntimeError("catalog scan byte invariant failed")
+        return CatalogScanSnapshot(
+            datasets=results,
+            storage=storage,
+            dataset_storage=dataset_storage,
+            refreshed_at=refreshed_at,
+        )
+
+    def scan_dataset(
+        self,
+        dataset_id: str,
+        run_id: str,
+        *,
+        expected_by_market: Mapping[str, int] | None = None,
+    ) -> DatasetScanResult:
+        try:
+            definition = self._by_id[dataset_id]
+        except KeyError as error:
+            raise KeyError(f"unknown dataset_id: {dataset_id}") from error
+        refreshed_at = _utc_now()
+        files_by_path: dict[PurePosixPath, _FileSnapshot] = {}
+        for root in definition.roots:
+            root_path = self.data_dir.joinpath(*PurePosixPath(root).parts)
+            if root_path.exists():
+                for file in self._walk_snapshot(root_path):
+                    files_by_path[file.relative] = file
+        lineage_files: dict[PurePosixPath, _FileSnapshot] = {}
+        for lineage_root in self._lineage_roots(definition):
+            if lineage_root.exists():
+                for file in self._walk_snapshot(lineage_root):
+                    lineage_files[file.relative] = file
+
+        fact_cache: dict[Path, _ParquetFacts | Exception] = {}
+        owned = tuple(
+            file
+            for file in sorted(files_by_path.values(), key=lambda item: item.relative.as_posix())
+            if self._owner_for_file(file, fact_cache) == dataset_id
+        )
+        return self._scan_files(
+            definition,
+            owned,
+            tuple(lineage_files.values()),
+            run_id,
+            refreshed_at,
+            fact_cache,
+            expected_by_market=expected_by_market,
+        )
+
+    def _walk_snapshot(self, root: Path) -> tuple[_FileSnapshot, ...]:
+        files: list[_FileSnapshot] = []
+        for directory, dirnames, filenames in os.walk(root, followlinks=False):
+            dirnames.sort()
+            filenames.sort()
+            directory_path = Path(directory)
+            for filename in filenames:
+                path = directory_path / filename
+                try:
+                    file_stat = path.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if not stat.S_ISREG(file_stat.st_mode):
+                    continue
+                try:
+                    relative = PurePosixPath(path.relative_to(self.data_dir).as_posix())
+                except ValueError as error:
+                    raise ValueError(f"scan root is outside data_dir: {root}") from error
+                files.append(
+                    _FileSnapshot(
+                        path=path,
+                        relative=relative,
+                        bytes=file_stat.st_size,
+                        published_at=datetime.fromtimestamp(file_stat.st_mtime, UTC)
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                    )
+                )
+        return tuple(files)
+
+    def _owner_for_file(
+        self,
+        file: _FileSnapshot,
+        fact_cache: dict[Path, _ParquetFacts | Exception],
+    ) -> str | None:
+        matches: list[DatasetDefinition] = []
+        for definition in self.definitions:
+            if any(_has_path_prefix(file.relative.parts, PurePosixPath(root).parts) for root in definition.roots):
+                matches.append(definition)
+        if not matches:
+            return None
+        if len(matches) == 1:
+            return matches[0].descriptor.dataset_id
+        if {item.descriptor.dataset_id for item in matches} != {"sealed_l1", "depth5"}:
+            raise RuntimeError(f"ambiguous dataset ownership: {file.relative.as_posix()}")
+        return "depth5" if self._has_true_depth_schema(file, fact_cache) else "sealed_l1"
+
+    def _has_true_depth_schema(
+        self,
+        file: _FileSnapshot,
+        fact_cache: dict[Path, _ParquetFacts | Exception],
+    ) -> bool:
+        if file.path.suffix.lower() != ".parquet":
+            return False
+        facts = self._parquet_facts(file, self._by_id["depth5"], fact_cache)
+        if isinstance(facts, Exception):
+            return False
+        normalized = {column.lower() for column in facts.columns}
+        if {"bid_price5", "ask_price5"} <= normalized or {
+            "bid_price_5",
+            "ask_price_5",
+        } <= normalized:
+            return True
+        if not {"bid_prices", "ask_prices"} <= normalized:
+            return False
+        try:
+            with file.path.open("rb") as handle:
+                schema = pq.ParquetFile(handle).schema_arrow
+            return all(
+                pa.types.is_list(schema.field(column).type)
+                or pa.types.is_large_list(schema.field(column).type)
+                or pa.types.is_fixed_size_list(schema.field(column).type)
+                for column in ("bid_prices", "ask_prices")
+            )
+        except (OSError, pa.ArrowException):
+            return False
+
+    def _scan_files(
+        self,
+        definition: DatasetDefinition,
+        files: tuple[_FileSnapshot, ...],
+        all_snapshot_files: tuple[_FileSnapshot, ...],
+        run_id: str,
+        refreshed_at: str,
+        fact_cache: dict[Path, _ParquetFacts | Exception],
+        *,
+        expected_by_market: Mapping[str, int] | None,
+    ) -> DatasetScanResult:
+        artifacts: list[ArtifactRecord] = []
+        errors: list[str] = []
+        symbols: set[str] = set()
+        times: set[str] = set()
+        fields: set[str] = set()
+        named_count = 0
+        row_count = 0
+        for file in sorted(files, key=lambda item: item.relative.as_posix()):
+            if file.path.suffix.lower() != ".parquet":
+                continue
+            facts = self._parquet_facts(file, definition, fact_cache)
+            if isinstance(facts, Exception):
+                errors.append(self._bounded_error(file, facts))
+                continue
+            row_count += facts.row_count
+            symbols.update(facts.symbols)
+            times.update(facts.times)
+            fields.update(facts.columns)
+            named_count += facts.named_count
+            try:
+                digest = _sha256(file.path)
+            except OSError as error:
+                errors.append(self._bounded_error(file, error))
+                continue
+            artifacts.append(
+                ArtifactRecord(
+                    run_id=run_id,
+                    dataset_id=definition.descriptor.dataset_id,
+                    path=file.relative.as_posix(),
+                    sha256=digest,
+                    row_count=facts.row_count,
+                    bytes=file.bytes,
+                    partition_value=self._partition_value(file.relative, definition.partition_key),
+                    published_at=file.published_at,
+                )
+            )
+
+        lineage, lineage_errors = self._read_lineage(definition, all_snapshot_files)
+        errors.extend(lineage_errors)
+        errors = sorted(set(errors))[:_MAX_SCAN_ERRORS]
+        coverage = self._coverage(symbols, expected_by_market)
+        quality_status = self._quality_status(bool(artifacts), lineage, errors)
+        depth5_available = definition.descriptor.dataset_id == "depth5" and bool(artifacts)
+        payload = {
+            "file_count": len(files),
+            "field_count": len(fields),
+            "trading_days": len({_calendar_day(value) for value in times}),
+            "named_count": named_count,
+            "coverage": [item.model_dump(mode="json") for item in coverage],
+            "lineage": [item.model_dump(mode="json") for item in lineage],
+            "scan_errors": errors,
+            "depth5_available": depth5_available,
+        }
+        expected_total = (
+            sum(max(0, int(expected_by_market.get(market, 0))) for market in _MARKETS)
+            if expected_by_market is not None
+            else None
+        )
+        state = DatasetState(
+            dataset_id=definition.descriptor.dataset_id,
+            schema_version=definition.descriptor.schema_version,
+            unit_version=definition.descriptor.unit_version,
+            quality_status=quality_status,
+            row_count=row_count,
+            symbol_count=len(symbols),
+            expected_symbol_count=expected_total,
+            earliest_time=min(times) if times else None,
+            latest_time=max(times) if times else None,
+            managed_bytes=sum(file.bytes for file in files),
+            last_run_id=run_id,
+            updated_at=refreshed_at,
+            payload=payload,
+        )
+        return DatasetScanResult(
+            state=state,
+            artifacts=tuple(artifacts),
+            coverage=coverage,
+            lineage=lineage,
+            depth5_available=depth5_available,
+        )
+
+    def _parquet_facts(
+        self,
+        file: _FileSnapshot,
+        definition: DatasetDefinition,
+        cache: dict[Path, _ParquetFacts | Exception],
+    ) -> _ParquetFacts | Exception:
+        if file.path in cache:
+            cached = cache[file.path]
+            if isinstance(cached, Exception):
+                return cached
+            required = {column for column in (definition.symbol_column, definition.time_column, "name") if column}
+            if required <= set(cached.columns) or not required:
+                return cached
+        try:
+            with file.path.open("rb") as handle:
+                parquet = pq.ParquetFile(handle)
+                columns = tuple(parquet.schema_arrow.names)
+                requested = (
+                    definition.symbol_column,
+                    definition.time_column,
+                    "name",
+                )
+                selected = [column for column in requested if column and column in columns]
+                table = parquet.read(columns=list(dict.fromkeys(selected))) if selected else None
+                row_count = parquet.metadata.num_rows
+            symbols = _column_strings(table, definition.symbol_column)
+            times = _column_strings(table, definition.time_column)
+            names = _column_strings(table, "name")
+            facts = _ParquetFacts(
+                columns=columns,
+                row_count=row_count,
+                symbols=tuple(symbols),
+                times=tuple(times),
+                named_count=sum(bool(value.strip()) for value in names),
+            )
+            cache[file.path] = facts
+            return facts
+        except (OSError, pa.ArrowException, ValueError) as error:
+            cache[file.path] = error
+            return error
+
+    def _read_lineage(
+        self,
+        definition: DatasetDefinition,
+        files: tuple[_FileSnapshot, ...],
+    ) -> tuple[tuple[LineageSummary, ...], list[str]]:
+        prefixes = {
+            ("lineage", *PurePosixPath(identifier).parts)
+            for identifier in self._lineage_ids(definition)
+        }
+        summaries: list[LineageSummary] = []
+        errors: list[str] = []
+        for file in sorted(files, key=lambda item: item.relative.as_posix()):
+            if file.path.suffix.lower() != ".json" or not any(
+                _has_path_prefix(file.relative.parts, prefix) for prefix in prefixes
+            ):
+                continue
+            try:
+                payload = json.loads(file.path.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError("lineage sidecar must be an object")
+                source = payload.get("source")
+                unit_version = payload.get("unit_version")
+                if not isinstance(source, str) or not source.strip():
+                    raise ValueError("lineage source is missing")
+                if not isinstance(unit_version, str) or not unit_version.strip():
+                    raise ValueError("lineage unit_version is missing")
+                artifact_path = payload.get("target_artifact") or payload.get("artifact")
+                if artifact_path is not None:
+                    artifact_path = self._canonical_artifact_path(str(artifact_path))
+                summaries.append(
+                    LineageSummary(
+                        run_id=_optional_text(payload.get("run_id") or payload.get("source_job_id")),
+                        source=source.strip(),
+                        fetched_at=_optional_text(payload.get("fetched_at")),
+                        unit_version=unit_version.strip(),
+                        quality_status=_quality_word(
+                            payload.get("quality_status") or payload.get("quality")
+                        ),
+                        scope=_optional_text(payload.get("scope")),
+                        artifact_path=artifact_path,
+                        row_count=_optional_nonnegative_int(payload.get("row_count")),
+                    )
+                )
+            except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+                errors.append(self._bounded_error(file, error))
+        summaries.sort(
+            key=lambda item: (
+                item.fetched_at or "",
+                item.source,
+                item.artifact_path or "",
+                item.run_id or "",
+            )
+        )
+        return tuple(summaries), errors
+
+    def _lineage_ids(self, definition: DatasetDefinition) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                (
+                    definition.descriptor.dataset_id,
+                    *definition.lineage_ids,
+                    *definition.roots,
+                )
+            )
+        )
+
+    def _lineage_roots(self, definition: DatasetDefinition) -> tuple[Path, ...]:
+        return tuple(
+            self.data_dir / "lineage" / Path(*PurePosixPath(identifier).parts)
+            for identifier in self._lineage_ids(definition)
+        )
+
+    def _canonical_artifact_path(self, value: str) -> str:
+        path = Path(value)
+        if path.is_absolute():
+            try:
+                return path.relative_to(self.data_dir).as_posix()
+            except ValueError:
+                return path.name
+        return PurePosixPath(value).as_posix()
+
+    @staticmethod
+    def _coverage(
+        symbols: set[str], expected_by_market: Mapping[str, int] | None
+    ) -> tuple[MarketCoverage, ...]:
+        actual = {market: 0 for market in _MARKETS}
+        for symbol in symbols:
+            actual[_symbol_market(symbol)] += 1
+        coverage: list[MarketCoverage] = []
+        for market in _MARKETS:
+            expected = (
+                max(0, int(expected_by_market.get(market, 0)))
+                if expected_by_market is not None
+                else None
+            )
+            ratio = None if expected in (None, 0) else min(actual[market] / expected, 1.0)
+            coverage.append(
+                MarketCoverage(
+                    market=market,
+                    symbol_count=actual[market],
+                    expected_symbol_count=expected,
+                    ratio=ratio,
+                )
+            )
+        return tuple(coverage)
+
+    def _apply_full_scan_expectations(
+        self, results: dict[str, DatasetScanResult]
+    ) -> dict[str, DatasetScanResult]:
+        instrument_ids = {
+            "stock": "stock_instruments",
+            "etf": "etf_instruments",
+            "index": "index_instruments",
+        }
+        expected = {
+            asset_type: {
+                item.market: item.symbol_count for item in results[dataset_id].coverage
+            }
+            for asset_type, dataset_id in instrument_ids.items()
+        }
+        updated: dict[str, DatasetScanResult] = {}
+        for dataset_id, result in results.items():
+            definition = self._by_id[dataset_id]
+            asset_types = definition.descriptor.asset_types
+            expected_by_market = expected.get(asset_types[0]) if len(asset_types) == 1 else None
+            if expected_by_market is None:
+                updated[dataset_id] = result
+                continue
+            coverage = tuple(
+                MarketCoverage(
+                    market=item.market,
+                    symbol_count=item.symbol_count,
+                    expected_symbol_count=expected_by_market[item.market],
+                    ratio=(
+                        None
+                        if expected_by_market[item.market] == 0
+                        else min(item.symbol_count / expected_by_market[item.market], 1.0)
+                    ),
+                )
+                for item in result.coverage
+            )
+            payload = dict(result.state.payload)
+            payload["coverage"] = [item.model_dump(mode="json") for item in coverage]
+            state = result.state.model_copy(
+                update={
+                    "expected_symbol_count": sum(expected_by_market.values()),
+                    "payload": payload,
+                }
+            )
+            updated[dataset_id] = DatasetScanResult(
+                state=state,
+                artifacts=result.artifacts,
+                coverage=coverage,
+                lineage=result.lineage,
+                depth5_available=result.depth5_available,
+            )
+        return updated
+
+    @staticmethod
+    def _quality_status(
+        has_readable_parquet: bool,
+        lineage: tuple[LineageSummary, ...],
+        errors: list[str],
+    ) -> str:
+        if errors:
+            return "failed"
+        statuses = {item.quality_status for item in lineage}
+        if "failed" in statuses:
+            return "failed"
+        if "degraded" in statuses:
+            return "degraded"
+        if has_readable_parquet:
+            return "healthy"
+        return "unknown"
+
+    @staticmethod
+    def _partition_value(relative: PurePosixPath, partition_key: str | None) -> str | None:
+        if partition_key is None:
+            return None
+        prefix = f"{partition_key}="
+        for part in relative.parts:
+            if part.startswith(prefix):
+                return part[len(prefix) :]
+        return None
+
+    @staticmethod
+    def _bounded_error(file: _FileSnapshot, error: Exception) -> str:
+        detail = " ".join(str(error).split())[:160]
+        return f"{file.relative.as_posix()}: {type(error).__name__}: {detail}"
+
+    def _empty_category_counts(self) -> dict[str, dict[str, int]]:
+        return {
+            key: {"bytes": 0, "files": 0}
+            for key in (*_MANAGED_TITLES, *_OPERATIONAL_CATEGORIES)
+        }
+
+    @staticmethod
+    def _operational_category(relative: PurePosixPath) -> str:
+        first = relative.parts[0] if relative.parts else ""
+        return first if first in _OPERATIONAL_CATEGORIES and first != "operational_other" else "operational_other"
+
+    @staticmethod
+    def _storage_breakdown(counts: dict[str, dict[str, int]]) -> StorageBreakdown:
+        categories = [
+            StorageCategory(
+                key=key,
+                title=(
+                    _MANAGED_TITLES[key]
+                    if key in _MANAGED_TITLES
+                    else _OPERATIONAL_CATEGORIES[key]
+                ),
+                kind="managed" if key in _MANAGED_TITLES else "operational",
+                bytes=value["bytes"],
+                files=value["files"],
+            )
+            for key, value in counts.items()
+        ]
+        managed = sum(item.bytes for item in categories if item.kind == "managed")
+        operational = sum(item.bytes for item in categories if item.kind == "operational")
+        return StorageBreakdown(
+            managed_data_bytes=managed,
+            operational_bytes=operational,
+            total_bytes=managed + operational,
+            categories=categories,
+        )
+
+
+def _has_path_prefix(parts: tuple[str, ...], prefix: tuple[str, ...]) -> bool:
+    return len(parts) >= len(prefix) and parts[: len(prefix)] == prefix
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _column_strings(table: pa.Table | None, column: str | None) -> list[str]:
+    if table is None or column is None or column not in table.column_names:
+        return []
+    values: list[str] = []
+    for value in table[column].to_pylist():
+        if value is None:
+            continue
+        if isinstance(value, (datetime, date)):
+            values.append(value.isoformat())
+        else:
+            values.append(str(value))
+    return values
+
+
+def _symbol_market(symbol: str) -> str:
+    suffix = symbol.strip().upper().rsplit(".", 1)
+    return suffix[-1] if len(suffix) == 2 and suffix[-1] in {"SH", "SZ", "BJ"} else "OTHER"
+
+
+def _calendar_day(value: str) -> str:
+    return value[:10]
+
+
+def _quality_word(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if "fail" in text or "error" in text:
+        return "failed"
+    if "degrad" in text or "warn" in text:
+        return "degraded"
+    if text in {"healthy", "pass", "passed", "success", "succeeded"}:
+        return "healthy"
+    return "unknown"
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_nonnegative_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
