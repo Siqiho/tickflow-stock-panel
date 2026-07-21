@@ -361,6 +361,52 @@ Migration files are discovered by their numeric prefix and applied one by one. B
 - `write_lineage_record` rejects/does not emit a formal record without `unit_version`; update all existing in-scope call sites and tests to provide it.
 - No paid sample call is made. Fixture tests are the admission evidence for this batch.
 
+**Exact unit/manifest API for this batch:**
+
+`unit_contracts.py` exports the four required literal aliases plus:
+
+```python
+class UnitContractError(ValueError): ...
+
+CN_CANONICAL_UNITS: Mapping[str, str]
+
+canonicalize_volume(value: float | None, source_unit: VolumeUnit, *, market: str) -> float | None
+canonicalize_amount(value: float | None, source_unit: AmountUnit, *, market: str) -> float | None
+canonicalize_ratio(value: float | None, source_scale: RatioScale, *, target_scale: RatioScale) -> float | None
+ensure_publishable_units(
+    manifest: ProviderDatasetManifest,
+    *,
+    required_fields: Collection[str],
+    market: str,
+) -> None
+```
+
+- CN conversion is `share -> lot` by `/100`, `TEN_THOUSAND_CNY -> CNY` by `*10_000`, and `fraction -> percentage_point` by `*100`. Null stays null.
+- Unknown required source units raise `UnitContractError` before any provider/network call. Non-CN publication raises if it attempts to use CN canonical `lot` or `CNY`.
+- `normalize_daily` gains keyword-only `manifest: ProviderDatasetManifest | None = None`, `market: str = "CN"`, and `for_publication: bool = False`. Staging/legacy normalization remains compatible with the default. When `for_publication=True`, a manifest is required, volume/amount must be publishable, conversion is applied, and `change_pct`/`turnover_rate` use the declared ratio scale.
+- `TickFlowProvider.get_daily` uses its daily manifest with `for_publication=True`. Because undocumented TickFlow volume/amount units are `unknown`, it must fail closed before `get_client()` until a verified manifest exists. Do not alter the separate legacy sync pipeline in this M3 metadata-only admission step.
+- Public quote rows continue using their already-tested per-row source-unit conversion/provenance. Their aggregate manifest may truthfully use `unknown` for mixed source units; this must not cause a second conversion of already canonical quote rows.
+
+Provider classes expose `dataset_manifests: tuple[ProviderDatasetManifest, ...]`. The registry adds pure local metadata functions:
+
+```python
+get_provider_manifests(name: str) -> list[ProviderDatasetManifest]
+list_provider_manifests() -> list[ProviderDatasetManifest]
+```
+
+These return copies in deterministic `(provider, dataset_id, operations)` order and must not load custom YAML, call providers, access credentials, or use the network. Unknown custom providers continue to use the existing explicit runtime registry but have no synthesized manifest.
+
+Required built-in manifest coverage:
+
+- Public: `quote_snapshot`, `sealed_l1`, `stock_adj_factor`, five financial dataset IDs, and `pools`. Public never declares `depth5`.
+- TickFlow: stock/ETF/index instruments and daily, stock minute/adjustment, quote snapshot, five financial dataset IDs, and true `depth5` where existing capabilities say the operation exists.
+- TickFlow ratio source scale is `fraction` and canonical scale is `percentage_point`, as fixed by M3. Undocumented volume/amount/book units remain `unknown`; `verified_at=None` until real-sample admission.
+- Quote/L1/depth manifests are distinct. `sealed_l1` and `depth5` each carry their own book-volume unit key, even when the honest value is `unknown`.
+- Every financial manifest has both `monetary_currency` and `monetary_scale` keys in source and canonical maps. Unknown source values stay `unknown`; canonical values are `CNY` and `unit` only where the existing normalized schema already uses that contract.
+- `ProviderDatasetManifest` validates non-empty provider/dataset/asset/operation values, unique operations, and string unit maps. Do not add entitlement detection or live verification here; Task 4 service resolves entitlement.
+
+Lineage scope is deliberately bounded: make the shared writer fail before disk I/O when `unit_version` is missing/blank, and update every current `write_lineage_record(...)` caller/test if needed. Do not retrofit new lineage calls into unrelated artifact writers in this task; later publish-protocol work may expand coverage.
+
 - [ ] Write failing manifest/unit tests first: fraction conversion, unknown-unit rejection, non-CN rejection, independent L1/depth units, finance currency/scale, and missing lineage unit version.
 - [ ] Verify RED.
 - [ ] Implement unit contracts, manifests, registry access, guarded normalization, and lineage enforcement.
