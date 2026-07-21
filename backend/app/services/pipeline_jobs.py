@@ -139,14 +139,15 @@ class JobStore:
         job: dict[str, Any],
         mirror: Mapping[str, str] | None,
         owner_token: object | None,
+        *,
+        lock_held: bool = False,
     ) -> None:
         if mirror is None or owner_token is None:
             return
         payload = dict(job)
         payload["_catalog_mirror"] = dict(mirror)
-        # Keep owner lookup and dispatch in one dedicated synchronization domain.
-        # This serializes cleanup with SQLite callbacks without holding the job-state lock.
-        with self._sink_owner_lock:
+
+        def dispatch() -> None:
             sink = self._sink_owners.get(owner_token)
             if sink is None:
                 return
@@ -154,6 +155,14 @@ class JobStore:
                 sink(payload)
             except Exception:
                 logger.exception("control-plane job mirror failed: job_id=%s", job.get("id"))
+
+        # Terminal handoff already owns this lock so owner cleanup cannot pass
+        # between removing the active job and publishing its terminal callback.
+        if lock_held:
+            dispatch()
+        else:
+            with self._sink_owner_lock:
+                dispatch()
 
     # ===== persistence =====
 
@@ -261,41 +270,65 @@ class JobStore:
         status: Literal["succeeded", "degraded"],
         result: Any,
     ) -> None:
-        with self._lock:
-            j = self._active_jobs.pop(job_id, None)
-            if not j:
-                return
-            j["status"] = status
-            j["finished_at"] = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-            j["progress"] = 100
-            j["result"] = result
-            j["duration_s"] = _duration_s(j)
-            if self._active_id == job_id:
-                self._active_id = None
-            self._delete_oldest()
-            self._write_file(j)
-            finished = dict(j)
-            mirror_metadata = self._mirror_metadata.pop(job_id, None)
-            owner_token = self._mirror_owner_tokens.pop(job_id, None)
-        self._notify_control_plane(finished, mirror_metadata, owner_token)
+        with self._sink_owner_lock:
+            with self._lock:
+                j = self._active_jobs.pop(job_id, None)
+                if not j:
+                    return
+                j["status"] = status
+                j["finished_at"] = (
+                    datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+                )
+                j["progress"] = 100
+                j["result"] = result
+                j["duration_s"] = _duration_s(j)
+                if self._active_id == job_id:
+                    self._active_id = None
+                self._delete_oldest()
+                self._write_file(j)
+                finished = dict(j)
+                mirror_metadata = self._mirror_metadata.get(job_id)
+                owner_token = self._mirror_owner_tokens.get(job_id)
+            self._notify_control_plane(
+                finished,
+                mirror_metadata,
+                owner_token,
+                lock_held=True,
+            )
+            with self._lock:
+                if self._mirror_owner_tokens.get(job_id) is owner_token:
+                    self._mirror_metadata.pop(job_id, None)
+                    self._mirror_owner_tokens.pop(job_id, None)
 
     def fail(self, job_id: str, error: str) -> None:
-        with self._lock:
-            j = self._active_jobs.pop(job_id, None)
-            if not j:
-                return
-            j["status"] = "failed"
-            j["finished_at"] = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-            j["error"] = error
-            j["duration_s"] = _duration_s(j)
-            if self._active_id == job_id:
-                self._active_id = None
-            self._delete_oldest()
-            self._write_file(j)
-            failed = dict(j)
-            mirror_metadata = self._mirror_metadata.pop(job_id, None)
-            owner_token = self._mirror_owner_tokens.pop(job_id, None)
-        self._notify_control_plane(failed, mirror_metadata, owner_token)
+        with self._sink_owner_lock:
+            with self._lock:
+                j = self._active_jobs.pop(job_id, None)
+                if not j:
+                    return
+                j["status"] = "failed"
+                j["finished_at"] = (
+                    datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+                )
+                j["error"] = error
+                j["duration_s"] = _duration_s(j)
+                if self._active_id == job_id:
+                    self._active_id = None
+                self._delete_oldest()
+                self._write_file(j)
+                failed = dict(j)
+                mirror_metadata = self._mirror_metadata.get(job_id)
+                owner_token = self._mirror_owner_tokens.get(job_id)
+            self._notify_control_plane(
+                failed,
+                mirror_metadata,
+                owner_token,
+                lock_held=True,
+            )
+            with self._lock:
+                if self._mirror_owner_tokens.get(job_id) is owner_token:
+                    self._mirror_metadata.pop(job_id, None)
+                    self._mirror_owner_tokens.pop(job_id, None)
 
     # ===== progress =====
 

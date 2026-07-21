@@ -1,20 +1,20 @@
 # Final review fix report
 
 Date: 2026-07-21
-Baseline: `cdc99c0`
+Baseline: `cdc99c0`; first review-fix commit: `d35b17a`
 Scope: final-review findings A-G only; no provider expansion, live-data mutation, deployment, or cutover.
 
 ## Outcome
 
-All three Critical and four Important findings are closed in the isolated M0-M4 worktree.
+All original A-G findings and the four Important follow-up findings are closed in the isolated M0-M4 worktree. This report describes the state of its containing commit, including the second review round.
 
-- A — Refresh/invalidation: pipeline terminal states refresh the full catalog; the instruments operation refreshes only `stock_instruments`; index writers refresh only `index_instruments`, `index_daily`, and `index_enriched`; destructive clear performs a serialized post-delete full refresh before returning. Frontend pipeline/clear invalidates the `data-catalog` prefix, while index sync invalidates only the three related dataset detail/schema/run keys plus catalog root/status/global runs.
+- A — Refresh/invalidation: pipeline terminal states refresh the full catalog; the instruments operation refreshes only `stock_instruments`; both index endpoints preserve the writer's default index-and-ETF side effect and refresh `index_instruments`, `etf_instruments`, `index_daily`, and `index_enriched` as applicable; destructive clear performs a serialized post-delete full refresh before returning. Frontend pipeline/clear invalidates the `data-catalog` prefix, while index sync invalidates the four related dataset detail/schema/run keys plus catalog root/status/global runs.
 - B — Schema admission: every fixed dataset has an explicit required writer schema; `ext_data` is explicitly `opaque_dynamic`; descriptors expose persisted semantic columns rather than invented wide schemas. Stock enriched has its three stock-only fields, while ETF/index enriched expose only their actual 11-column persisted shape.
-- C — Stable scans/concurrency: Parquet metadata, selected values, and SHA-256 are read through one open file descriptor. Device/inode/size/mtime are checked before and after reading and against the final path. A non-blocking public rescan mutex yields stable HTTP 409 detail; writer-triggered refreshes serialize and cannot be silently lost behind a manual rescan.
+- C — Stable scans/concurrency: Parquet metadata, selected values, and SHA-256 are read through one open file descriptor. Device/inode/size/mtime are checked before and after reading and against the final path. A non-blocking public rescan mutex yields stable HTTP 409 detail; writer-triggered refreshes serialize and cannot be silently lost behind a manual rescan. A mixed full rescan with any retained/failed dataset records every attempted run and marks the catalog stale, but advances none of the admitted snapshot, artifacts, storage breakdown, per-dataset storage, or refresh metadata.
 - D — Runtime entitlements: catalog entitlement is derived from the detected `CapabilitySet` through explicit operation-to-capability mappings. Public/local manifests are allowed; unknown providers and unknown TickFlow operations fail closed.
 - E — Unit/lineage/depth truth: lineage is admitted only when its canonical target matches a materialized artifact. Missing lineage stays `unknown`; mismatched unit versions fail admission. Sealed seven-column summaries always persist under `sealed_l1` with `sealed_l1_v1`; only true level-5 shapes can set `depth5_available`.
-- F — Lifespan ordering/cleanup: catalog initialization is the startup gate before schedulers/pollers. Its outer `try/finally` immediately covers all later setup; partial startup performs independent best-effort resource cleanup and always exits the catalog scope.
-- G — Run monotonicity/ownership: SQLite run transitions are monotonic (`pending -> running -> terminal`) and terminal states absorb late callbacks. Exiting an owner synthesizes `failed/control_plane_owner_shutdown` for its in-flight control-plane runs without changing the legacy JSON job, and late legacy completion cannot reopen or redirect that run.
+- F — Lifespan ordering/cleanup: catalog initialization is the startup gate before schedulers/pollers. Its outer `try/finally` immediately covers all later setup; depth, pull, and financial resources are registered in `app.state` before their potentially failing setup calls. Partial startup performs independent best-effort resource cleanup and always exits the catalog scope; regressions cover pull refresh and financial start exceptions.
+- G — Run monotonicity/ownership: SQLite run transitions are monotonic (`pending -> running -> terminal`) and terminal states absorb late callbacks. Terminal handoff and owner cleanup share one synchronization domain, with mirror ownership retained until terminal notification completes. Repeated barrier-controlled succeed/degrade/fail races prove shutdown cannot leave the mirrored run `running`. Exiting an owner still synthesizes `failed/control_plane_owner_shutdown` for an in-flight run without changing legacy JSON, and late legacy completion cannot reopen or redirect it.
 
 Catalog refreshes do not recursively trigger the pipeline sink: catalog rescans write directly to `CatalogControlDB`; only `JobStore` lifecycle callbacks invoke the sink. Pipeline legacy terminal JSON is persisted before the refresh callback, and refresh exceptions are caught and tested not to change either the legacy terminal or the already-written pipeline terminal run.
 
@@ -34,17 +34,21 @@ RED was observed before each implementation group:
 - A backend: 6 failures before pipeline/index/clear refresh hooks.
 - A frontend: 3 failures before full-prefix versus index-scoped invalidation.
 - Descriptor scope: 1 failure before removing stock-only persisted fields from ETF/index descriptors.
+- A follow-up: backend and frontend tests failed before ETF side effects were included in catalog refresh and invalidation.
+- C follow-up: a mixed full rescan partially advanced a newly healthy dataset before whole-snapshot retention was enforced.
+- F follow-up: pull refresh and financial start exceptions leaked their already-entered resources before pre-registration.
+- G follow-up: barrier-controlled terminal/owner races left the last mirrored status `running` for both success and failure before terminal handoff moved into the owner synchronization domain.
 
 GREEN commands/results:
 
-- `backend/.venv/bin/pytest -q backend/tests/data_catalog backend/tests/test_depth_catalog_contract.py` — **87 passed**.
+- `backend/.venv/bin/pytest -q backend/tests/data_catalog backend/tests/test_depth_catalog_contract.py backend/tests/test_pipeline_quality_status.py` — **100 passed**.
 - `backend/.venv/bin/ruff check backend/app/data_catalog backend/tests/data_catalog backend/tests/test_depth_catalog_contract.py` — **all checks passed**.
 - `pnpm run test:run` — **38 passed**.
 - `pnpm run lint` — **0 errors**, 36 pre-existing repository warnings outside touched Data files.
 - `pnpm run build` — **passed**; existing Vite chunk/dynamic-import warnings remain.
 - `git diff --check` — **passed**.
 
-Full backend result: `backend/.venv/bin/pytest -q` produced **216 passed, 2 failed**. Both failures are pre-existing data-dependent tests in this isolated worktree, which has no local sample financial/instrument dataset: `test_financial_normalize.py::test_local_ready_and_rows` and `test_financial_p1.py::test_shares_snapshot_from_instruments`. Neither failure touches the final-review code paths; the complete focused catalog/depth suite is green.
+Full backend result at the report's containing commit: `backend/.venv/bin/pytest -q` produced **224 passed, 2 failed**. Both failures are pre-existing data-dependent tests in this isolated worktree, which has no local sample financial/instrument dataset: `test_financial_normalize.py::test_local_ready_and_rows` and `test_financial_p1.py::test_shares_snapshot_from_instruments`. Neither failure touches the final-review code paths; the complete focused catalog/depth/pipeline suite is green.
 
 Targeted Ruff is green for all new/catalog files. The five touched legacy modules (`api/data.py`, `api/indices.py`, `main.py`, `services/depth_service.py`, `services/pipeline_jobs.py`) retain their pre-existing file-level Ruff baseline (97 diagnostics in the combined invocation); no diagnostic points to a line added by this fix.
 

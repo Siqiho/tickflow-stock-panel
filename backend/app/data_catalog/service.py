@@ -194,7 +194,8 @@ class CatalogService:
 
         finished_at = _utc_now()
         persisted = []
-        retained_failure = False
+        all_runs: list[SyncRun] = []
+        retained_runs: list[SyncRun] = []
         for scanned_dataset_id, result in scan_results.items():
             run_status = _run_status(result)
             run = SyncRun(
@@ -215,6 +216,7 @@ class CatalogService:
                     else None
                 ),
             )
+            all_runs.append(run)
             previous = self.control_db.get_dataset_state(scanned_dataset_id)
             if (
                 run_status == "failed"
@@ -225,10 +227,21 @@ class CatalogService:
                     "degraded",
                 }
             ):
-                self.control_db.upsert_sync_run(run)
-                retained_failure = True
+                retained_runs.append(run)
                 continue
             persisted.append((result.state, run, result.artifacts))
+        if dataset_id is None and retained_runs:
+            # A full scan is one admitted snapshot. If any previously serving
+            # dataset cannot be replaced, record every run but preserve all
+            # state/artifact/storage/refreshed metadata at the prior version.
+            for run in all_runs:
+                self.control_db.upsert_sync_run(run)
+            self.control_db.set_meta("catalog_stale", {"value": True})
+            return self.list_catalog().model_copy(update={"stale": True})
+
+        for run in retained_runs:
+            self.control_db.upsert_sync_run(run)
+        retained_failure = bool(retained_runs)
         any_failed = retained_failure or any(
             _run_status(result) == "failed" for result in scan_results.values()
         )

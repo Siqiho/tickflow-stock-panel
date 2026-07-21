@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import threading
 from contextlib import asynccontextmanager
 
 import pytest
@@ -115,6 +116,159 @@ def test_main_lifespan_closes_catalog_when_later_setup_fails(tmp_path, monkeypat
     asyncio.run(scenario())
 
     assert events == ["cache", "catalog-enter", "quote-stop", "catalog-exit"]
+
+
+def _stub_main_startup_through_scheduler_registration(
+    tmp_path, monkeypatch, events, pull_scheduler, financial_scheduler
+) -> None:
+    from app.services import auth, depth_service, ext_presets, ext_pull, financial_sync
+    from app.strategy import monitor
+
+    class StubStore:
+        def __init__(self) -> None:
+            self.data_dir = tmp_path / "data"
+
+    class StubRepo:
+        def __init__(self, store) -> None:
+            self.store = store
+
+        def refresh_cache(self) -> None:
+            return None
+
+    class StubQuoteService:
+        def set_repo(self, repo) -> None:
+            return None
+
+        def boot_check(self) -> None:
+            return None
+
+        def set_app_state(self, state) -> None:
+            return None
+
+        def stop(self) -> None:
+            events.append("quote-stop")
+
+    class StubDepthService:
+        def set_repo(self, repo) -> None:
+            return None
+
+        def set_app_state(self, state) -> None:
+            return None
+
+        def boot_check(self) -> None:
+            return None
+
+        def start_polling(self) -> None:
+            return None
+
+        def stop_polling(self) -> None:
+            events.append("depth-stop")
+
+    class StubScheduler:
+        def shutdown(self, *, wait) -> None:
+            events.append("scheduler-stop")
+
+    @asynccontextmanager
+    async def control_scope(*args, **kwargs):
+        events.append("catalog-enter")
+        try:
+            yield
+        finally:
+            events.append("catalog-exit")
+
+    async def ensure_presets(data_dir) -> None:
+        return None
+
+    monkeypatch.setattr(auth, "bootstrap_from_env", lambda: None)
+    monkeypatch.setattr(main, "DataStore", StubStore)
+    monkeypatch.setattr(main, "KlineRepository", StubRepo)
+    monkeypatch.setattr(main, "QuoteService", StubQuoteService)
+    monkeypatch.setattr(main, "detect_capabilities", CapabilitySet)
+    monkeypatch.setattr(main, "catalog_control_plane_lifespan", control_scope)
+    monkeypatch.setattr(monitor, "StrategyMonitorService", object)
+    monkeypatch.setattr(depth_service, "DepthService", StubDepthService)
+    monkeypatch.setattr(main.daily_pipeline, "set_app_state", lambda state: None)
+    monkeypatch.setattr(
+        main.daily_pipeline, "start_scheduler", lambda repo, capset: StubScheduler()
+    )
+    monkeypatch.setattr(ext_pull, "pull_scheduler", pull_scheduler)
+    monkeypatch.setattr(ext_presets, "ensure_builtin_presets", ensure_presets)
+    monkeypatch.setattr(financial_sync, "financial_scheduler", financial_scheduler)
+
+
+def test_pull_scheduler_is_stopped_when_refresh_raises_during_startup(
+    tmp_path, monkeypatch
+) -> None:
+    events: list[str] = []
+
+    class PullScheduler:
+        def start(self, data_dir) -> None:
+            events.append("pull-start")
+
+        def refresh(self, data_dir) -> None:
+            events.append("pull-refresh")
+            raise RuntimeError("pull refresh failed")
+
+        def stop(self) -> None:
+            events.append("pull-stop")
+
+    class FinancialScheduler:
+        def start(self, data_dir, capset) -> None:
+            raise AssertionError("financial startup must not be reached")
+
+        def stop(self) -> None:
+            events.append("financial-stop")
+
+    _stub_main_startup_through_scheduler_registration(
+        tmp_path, monkeypatch, events, PullScheduler(), FinancialScheduler()
+    )
+
+    async def scenario() -> None:
+        with pytest.raises(RuntimeError, match="pull refresh failed"):
+            async with main.lifespan(FastAPI()):
+                raise AssertionError("startup failure must prevent yield")
+
+    asyncio.run(scenario())
+
+    assert events.count("pull-stop") == 1
+    assert events.index("pull-refresh") < events.index("pull-stop") < events.index("catalog-exit")
+
+
+def test_financial_scheduler_is_stopped_when_start_raises(tmp_path, monkeypatch) -> None:
+    events: list[str] = []
+
+    class PullScheduler:
+        def start(self, data_dir) -> None:
+            return None
+
+        def refresh(self, data_dir) -> None:
+            return None
+
+        def stop(self) -> None:
+            events.append("pull-stop")
+
+    class FinancialScheduler:
+        def start(self, data_dir, capset) -> None:
+            events.append("financial-start")
+            raise RuntimeError("financial start failed")
+
+        def stop(self) -> None:
+            events.append("financial-stop")
+
+    _stub_main_startup_through_scheduler_registration(
+        tmp_path, monkeypatch, events, PullScheduler(), FinancialScheduler()
+    )
+
+    async def scenario() -> None:
+        with pytest.raises(RuntimeError, match="financial start failed"):
+            async with main.lifespan(FastAPI()):
+                raise AssertionError("startup failure must prevent yield")
+
+    asyncio.run(scenario())
+
+    assert events.count("financial-stop") == 1
+    assert events.index("financial-start") < events.index("financial-stop")
+    assert events.index("financial-stop") < events.index("catalog-exit")
 
 
 def test_catalog_sink_is_cleared_when_later_startup_raises(tmp_path) -> None:
@@ -287,3 +441,74 @@ def test_inflight_job_is_aborted_in_its_control_plane_when_owner_exits(tmp_path)
         await second.__aexit__(None, None, None)
 
     asyncio.run(scenario())
+
+
+def _assert_terminal_owner_race_is_absorbed(tmp_path, terminal_method, iteration) -> None:
+    store = JobStore(store_dir=tmp_path / f"jobs-{terminal_method}-{iteration}")
+    mirrored_statuses: list[str] = []
+
+    def capture_status(payload) -> None:
+        mirrored_statuses.append(payload["status"])
+
+    token = store.set_control_plane_sink(capture_status)
+    job_id = store.create(mirror={"dataset_id": "daily_pipeline", "operation": "daily"})
+    store.start(job_id)
+
+    terminal_ready = threading.Barrier(2)
+    allow_terminal_notify = threading.Event()
+    original_notify = store._notify_control_plane
+
+    def paused_notify(job, mirror, owner_token, *, lock_held=False):
+        if job["status"] in {"succeeded", "degraded", "failed"}:
+            terminal_ready.wait(timeout=2)
+            assert allow_terminal_notify.wait(timeout=2)
+        if lock_held:
+            return original_notify(job, mirror, owner_token, lock_held=True)
+        return original_notify(job, mirror, owner_token)
+
+    store._notify_control_plane = paused_notify  # type: ignore[method-assign]
+
+    def finish_terminal() -> None:
+        if terminal_method == "succeed":
+            store.succeed(job_id, {"quality": {"ok": True}})
+        elif terminal_method == "degrade":
+            store.degrade(job_id, {"quality": {"ok": False}})
+        else:
+            store.fail(job_id, "worker failed")
+
+    terminal = threading.Thread(target=finish_terminal)
+    terminal.start()
+    terminal_ready.wait(timeout=2)
+
+    clear_started = threading.Event()
+    clear_done = threading.Event()
+
+    def clear_owner() -> None:
+        clear_started.set()
+        store.clear_control_plane_sink(token)
+        clear_done.set()
+
+    clearer = threading.Thread(target=clear_owner)
+    clearer.start()
+    assert clear_started.wait(timeout=1)
+    assert not clear_done.wait(timeout=0.05)
+    allow_terminal_notify.set()
+    terminal.join(timeout=2)
+    clearer.join(timeout=2)
+
+    assert not terminal.is_alive()
+    assert not clearer.is_alive()
+    expected_status = {
+        "succeed": "succeeded",
+        "degrade": "degraded",
+        "fail": "failed",
+    }[terminal_method]
+    assert mirrored_statuses[-1] == expected_status
+
+
+@pytest.mark.parametrize("terminal_method", ["succeed", "degrade", "fail"])
+def test_terminal_and_owner_shutdown_race_always_emits_a_terminal_callback(
+    tmp_path, terminal_method
+) -> None:
+    for iteration in range(10):
+        _assert_terminal_owner_race_is_absorbed(tmp_path, terminal_method, iteration)

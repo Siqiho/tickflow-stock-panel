@@ -103,10 +103,11 @@ def test_pipeline_refresh_failure_cannot_change_the_persisted_legacy_terminal(
 
 def test_index_sync_refreshes_only_its_written_catalog_datasets(monkeypatch) -> None:
     scans: list[str | None] = []
+    instrument_calls: list[tuple[bool, bool]] = []
     catalog = SimpleNamespace(
         refresh_after_mutation=lambda dataset_id=None: scans.append(dataset_id)
     )
-    repo = object()
+    repo = SimpleNamespace(etf_instruments_written=False)
     request = SimpleNamespace(
         app=SimpleNamespace(
             state=SimpleNamespace(
@@ -116,7 +117,13 @@ def test_index_sync_refreshes_only_its_written_catalog_datasets(monkeypatch) -> 
             )
         )
     )
-    monkeypatch.setattr(index_api.index_sync, "sync_index_instruments", lambda value: 2)
+
+    def sync_instruments(value, pull_index=True, pull_etf=True):
+        instrument_calls.append((pull_index, pull_etf))
+        value.etf_instruments_written = pull_etf
+        return 2
+
+    monkeypatch.setattr(index_api.index_sync, "sync_index_instruments", sync_instruments)
     monkeypatch.setattr(
         index_api.index_sync,
         "sync_and_persist_index_daily",
@@ -124,7 +131,9 @@ def test_index_sync_refreshes_only_its_written_catalog_datasets(monkeypatch) -> 
     )
 
     assert index_api.sync_index_instruments(request) == {"status": "ok", "count": 2}
-    assert scans == ["index_instruments"]
+    assert instrument_calls == [(True, True)]
+    assert repo.etf_instruments_written is True
+    assert scans == ["index_instruments", "etf_instruments"]
     scans.clear()
 
     assert index_api.sync_index_daily(request, days=30) == {
@@ -132,7 +141,13 @@ def test_index_sync_refreshes_only_its_written_catalog_datasets(monkeypatch) -> 
         "index_count": 2,
         "rows_written": 20,
     }
-    assert scans == ["index_instruments", "index_daily", "index_enriched"]
+    assert instrument_calls == [(True, True), (True, True)]
+    assert scans == [
+        "index_instruments",
+        "etf_instruments",
+        "index_daily",
+        "index_enriched",
+    ]
 
 
 def test_clear_rescans_after_deletion_so_old_serving_state_is_not_returned(

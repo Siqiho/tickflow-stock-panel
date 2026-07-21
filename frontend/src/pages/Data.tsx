@@ -234,7 +234,7 @@ export function Data() {
   const syncIndexDaily = useMutation({
     mutationFn: () => api.syncIndexDaily(indexSyncDays),
     onSuccess: async () => {
-      const affectedCatalogKeys = ['index_instruments', 'index_daily', 'index_enriched'].flatMap(
+      const affectedCatalogKeys = ['index_instruments', 'etf_instruments', 'index_daily', 'index_enriched'].flatMap(
         (datasetId) => [
           QK.dataCatalogDataset(datasetId),
           QK.dataCatalogSchema(datasetId),

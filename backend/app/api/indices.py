@@ -141,7 +141,7 @@ def sync_index_instruments(request: Request):
     """同步 CN_Index 指数标的列表。"""
     repo = request.app.state.repo
     count = index_sync.sync_index_instruments(repo)
-    _refresh_catalog(request, "index_instruments")
+    _refresh_catalog(request, "index_instruments", "etf_instruments")
     return {"status": "ok", "count": count}
 
 
@@ -159,5 +159,11 @@ def sync_index_daily(
     start = end - timedelta(days=days)
     count = index_sync.sync_index_instruments(repo)
     rows = index_sync.sync_and_persist_index_daily(repo, capset, start_date=start, end_date=end)
-    _refresh_catalog(request, "index_instruments", "index_daily", "index_enriched")
+    _refresh_catalog(
+        request,
+        "index_instruments",
+        "etf_instruments",
+        "index_daily",
+        "index_enriched",
+    )
     return {"status": "ok", "index_count": count, "rows_written": rows}

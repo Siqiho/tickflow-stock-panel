@@ -532,6 +532,70 @@ def test_schema_admission_failure_retains_previous_healthy_snapshot_as_stale(
     assert failed.error_code == "catalog_quality_failed"
 
 
+def test_mixed_full_rescan_retains_the_entire_previous_admitted_snapshot(
+    tmp_path: Path,
+) -> None:
+    stock_artifact = _write_parquet(
+        tmp_path / "kline_daily" / "date=2026-07-21" / "part.parquet",
+        [_bar("600000.SH")],
+    )
+    index_artifact = _write_parquet(
+        tmp_path / "kline_index_daily" / "date=2026-07-21" / "part.parquet",
+        [_bar("000001.SH")],
+    )
+    for root, artifact in (
+        ("kline_daily", stock_artifact),
+        ("kline_index_daily", index_artifact),
+    ):
+        lineage = tmp_path / "lineage" / root / "run.json"
+        lineage.parent.mkdir(parents=True, exist_ok=True)
+        lineage.write_text(
+            json.dumps(
+                {
+                    "source": "test-writer",
+                    "unit_version": "canonical_daily_v1",
+                    "quality": "success",
+                    "target_artifact": artifact.relative_to(tmp_path).as_posix(),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    db = CatalogControlDB(tmp_path)
+    service = CatalogService(
+        tmp_path,
+        db,
+        manifests=(),
+    )
+    service.rescan()
+    old_states = db.list_dataset_states()
+    old_artifacts = db.list_artifacts()
+    old_meta = {
+        key: db.get_meta(key)
+        for key in ("dataset_storage", "storage_breakdown", "catalog_refreshed_at")
+    }
+    assert db.get_dataset_state("stock_daily").quality_status == "healthy"  # type: ignore[union-attr]
+    assert db.get_dataset_state("index_daily").quality_status == "healthy"  # type: ignore[union-attr]
+
+    _write_parquet(stock_artifact, [_bar("600000.SH"), _bar("000001.SZ")])
+    _write_parquet(
+        index_artifact,
+        [{"symbol": "000001.SH", "date": date(2026, 7, 22), "close": 3_500.0}],
+    )
+
+    response = service.rescan()
+
+    assert response.stale is True
+    assert db.list_dataset_states() == old_states
+    assert db.list_artifacts() == old_artifacts
+    assert {
+        key: db.get_meta(key)
+        for key in ("dataset_storage", "storage_breakdown", "catalog_refreshed_at")
+    } == old_meta
+    assert db.list_sync_runs("stock_daily", limit=1)[0].status == "succeeded"
+    assert db.list_sync_runs("index_daily", limit=1)[0].status == "failed"
+
+
 def test_first_invalid_scan_persists_failed_non_serving_state(tmp_path: Path) -> None:
     _write_parquet(
         tmp_path / "kline_daily" / "part.parquet",

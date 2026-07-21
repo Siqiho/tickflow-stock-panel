@@ -213,9 +213,9 @@ async def lifespan(app: FastAPI):
         # 五档盘口 sealed 服务(真假涨停/跌停, 独立旁路线)
         from app.services.depth_service import DepthService
         depth_service = DepthService()
+        app.state.depth_service = depth_service
         depth_service.set_repo(repo)
         depth_service.set_app_state(app.state)
-        app.state.depth_service = depth_service
 
         # 启动调度器(若 enriched 数据为空,首次启动可手动 POST /api/pipeline/run)
         try:
@@ -235,9 +235,9 @@ async def lifespan(app: FastAPI):
 
         # 扩展数据定时拉取
         from app.services.ext_pull import pull_scheduler
+        app.state.pull_scheduler = pull_scheduler
         pull_scheduler.start(store.data_dir)
         pull_scheduler.refresh(store.data_dir)
-        app.state.pull_scheduler = pull_scheduler
 
         # 内置扩展表 (概念/行业): 只创建 config (含拉取配置), 不自动拉数据
         # 数据获取由用户在概念/行业页点「获取数据」手动触发 (POST /api/ext-data/presets/{id}/fetch)
@@ -250,8 +250,8 @@ async def lifespan(app: FastAPI):
         # 财务数据 (需 Expert 套餐): 仅初始化调度器供 /api/financials/sync/* 手动同步,
         # 不启动自动调度——用户在「财务分析」页点「同步」手动拉取。
         from app.services.financial_sync import financial_scheduler
-        financial_scheduler.start(store.data_dir, capset)
         app.state.financial_scheduler = financial_scheduler
+        financial_scheduler.start(store.data_dir, capset)
 
         # 策略引擎
         from app.services.screener import ScreenerService

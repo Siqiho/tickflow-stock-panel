@@ -293,7 +293,7 @@ describe('Data workbench integration', () => {
     await waitFor(() => expect(api.syncIndexDaily).toHaveBeenCalledTimes(1))
     await waitFor(() => expectUnselectedCatalogQueriesFresh(client, unselectedQueryFns))
     const invalidatedKeys = invalidate.mock.calls.map(([filters]) => filters?.queryKey)
-    for (const datasetId of ['index_instruments', 'index_daily', 'index_enriched']) {
+    for (const datasetId of ['index_instruments', 'etf_instruments', 'index_daily', 'index_enriched']) {
       expect(invalidatedKeys).toContainEqual(QK.dataCatalogDataset(datasetId))
       expect(invalidatedKeys).toContainEqual(QK.dataCatalogSchema(datasetId))
       expect(invalidatedKeys).toContainEqual(QK.dataCatalogRuns(datasetId))
