@@ -866,6 +866,136 @@ export interface StrategyAlertEvent {
   signals?: string[]
 }
 
+// ===== Data catalog =====
+export type QualityStatus = 'unknown' | 'healthy' | 'degraded' | 'failed'
+export type RunStatus = 'pending' | 'running' | 'succeeded' | 'degraded' | 'failed'
+
+export interface DatasetAvailability {
+  provider_supported: boolean
+  entitled: boolean
+  local_materialized: boolean
+  serving_ready: boolean
+  reason_code: string | null
+}
+
+export interface FieldContract {
+  name: string
+  dtype: string
+  semantic: string
+  unit: string | null
+  scale: string | null
+  currency: string | null
+  timezone: string | null
+  nullable: boolean
+}
+
+export interface DatasetDescriptor {
+  dataset_id: string
+  title: string
+  asset_types: string[]
+  grain: string
+  primary_key: string[]
+  partition_keys: string[]
+  schema_version: string
+  unit_version: string
+  point_in_time: boolean
+  adjustment: string | null
+  availability: DatasetAvailability
+  fields: FieldContract[]
+}
+
+export interface DatasetState {
+  dataset_id: string
+  schema_version: string
+  unit_version: string
+  quality_status: QualityStatus
+  row_count: number
+  symbol_count: number
+  expected_symbol_count: number | null
+  earliest_time: string | null
+  latest_time: string | null
+  managed_bytes: number
+  last_run_id: string | null
+  updated_at: string
+  payload: Record<string, unknown>
+}
+
+export interface MarketCoverage {
+  market: 'SH' | 'SZ' | 'BJ' | 'OTHER'
+  symbol_count: number
+  expected_symbol_count: number | null
+  ratio: number | null
+}
+
+export interface LineageSummary {
+  run_id: string | null
+  source: string
+  fetched_at: string | null
+  unit_version: string
+  quality_status: QualityStatus
+  scope: string | null
+  artifact_path: string | null
+  row_count: number | null
+}
+
+export interface StorageCategory {
+  key: string
+  title: string
+  kind: 'managed' | 'operational'
+  bytes: number
+  files: number
+}
+
+export interface StorageBreakdown {
+  managed_data_bytes: number
+  operational_bytes: number
+  total_bytes: number
+  categories: StorageCategory[]
+}
+
+export interface DatasetCatalogEntry {
+  descriptor: DatasetDescriptor
+  state: DatasetState
+  provider: string | null
+  coverage: MarketCoverage[]
+  lineage: LineageSummary[]
+  depth5_available: boolean
+}
+
+export interface CatalogResponse {
+  datasets: DatasetCatalogEntry[]
+  storage: StorageBreakdown
+  refreshed_at: string | null
+  stale: boolean
+}
+
+export interface SyncRun {
+  run_id: string
+  dataset_id: string
+  provider: string | null
+  operation: string
+  started_at: string | null
+  finished_at: string | null
+  status: RunStatus
+  rows_fetched: number
+  rows_published: number
+  quality_status: QualityStatus
+  error_code: string | null
+  error_message: string | null
+}
+
+export interface CatalogSchemaResponse {
+  dataset_id: string
+  schema_version: string
+  unit_version: string
+  fields: FieldContract[]
+}
+
+export interface CatalogRunsResponse {
+  dataset_id: string | null
+  runs: SyncRun[]
+}
+
 // ===== API surface =====
 export const api = {
   health: () => request<{ status: string; version: string; mode: string }>('/health'),
@@ -1422,6 +1552,20 @@ export const api = {
   dataStatus: () => request<DataStatus>('/api/data/status'),
   dataClear: () => request<{ deleted_files: number }>('/api/data/clear', { method: 'POST' }),
   enrichedSchema: (table: string) => request<EnrichedField[]>(`/api/data/schema/${table}`),
+  dataCatalog: () => request<CatalogResponse>('/api/data/catalog'),
+  dataCatalogDataset: (datasetId: string) =>
+    request<DatasetCatalogEntry>(`/api/data/catalog/${encodeURIComponent(datasetId)}`),
+  dataCatalogSchema: (datasetId: string) =>
+    request<CatalogSchemaResponse>(`/api/data/catalog/${encodeURIComponent(datasetId)}/schema`),
+  dataCatalogRuns: (datasetId?: string) =>
+    request<CatalogRunsResponse>(
+      `/api/data/runs${datasetId === undefined ? '' : `?dataset_id=${encodeURIComponent(datasetId)}`}`,
+    ),
+  rescanDataCatalog: (datasetId?: string) =>
+    request<CatalogResponse>(
+      `/api/data/catalog/rescan${datasetId === undefined ? '' : `?dataset_id=${encodeURIComponent(datasetId)}`}`,
+      { method: 'POST' },
+    ),
 
   testEndpoint: (url: string, rounds?: number) =>
     request<{

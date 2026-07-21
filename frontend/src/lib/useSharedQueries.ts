@@ -4,7 +4,7 @@
  * 实时数据走 SSE invalidation，无需前端轮询。
  * 只有管线进度等非 SSE 数据才用 refetchInterval。
  */
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from './api'
 import { QK } from './queryKeys'
 
@@ -78,4 +78,19 @@ export function useDataStatus(opts?: { staleTime?: number; refetchInterval?: num
     staleTime: opts?.staleTime,
     refetchInterval: opts?.refetchInterval,
   })
+}
+
+/** 数据目录 — 本地轮询以反映数据台物化状态；失败时保留最后一次有效目录。 */
+export function useDataCatalog(opts?: { refetchInterval?: number | false }) {
+  const query = useQuery({
+    queryKey: QK.dataCatalog,
+    queryFn: api.dataCatalog,
+    placeholderData: keepPreviousData,
+    refetchInterval: opts?.refetchInterval ?? 30_000,
+  })
+
+  return {
+    ...query,
+    isCatalogStale: Boolean(query.data?.stale || (query.isError && query.data)),
+  }
 }
