@@ -585,7 +585,7 @@ Service persistence/cache behavior is fixed as follows:
 - [ ] Install dependencies and create the test harness/configuration.
 - [ ] Write a failing hook/client test showing the last successful catalog remains visible with a stale flag after a later API failure.
 - [ ] Verify RED, then implement the typed client, keys, and hook.
-- [ ] Run `pnpm test --run`, `pnpm run lint`, and `pnpm run build` GREEN.
+- [ ] Run `pnpm run test:run`, `pnpm run lint`, and `pnpm run build` GREEN. (`pnpm test --run` is not valid pnpm 9.10.0 argument forwarding.)
 - [ ] Commit Task 6.
 
 ---
