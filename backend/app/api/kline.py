@@ -1524,10 +1524,12 @@ async def extend_minute_history(request: Request):
                     job_store.progress(job_id, stage, pct, msg,
                                        stage_pct=stage_pct, skip_log=skip_log)
 
-                # 获取当前最早日期
-                earliest = repo.earliest_minute_date()
+                # 获取当前最早日期 — 只认当前 minute route 的分区,
+                # 自定义分钟不得把 leftover TickFlow 最早日当成已覆盖。
+                usable_dates = kline_sync.usable_minute_partition_dates(repo.store.data_dir)
+                earliest = usable_dates[0] if usable_dates else None
                 if not earliest:
-                    # 本地无分钟K数据 → 以今天为基准往前获取
+                    # 本地无当前源分钟K → 以今天为基准往前获取
                     from datetime import date as _date
                     latest = _date.today()
                 else:
@@ -1554,14 +1556,13 @@ async def extend_minute_history(request: Request):
 
                 def _run():
                     """全部在 executor 线程里完成,避免阻塞事件循环。"""
-                    from app.services.kline_sync import sync_minute_batch
                     from datetime import datetime as _dt
 
                     def _chunk(cur: int, tot: int) -> None:
                         progress("extend_minute", 8 + int(85 * cur / tot),
                                  f"分钟K 批次 {cur}/{tot}", stage_pct=int(100 * cur / tot), skip_log=True)
 
-                    df = sync_minute_batch(
+                    df = kline_sync.sync_minute_batch(
                         universe,
                         start_time=_dt.combine(new_start, _dt.min.time()),
                         end_time=_dt.combine(latest, _dt.min.time()),
@@ -1570,38 +1571,10 @@ async def extend_minute_history(request: Request):
                         capset=capset,
                     )
 
-                    written = 0
+                    written = kline_sync.persist_routed_minute_bars(df, repo)
                     day_count = 0
-                    if not df.is_empty():
-                        import polars as pl
-                        df = df.with_columns(pl.col("datetime").dt.date().alias("_trade_date"))
-                        for day_df in df.partition_by("_trade_date"):
-                            trade_date = day_df["_trade_date"][0]
-                            out = repo.store.data_dir / "kline_minute" / f"date={trade_date}" / "part.parquet"
-                            out.parent.mkdir(parents=True, exist_ok=True)
-                            if out.exists():
-                                existing_df = pl.read_parquet(out)
-                                if "datetime" in existing_df.columns:
-                                    existing_df = existing_df.filter(pl.col("datetime").is_not_null())
-                                day_df = pl.concat([existing_df, day_df.drop("_trade_date")]).unique(
-                                    subset=["symbol", "datetime"], keep="last",
-                                )
-                            else:
-                                day_df = day_df.drop("_trade_date")
-                            day_df = day_df.sort("symbol", "datetime")
-                            day_df.write_parquet(out)
-                            written += day_df.height
-                            day_count += 1
-
-                        # 刷新视图
-                        d = repo.store.data_dir.as_posix()
-                        try:
-                            repo.db.execute(
-                                f"CREATE OR REPLACE VIEW kline_minute AS "
-                                f"SELECT * FROM read_parquet('{d}/kline_minute/**/*.parquet', union_by_name=true)"
-                            )
-                        except Exception:
-                            pass
+                    if written and df is not None and not df.is_empty() and "datetime" in df.columns:
+                        day_count = int(df["datetime"].dt.date().n_unique())
                     return written, day_count
 
                 progress("extend_minute", 10, f"获取分钟K [{start_str} ~ {end_str}]…")

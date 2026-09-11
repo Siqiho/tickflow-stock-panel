@@ -828,26 +828,36 @@ def run_corporate_actions_loop(
 
     if fetch_missing_adj and symbols:
         try:
-            sync_res = sync_adj_factor_public(
-                symbols,
-                data_dir,
-                asset_type=asset_type,
-            )
-            report["adj_sync"] = {
-                "ok": True,
-                "result_keys": list(sync_res.keys()) if isinstance(sync_res, dict) else type(sync_res).__name__,
-                "summary": {
-                    k: sync_res.get(k)
-                    for k in (
-                        "symbols_total",
-                        "symbols_done",
-                        "symbols_failed",
-                        "rows_written",
-                        "path",
-                    )
-                    if isinstance(sync_res, dict) and k in sync_res
-                },
-            }
+            from app.services.kline_sync import adj_route
+
+            route = adj_route()
+            if route not in {"public", "tickflow"}:
+                report["adj_sync"] = {
+                    "ok": False,
+                    "skipped": True,
+                    "reason": f"adj route {route} must not write public sina factors",
+                }
+            else:
+                sync_res = sync_adj_factor_public(
+                    symbols,
+                    data_dir,
+                    asset_type=asset_type,
+                )
+                report["adj_sync"] = {
+                    "ok": True,
+                    "result_keys": list(sync_res.keys()) if isinstance(sync_res, dict) else type(sync_res).__name__,
+                    "summary": {
+                        k: sync_res.get(k)
+                        for k in (
+                            "symbols_total",
+                            "symbols_done",
+                            "symbols_failed",
+                            "rows_written",
+                            "path",
+                        )
+                        if isinstance(sync_res, dict) and k in sync_res
+                    },
+                }
         except Exception as exc:
             report["adj_sync"] = {"ok": False, "error": str(exc)}
 

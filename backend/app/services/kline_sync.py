@@ -1545,6 +1545,107 @@ def minute_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
     return True
 
 
+def minute_partition_usable(path, route: str | None = None) -> bool:
+    """Whether one minute date partition matches the current minute route."""
+    from pathlib import Path
+
+    expected = (route if route is not None else minute_route()).strip().lower()
+    part = Path(path)
+    if not part.is_file():
+        return False
+    try:
+        names = pl.read_parquet_schema(part).names()
+        if "route" not in names:
+            return expected in {"tickflow", "public"}
+        df = pl.read_parquet(part, columns=["route"])
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("minute partition probe failed %s: %s", part, exc)
+        return False
+    return minute_cache_usable(df, expected)
+
+
+def usable_minute_partition_dates(data_dir, route: str | None = None, *, asset_type: str = "stock"):
+    """Date partitions that belong to the current minute route.
+
+    Stale TickFlow/public files after a custom switch are omitted so coverage
+    / incremental start / HTTP extend cannot treat leftover parquet as current.
+    Leftover TickFlow still sees untagged partitions.
+    """
+    from pathlib import Path
+
+    expected = route if route is not None else minute_route()
+    subdir = "kline_etf_minute" if asset_type == "etf" else "kline_minute"
+    root = Path(data_dir) / subdir
+    if not root.exists():
+        return []
+    dates: list[date] = []
+    for child in root.iterdir():
+        if not child.is_dir() or not child.name.startswith("date="):
+            continue
+        try:
+            day = date.fromisoformat(child.name[5:])
+        except ValueError:
+            continue
+        part = child / "part.parquet"
+        if minute_partition_usable(part, expected):
+            dates.append(day)
+    dates.sort()
+    return dates
+
+
+def latest_usable_minute_datetime(data_dir, route: str | None = None, *, asset_type: str = "stock"):
+    """Newest datetime in a route-usable minute partition, or None."""
+    from pathlib import Path
+
+    expected = route if route is not None else minute_route()
+    dates = usable_minute_partition_dates(data_dir, expected, asset_type=asset_type)
+    if not dates:
+        return None
+    subdir = "kline_etf_minute" if asset_type == "etf" else "kline_minute"
+    part = Path(data_dir) / subdir / f"date={dates[-1].isoformat()}" / "part.parquet"
+    try:
+        df = pl.read_parquet(part, columns=["datetime"])
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("usable minute datetime read failed %s: %s", part, exc)
+        return None
+    if df.is_empty() or "datetime" not in df.columns:
+        return None
+    mx = df["datetime"].max()
+    if mx is None:
+        return None
+    if isinstance(mx, datetime):
+        return mx
+    try:
+        return datetime.fromisoformat(str(mx))
+    except ValueError:
+        return None
+
+
+def persist_routed_minute_bars(
+    df: pl.DataFrame,
+    repo: KlineRepository,
+    *,
+    asset_type: str = "stock",
+) -> int:
+    """Persist minute bars with route tags and re-gate DuckDB views.
+
+    HTTP extend-history used to concat into the date partition and
+    ``CREATE VIEW`` without the catalog gate — custom minute then mixed
+    leftover TickFlow bars and SQL saw the stale files again.
+    """
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return 0
+    minute_dir = repo.store.data_dir / (
+        "kline_etf_minute" if asset_type == "etf" else "kline_minute"
+    )
+    write_lock = getattr(repo, "_write_lock", None) or _minute_partition_lock
+    with write_lock:
+        written = _write_minute_partition(_with_minute_route(df, minute_route()), minute_dir)
+    if written:
+        repo.refresh_minute_views()
+    return written
+
+
 def minute_sync_allowed(capset: CapabilitySet | None) -> bool:
     """Whether pipeline / HTTP may start a minute pull for the configured source.
 
@@ -2154,17 +2255,16 @@ def fetch_adj_factor_single(
 
 
 def _latest_minute_datetime(repo: KlineRepository) -> datetime | None:
-    """本地分钟 K 数据的最新时间。"""
+    """Newest local minute bar that matches the current minute route.
+
+    DuckDB ``kline_minute`` can be temporarily ungated by a raw view refresh.
+    File-level provenance is the source of truth so incremental start cannot
+    treat leftover TickFlow/public parquet as custom coverage.
+    """
     try:
-        res = repo.execute_one("SELECT max(datetime) FROM kline_minute")
-        if res and res[0]:
-            d = res[0]
-            if isinstance(d, datetime):
-                return d
-            return datetime.fromisoformat(str(d))
+        return latest_usable_minute_datetime(repo.store.data_dir)
     except Exception:  # noqa: BLE001
-        pass
-    return None
+        return None
 
 
 def _cleanup_null_datetime_minute(repo: KlineRepository) -> None:

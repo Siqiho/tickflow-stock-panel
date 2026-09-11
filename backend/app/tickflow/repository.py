@@ -1798,6 +1798,10 @@ class KlineRepository:
             except Exception as e:  # noqa: BLE001
                 logger.debug("index/etf view refresh skipped: %s", e)
         with self._lock:
+            try:
+                self.store._register_gated_catalog_views()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("re-gate catalog after index view refresh skipped: %s", exc)
             self.store._register_unified_views()
 
     def refresh_minute_views(self) -> None:
