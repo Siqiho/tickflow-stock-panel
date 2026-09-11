@@ -16,13 +16,8 @@ def load_share_history(data_dir: Path) -> pl.DataFrame:
         from app.services.financial_sync import get_financial_df
         shares = get_financial_df(data_dir, "shares")
     except Exception:
-        path = data_dir / "financials" / "shares" / "part.parquet"
-        if not path.exists():
-            return pl.DataFrame()
-        try:
-            shares = pl.read_parquet(path)
-        except Exception:
-            return pl.DataFrame()
+        # Fail-closed: do not raw-read financials/shares after a provider switch.
+        return pl.DataFrame()
     if shares is None or shares.is_empty():
         return pl.DataFrame()
     if not {"symbol", "period_end", "float_shares"} <= set(shares.columns):

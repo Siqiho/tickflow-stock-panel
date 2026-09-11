@@ -263,7 +263,13 @@ class MinuteRefreshService:
             )
             if not part.exists():
                 return None
-            mx = pl.read_parquet(part, columns=["datetime"])["datetime"].max()
+            from app.services import kline_sync
+            part_df = pl.read_parquet(part)
+            if not kline_sync.minute_cache_usable(part_df, kline_sync.full_minute_route()):
+                return None
+            if "datetime" not in part_df.columns:
+                return None
+            mx = part_df["datetime"].max()
             if mx is None:
                 return None
             # 分区 datetime 为北京墙钟 naive, cn_now 带时区 → 剥齐再比
