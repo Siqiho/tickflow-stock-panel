@@ -1540,18 +1540,11 @@ class KlineRepository:
         return None
 
     def earliest_daily_date(self) -> date | None:
-        """本地日K数据的最早日期。"""
-        try:
-            with self._lock:
-                res = self.db.execute(
-                    "SELECT min(date) FROM kline_daily",
-                ).fetchone()
-            if res and res[0]:
-                d = res[0]
-                return d if isinstance(d, date) else date.fromisoformat(str(d))
-        except Exception:
-            return None
-        return None
+        """Earliest route-usable local daily date (pipeline / extend start)."""
+        from app.services.kline_sync import usable_daily_partition_dates
+
+        dates = usable_daily_partition_dates(self.store.data_dir)
+        return dates[0] if dates else None
 
     def earliest_minute_date(self) -> date | None:
         """Earliest route-usable local minute date."""
@@ -1568,18 +1561,11 @@ class KlineRepository:
         return dates[-1] if dates else None
 
     def latest_daily_date(self) -> date | None:
-        """本地日K数据的最新日期。"""
-        try:
-            with self._lock:
-                res = self.db.execute(
-                    "SELECT max(date) FROM kline_daily",
-                ).fetchone()
-            if res and res[0]:
-                d = res[0]
-                return d if isinstance(d, date) else date.fromisoformat(str(d))
-        except Exception:
-            return None
-        return None
+        """Newest route-usable local daily date (pipeline incremental start)."""
+        from app.services.kline_sync import usable_daily_partition_dates
+
+        dates = usable_daily_partition_dates(self.store.data_dir)
+        return dates[-1] if dates else None
 
     def _latest_enriched_date_duckdb(self) -> date | None:
         try:
@@ -1595,23 +1581,13 @@ class KlineRepository:
         return None
 
     def latest_enriched_date(self, asset_type: str = "stock") -> date | None:
-        """挖掘指纹用的最新 enriched 分区日。只扫本地 parquet，不现场回补。"""
-        root = self.store.data_dir / enriched_dirname(asset_type)
-        latest: date | None = None
-        try:
-            partitions = root.glob("date=*")
-        except OSError:
-            return None
-        for partition in partitions:
-            if not (partition / "part.parquet").is_file():
-                continue
-            try:
-                value = date.fromisoformat(partition.name.removeprefix("date="))
-            except ValueError:
-                continue
-            if latest is None or value > latest:
-                latest = value
-        return latest
+        """Newest route-usable enriched partition date (mining / pipeline)."""
+        from app.services.kline_sync import usable_daily_partition_dates
+
+        dates = usable_daily_partition_dates(
+            self.store.data_dir, table=enriched_dirname(asset_type),
+        )
+        return dates[-1] if dates else None
 
     def get_matrix_data_generation(self, asset_type: str = "stock") -> str:
         """挖掘/回测读到的 enriched 世代。发布中会抛 EnrichedGenerationUnavailableError。"""

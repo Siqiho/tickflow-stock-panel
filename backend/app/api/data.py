@@ -122,41 +122,37 @@ def _safe_aggregate(repo, view: str) -> dict | None:
 
 
 def _safe_aggregate_daily(repo, view: str = "kline_daily") -> dict | None:
-    """日K轻量统计 — 零数据扫描。
+    """日K轻量统计 — 只数当前 daily route 可用的分区。
 
-    从分区目录名获取日期范围和交易日数，不读任何 parquet。
-    标的数从 instruments 小表获取（~5000行，毫秒级）。
+    自定义日K下 leftover TickFlow/public 分区不得算成覆盖。
+    leftover TickFlow 仍可见无标签分区。标的数从 instruments 小表取。
     """
-    daily_dir = repo.store.data_dir / "kline_daily"
-    if not daily_dir.exists():
-        return None
-    dates: list[str] = []
-    for d in daily_dir.iterdir():
-        if d.is_dir() and d.name.startswith("date="):
-            dates.append(d.name[5:])
+    from app.services.kline_sync import usable_daily_partition_dates
+
+    table = "kline_daily" if view == "kline_daily" else view
+    dates = usable_daily_partition_dates(repo.store.data_dir, table=table)
     if not dates:
         return None
-    dates.sort()
 
     symbols = _count_instruments_symbols(repo)
 
     return {
         "rows": 0,
-        "earliest_date": dates[0],
-        "latest_date": dates[-1],
+        "earliest_date": dates[0].isoformat(),
+        "latest_date": dates[-1].isoformat(),
         "symbols_covered": symbols,
         "trading_days": len(dates),
     }
 
 
 def _safe_aggregate_enriched(repo) -> dict | None:
-    """Enriched 轻量统计 — 零数据扫描。
+    """Enriched 轻量统计 — 只数当前 daily route 可用的分区。
 
-    字段数从 DESCRIBE 读 schema（不碰数据），毫秒级。
-    日期范围从分区目录名获取（同 minute 策略），不读任何 parquet。
-    标的数从 instruments 小表取。
+    字段数从 DESCRIBE 读 schema（不碰数据）。日期范围按 provenance
+    过滤，自定义日K下 leftover TickFlow 分区不得算成覆盖。
     """
-    # 字段数：读 schema，不碰数据
+    from app.services.kline_sync import usable_daily_partition_dates
+
     fields = 0
     try:
         cols = repo.execute_all("DESCRIBE kline_enriched")
@@ -164,25 +160,19 @@ def _safe_aggregate_enriched(repo) -> dict | None:
     except Exception:  # noqa: BLE001
         pass
 
-    # 日期范围：从分区目录名获取，不扫数据
-    enriched_dir = repo.store.data_dir / "kline_daily_enriched"
-    if not enriched_dir.exists():
-        return None
-    dates: list[str] = []
-    for d in enriched_dir.iterdir():
-        if d.is_dir() and d.name.startswith("date="):
-            dates.append(d.name[5:])
+    dates = usable_daily_partition_dates(
+        repo.store.data_dir, table="kline_daily_enriched",
+    )
     if not dates:
         return None
-    dates.sort()
 
     symbols = _count_instruments_symbols(repo)
 
     return {
         "rows": 0,
         "fields": fields,
-        "earliest_date": dates[0],
-        "latest_date": dates[-1],
+        "earliest_date": dates[0].isoformat(),
+        "latest_date": dates[-1].isoformat(),
         "symbols_covered": symbols,
         "trading_days": len(dates),
     }
@@ -351,12 +341,12 @@ def _safe_aggregate_adj_factor(repo) -> dict | None:
     no_event 表示已核实无除权除息，复权恒等，计入 covered。
     """
     try:
-        dr = repo.execute_one(
-            "SELECT min(date), max(date) FROM kline_daily"
-        )
-        if not dr or not dr[0]:
+        from app.services.kline_sync import usable_daily_partition_dates
+
+        daily_dates = usable_daily_partition_dates(repo.store.data_dir)
+        if not daily_dates:
             return None
-        d_min, d_max = dr[0], dr[1]
+        d_min, d_max = daily_dates[0], daily_dates[-1]
         row = repo.execute_one(
             """SELECT count(*) AS rows,
                       count(DISTINCT symbol) AS symbols,

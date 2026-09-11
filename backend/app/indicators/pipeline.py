@@ -1098,9 +1098,39 @@ def compute_enriched(
 
 
 def _select_storage_cols(df: pl.DataFrame) -> pl.DataFrame:
-    """写入 parquet 前裁剪到存储列 (14 列)。"""
+    """写入 parquet 前裁剪到存储列 (14 列 + 可选 route)。"""
     cols = [c for c in ENRICHED_STORAGE_COLS if c in df.columns]
+    if "route" in df.columns and "route" not in cols:
+        cols.append("route")
     return df.select(cols)
+
+
+def _prepare_enriched_storage(date_df: pl.DataFrame) -> pl.DataFrame | None:
+    """Tag enriched storage and refuse unresolved daily writes."""
+    from app.services.kline_sync import _tag_daily_route, daily_route
+
+    if daily_route() == "unresolved":
+        logger.warning("skip enriched publish for unresolved daily route")
+        return None
+    return _tag_daily_route(_select_storage_cols(date_df))
+
+
+def _existing_enriched_for_merge(existing: pl.DataFrame, incoming: pl.DataFrame) -> pl.DataFrame:
+    """Keep same-date rows only when they match the current daily route."""
+    from app.services.kline_sync import daily_cache_usable, daily_route
+
+    if existing is None or existing.is_empty():
+        return incoming.head(0)
+    if daily_cache_usable(existing, daily_route()):
+        return existing
+    logger.info("replace stale enriched partition for route=%s", daily_route())
+    return incoming.head(0)
+
+
+def _usable_daily_paths(data_dir: Path, *, table: str = "kline_daily") -> list[Path]:
+    from app.services.kline_sync import usable_daily_partition_paths
+
+    return usable_daily_partition_paths(data_dir, table=table)
 
 
 def _canonical_enriched_artifact(value: object, data_dir: Path) -> str | None:
@@ -1183,6 +1213,10 @@ def _publish_enriched_partition(
         sort_cols = [col for col in ("symbol",) if col in date_df.columns]
         if sort_cols:
             date_df = date_df.sort(sort_cols)
+    prepared = _prepare_enriched_storage(date_df)
+    if prepared is None:
+        return
+    date_df = prepared
     atomic_write_parquet(date_df, out)
     _write_enriched_lineage(
         data_dir,
@@ -1223,20 +1257,17 @@ def fill_enriched_coverage_gap(
     if not daily_dir.exists():
         return 0
 
+    usable_daily = _usable_daily_paths(d, table="kline_daily")
     if target_date is None:
-        daily_dates = sorted(
-            p.stem.split("=", 1)[1]
-            for p in daily_dir.glob("date=*")
-            if "=" in p.stem
-        )
-        if not daily_dates:
+        if not usable_daily:
             return 0
-        ds = daily_dates[-1]
+        ds = usable_daily[-1].parent.name.split("=", 1)[1]
     else:
         ds = _partition_date_str(target_date)
 
     daily_path = daily_dir / f"date={ds}" / "part.parquet"
-    if not daily_path.exists():
+    from app.services.kline_sync import daily_partition_usable
+    if not daily_partition_usable(daily_path):
         return 0
 
     daily = pl.read_parquet(daily_path)
@@ -1245,6 +1276,7 @@ def fill_enriched_coverage_gap(
 
     out = enriched_base / f"date={ds}" / "part.parquet"
     existing = pl.read_parquet(out) if out.exists() else pl.DataFrame()
+    existing = _existing_enriched_for_merge(existing, daily)
     daily_syms = {str(symbol) for symbol in daily["symbol"].to_list() if symbol}
     enr_syms = (
         {str(symbol) for symbol in existing["symbol"].to_list() if symbol}
@@ -1258,8 +1290,10 @@ def fill_enriched_coverage_gap(
     target = date_cls.fromisoformat(ds)
     warmup_start = target - timedelta(days=warmup_days)
     cast_options = pl.ScanCastOptions(integer_cast="allow-float")
+    if not usable_daily:
+        return 0
     raw = (
-        pl.scan_parquet((daily_dir / "**" / "*.parquet").as_posix(), cast_options=cast_options)
+        pl.scan_parquet([p.as_posix() for p in usable_daily], cast_options=cast_options)
         .filter(
             (pl.col("date") >= warmup_start)
             & (pl.col("date") <= target)
@@ -1511,9 +1545,13 @@ def run_pipeline(data_dir: Path | None = None,
             ", ".join(sorted(unreadable_dates)[:20]),
         )
 
-    daily_glob = (daily_dir / "**" / "*.parquet").as_posix()
+    usable_daily_files = _usable_daily_paths(d, table="kline_daily")
     _cast = pl.ScanCastOptions(integer_cast="allow-float")
     written = 0
+    if not usable_daily_files:
+        logger.info("无当前 route 可用日K, 跳过管道")
+        return 0
+    daily_glob = [p.as_posix() for p in usable_daily_files]
 
     # 加载 instruments (涨跌停+换手率需要)
     instruments = pl.DataFrame()
@@ -1525,16 +1563,20 @@ def run_pipeline(data_dir: Path | None = None,
 
     if new_dates_only:
         # ── 向后增量模式 ──
-        # 1. 找出 daily 有但 enriched 还没有的日期
-        enriched_dates = set()
-        if enriched_base.exists():
-            enriched_dates = {p.stem.split("=")[1] for p in enriched_base.glob("date=*")}
-            enriched_dates -= unreadable_dates
+        # 1. 找出当前 route 日K 有但可用 enriched 还没有的日期
+        from app.services.kline_sync import usable_daily_partition_dates
+
+        enriched_dates = {
+            day.isoformat()
+            for day in usable_daily_partition_dates(d, table="kline_daily_enriched")
+        }
+        enriched_dates -= unreadable_dates
 
         # 读新增日期的 daily 数据 (所有标的)
         new_date_dirs = sorted(
-            p for p in daily_dir.glob("date=*")
-            if p.stem.split("=")[1] not in enriched_dates
+            p.parent
+            for p in usable_daily_files
+            if p.parent.name.split("=", 1)[1] not in enriched_dates
         )
         if not new_date_dirs and not symbols:
             written_gap = fill_enriched_coverage_gap(d)
@@ -1633,7 +1675,9 @@ def run_pipeline(data_dir: Path | None = None,
                     out.parent.mkdir(parents=True, exist_ok=True)
                     date_df_storage = _select_storage_cols(date_df)
                     if out.exists():
-                        existing = pl.read_parquet(out)
+                        existing = _existing_enriched_for_merge(
+                            pl.read_parquet(out), date_df_storage,
+                        )
                         existing = existing.filter(~pl.col("symbol").is_in(list(sym_set)))
                         date_df_storage = pl.concat([existing, date_df_storage], how="diagonal_relaxed")
                     date_df_storage = date_df_storage.sort(["symbol"])
@@ -1740,7 +1784,9 @@ def run_pipeline(data_dir: Path | None = None,
                         out.parent.mkdir(parents=True, exist_ok=True)
                         date_df_storage = _select_storage_cols(date_df)
                         if out.exists():
-                            existing = pl.read_parquet(out)
+                            existing = _existing_enriched_for_merge(
+                                pl.read_parquet(out), date_df_storage,
+                            )
                             existing = existing.filter(~pl.col("symbol").is_in(batch_syms))
                             date_df_storage = pl.concat(
                                 [existing, date_df_storage], how="diagonal_relaxed"
@@ -1772,10 +1818,11 @@ def run_pipeline(data_dir: Path | None = None,
                 on_batch_done(batch_start // SYM_BATCH + 1, total_batches)
 
         if not symbols and staging_files:
+            from app.services.kline_sync import usable_daily_partition_dates
+
             existing_dates = {
-                p.name.removeprefix("date=")
-                for p in base.glob("date=*")
-                if p.is_dir()
+                day.isoformat()
+                for day in usable_daily_partition_dates(d, table="kline_daily_enriched")
             }
             unique_dates = sorted(
                 scan_enriched_parquet(staging_files).select("date").unique()
@@ -1848,8 +1895,11 @@ def _load_recent_history(enriched_base: Path, symbols: list[str], days: int) -> 
     cast_options = pl.ScanCastOptions(integer_cast="allow-float")
 
     try:
+        hist_paths = _usable_daily_paths(enriched_base.parent, table="kline_daily_enriched")
+        if not hist_paths:
+            return pl.DataFrame()
         lf = (
-            pl.scan_parquet(str(enriched_base / "**" / "*.parquet"), cast_options=cast_options)
+            pl.scan_parquet([p.as_posix() for p in hist_paths], cast_options=cast_options)
             .filter(
                 (pl.col("symbol").is_in(symbols))
                 & (pl.col("date") >= cutoff)

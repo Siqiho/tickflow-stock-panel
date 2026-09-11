@@ -432,18 +432,9 @@ def run_now(
         override_start_date = today
 
     def _daily_partition_dates() -> list[_date]:
-        daily_dir = repo.store.data_dir / "kline_daily"
-        if not daily_dir.exists():
-            return []
-        out: list[_date] = []
-        for p in daily_dir.glob("date=*"):
-            if not p.is_dir():
-                continue
-            try:
-                out.append(_date.fromisoformat(p.name[5:]))
-            except ValueError:
-                continue
-        return sorted(out)
+        from app.services.kline_sync import usable_daily_partition_dates
+
+        return usable_daily_partition_dates(repo.store.data_dir)
 
     def _count_new_daily_days(before: _date | None) -> int:
         """按真实 date= 分区统计新增交易日数,避免 (today-start).days 误报。"""

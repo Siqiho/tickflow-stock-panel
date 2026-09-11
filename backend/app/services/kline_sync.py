@@ -214,12 +214,14 @@ def daily_route() -> str:
 
 
 def daily_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
-    """Whether a same-date daily/enriched partition may be merged for ``route``.
+    """Whether a same-date daily/enriched partition may be used for ``route``.
 
-    Historical daily *reads* stay leftover until re-sync. This gate is for
-    write/merge only: a custom (or leftover TickFlow) re-sync must not
-    concat-mix the other source's bars into the same date partition.
-    Untagged legacy files stay valid for leftover TickFlow / public.
+    Historical HTTP / screener *reads* stay leftover until re-sync. This
+    gate is for write/merge, status, pipeline, and derived writers: a
+    custom (or leftover TickFlow) re-sync must not concat-mix the other
+    source's bars, and operational coverage must not treat leftover
+    parquet as current. Untagged legacy files stay valid for leftover
+    TickFlow / public.
     """
     if df is None or getattr(df, "is_empty", lambda: True)():
         return False
@@ -255,6 +257,75 @@ def _incoming_daily_route(df: pl.DataFrame) -> str:
         if len(nonempty) == 1:
             return next(iter(nonempty))
     return daily_route()
+
+
+def daily_partition_usable(path, route: str | None = None) -> bool:
+    """Whether one daily/enriched date partition matches the current daily route."""
+    from pathlib import Path
+
+    expected = (route if route is not None else daily_route()).strip().lower()
+    part = Path(path)
+    if not part.is_file():
+        return False
+    try:
+        names = pl.read_parquet_schema(part).names()
+        if "route" not in names:
+            return expected in {"tickflow", "public"}
+        df = pl.read_parquet(part, columns=["route"])
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("daily partition probe failed %s: %s", part, exc)
+        return False
+    return daily_cache_usable(df, expected)
+
+
+def usable_daily_partition_dates(
+    data_dir,
+    route: str | None = None,
+    *,
+    table: str = "kline_daily",
+):
+    """Date partitions that belong to the current daily route.
+
+    Status / pipeline / derived writers must not treat leftover TickFlow
+    partitions as current after a custom switch. Leftover TickFlow still
+    sees untagged partitions. Historical HTTP / screener reads stay on
+    the leftover contract and do not use this helper.
+    """
+    from pathlib import Path
+
+    expected = route if route is not None else daily_route()
+    root = Path(data_dir) / table
+    if not root.exists():
+        return []
+    dates: list[date] = []
+    for child in root.iterdir():
+        if not child.is_dir() or not child.name.startswith("date="):
+            continue
+        try:
+            day = date.fromisoformat(child.name[5:])
+        except ValueError:
+            continue
+        part = child / "part.parquet"
+        if daily_partition_usable(part, expected):
+            dates.append(day)
+    dates.sort()
+    return dates
+
+
+def usable_daily_partition_paths(
+    data_dir,
+    route: str | None = None,
+    *,
+    table: str = "kline_daily",
+):
+    """Parquet paths for :func:`usable_daily_partition_dates`."""
+    from pathlib import Path
+
+    root = Path(data_dir) / table
+    return [
+        root / f"date={day.isoformat()}" / "part.parquet"
+        for day in usable_daily_partition_dates(data_dir, route, table=table)
+    ]
 
 
 def adj_public_write_allowed() -> bool:

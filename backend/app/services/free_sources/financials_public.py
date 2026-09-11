@@ -666,17 +666,11 @@ def merge_write_financial_table(
                 ["symbol", "period_end"]
             )
     except Exception as exc:  # noqa: BLE001
-        logger.debug("financial route gate unavailable, leftover merge: %s", exc)
-        if out.exists():
-            existing = pl.read_parquet(out)
-            merged = pl.concat([existing, df], how="diagonal_relaxed")
-            merged = merged.unique(subset=["symbol", "period_end"], keep="last").sort(
-                ["symbol", "period_end"]
-            )
-        else:
-            merged = df.unique(subset=["symbol", "period_end"], keep="last").sort(
-                ["symbol", "period_end"]
-            )
+        logger.warning(
+            "financials/%s public merge refused (route gate unavailable): %s",
+            table, exc,
+        )
+        return pl.read_parquet(out).height if out.exists() else 0
     atomic_write_parquet(merged, out)
     logger.info("financials/%s wrote %d rows -> %s", table, merged.height, out)
     return int(merged.height)

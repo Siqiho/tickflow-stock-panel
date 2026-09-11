@@ -334,7 +334,14 @@ def _compute_batch(repo, enriched_dir, instruments, historical_shares,
     from datetime import timedelta
     from app.indicators.pipeline import compute_indicators, compute_limit_signals
     warmup_start = batch_start - timedelta(days=warmup_days)
-    df = pl.scan_parquet(enriched_dir / "**" / "*.parquet").filter(
+    from app.services.kline_sync import usable_daily_partition_paths
+
+    paths = usable_daily_partition_paths(
+        repo.store.data_dir, table="kline_daily_enriched",
+    )
+    if not paths:
+        return pl.DataFrame()
+    df = pl.scan_parquet([p.as_posix() for p in paths]).filter(
         (pl.col("date") >= warmup_start) & (pl.col("date") <= batch_end)
     ).collect()
     if df.is_empty():
@@ -673,18 +680,13 @@ def compute_regime_incremental(repo, data_dir: Path, *, today: date | None = Non
 
 
 def enriched_date_set(repo) -> set[date]:
-    """扫描 kline_daily_enriched 分区目录, 返回所有已有日期集合。"""
-    enriched_dir = repo.store.data_dir / "kline_daily_enriched"
-    dates: set[date] = set()
-    if not enriched_dir.exists():
-        return dates
-    for part in enriched_dir.glob("date=*/part.parquet"):
-        try:
-            ds = part.parent.name.replace("date=", "")
-            dates.add(date.fromisoformat(ds))
-        except ValueError:
-            continue
-    return dates
+    """Route-usable kline_daily_enriched dates. Leftover TickFlow after a
+    custom daily switch is omitted so regime writers do not persist mix."""
+    from app.services.kline_sync import usable_daily_partition_dates
+
+    return set(usable_daily_partition_dates(
+        repo.store.data_dir, table="kline_daily_enriched",
+    ))
 
 
 def earliest_enriched_date(repo) -> date | None:
