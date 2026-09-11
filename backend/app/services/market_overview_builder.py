@@ -183,7 +183,8 @@ def _has_official_enriched(repo, target: date | None) -> bool:
 
         return daily_partition_usable(path)
     except Exception:
-        return path.exists()
+        # Probe / prefs failure must not treat leftover TickFlow as official.
+        return False
 
 
 def _instrument_shares(repo) -> dict[str, dict[str, float | str | None]]:

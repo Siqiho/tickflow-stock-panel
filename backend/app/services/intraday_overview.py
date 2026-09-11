@@ -113,7 +113,11 @@ def load_official_trend_overlay(data_dir: Path, official_as_of: date) -> dict[st
 
     from app.services.kline_sync import daily_partition_usable, filter_daily_cache
 
-    if not daily_partition_usable(official_path):
+    try:
+        usable = daily_partition_usable(official_path)
+    except Exception:
+        usable = False
+    if not usable:
         _overlay_cache = (cache_key, stamp, {})
         return {}
 
@@ -124,9 +128,9 @@ def load_official_trend_overlay(data_dir: Path, official_as_of: date) -> dict[st
         part = child / "part.parquet"
         if day is None or day < start or day > official_as_of or not part.exists():
             continue
-        if not daily_partition_usable(part):
-            continue
         try:
+            if not daily_partition_usable(part):
+                continue
             frame = filter_daily_cache(pl.read_parquet(part))
         except Exception:
             continue

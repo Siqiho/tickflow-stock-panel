@@ -611,25 +611,11 @@ class ScreenerService:
         return df
 
     def latest_date(self) -> date | None:
-        # Disk provenance first: in-memory cache can still hold a leftover
-        # TickFlow date after a custom daily switch until refresh.
+        # Disk provenance only. In-memory leftover TickFlow and a
+        # temporarily ungated DuckDB view must not become as_of after
+        # a custom daily switch. Leftover TickFlow still sees untagged
+        # partitions through latest_enriched_date.
         try:
-            disk = self.repo.latest_enriched_date("stock")
-        except Exception:  # noqa: BLE001
-            disk = None
-        if disk:
-            return disk
-        d = self.repo.enriched_latest_date()
-        if d:
-            return d
-        # 回退 DuckDB (route-gated view)
-        try:
-            res = self.repo.execute_one(
-                "SELECT max(date) FROM kline_enriched",
-            )
-            if res and res[0]:
-                d = res[0]
-                return d if isinstance(d, date) else date.fromisoformat(str(d))
+            return self.repo.latest_enriched_date("stock")
         except Exception:  # noqa: BLE001
             return None
-        return None

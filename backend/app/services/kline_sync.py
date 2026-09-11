@@ -746,6 +746,16 @@ def sync_daily_by_public_quotes(
         return {"rows": 0, "date": today.isoformat(), "source": "public_quote_eod"}
 
     try:
+        if daily_provider_is_custom():
+            logger.warning(
+                "sync_daily_by_public_quotes skipped: custom/unresolved daily must not public-mix",
+            )
+            return {"rows": 0, "date": today.isoformat(), "source": "public_quote_eod"}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("sync_daily_by_public_quotes prefs unreadable, fail-closed: %s", e)
+        return {"rows": 0, "date": today.isoformat(), "source": "public_quote_eod"}
+
+    try:
         records = fetch_public_market_quotes(
             list(symbols),
             batch_size=batch_size,

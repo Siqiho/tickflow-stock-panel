@@ -121,7 +121,7 @@ def _read_usable_kline_ohlc(
         if not frames:
             return pl.DataFrame()
         return filter_daily_cache(pl.concat(frames, how="diagonal_relaxed"))
-    except (OSError, pl.exceptions.PolarsError):
+    except Exception:  # noqa: BLE001
         return pl.DataFrame()
 
 
