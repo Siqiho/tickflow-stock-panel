@@ -113,6 +113,49 @@ def minute_availability(
     has_batch = capset.has(Cap.KLINE_MINUTE_BATCH)
     has_by_symbol = capset.has(Cap.KLINE_MINUTE_BY_SYMBOL)
     has_any = has_batch or has_by_symbol
+    try:
+        from app.services import kline_sync as _kline_sync
+        from app.services import preferences as _minute_prefs
+        minute_is_custom = _kline_sync.minute_provider_is_custom()
+        minute_custom_name = _minute_prefs.get_minute_data_provider() if minute_is_custom else None
+    except Exception:
+        minute_is_custom = False
+        minute_custom_name = None
+
+    if minute_is_custom:
+        if user_enabled is False:
+            return {
+                "available": True,
+                "view_available": True,
+                "status": "disabled_by_user",
+                "reason": "已有分钟能力，但用户关闭了自动同步",
+                "reason_code": "user_disabled",
+                "capability": {
+                    "kline.minute.batch": True,
+                    "kline.minute.by_symbol": has_by_symbol,
+                },
+                "user_enabled": False,
+                "full_market_sync_allowed": True,
+                "single_symbol_fallback": None,
+                "fallback_hint": None,
+                "source": minute_custom_name,
+            }
+        return {
+            "available": True,
+            "view_available": True,
+            "status": "available",
+            "reason": None,
+            "reason_code": "ok",
+            "capability": {
+                "kline.minute.batch": True,
+                "kline.minute.by_symbol": has_by_symbol,
+            },
+            "user_enabled": user_enabled,
+            "full_market_sync_allowed": True,
+            "single_symbol_fallback": None,
+            "fallback_hint": None,
+            "source": minute_custom_name,
+        }
 
     if not has_any:
         return {
@@ -273,15 +316,15 @@ def feature_availability(
         adj_source = "local_public"
         adj_status = "public_fallback"
 
-    # Depth / sealed: TickFlow Pro+ batch depth, else public L1 (bid1/ask1 vol)
+    # Depth / sealed: custom source, TickFlow Pro+ batch, else public L1
     has_depth_batch = capset.has(Cap.DEPTH5_BATCH)
     has_depth_single = capset.has(Cap.DEPTH5)
     if depth_provider not in {"tickflow", "public"}:
-        depth_ok = has_depth_batch or has_depth_single
-        depth_reason = None if depth_ok else "当前五档源无法提供盘口"
-        depth_code = "ok" if depth_ok else "no_capability"
+        depth_ok = True
+        depth_reason = None
+        depth_code = "ok"
         depth_source = depth_provider
-        depth_status = "available" if depth_ok else "unavailable"
+        depth_status = "available"
     elif has_depth_batch or has_depth_single:
         depth_ok = True
         depth_reason = None

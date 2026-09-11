@@ -58,6 +58,22 @@ def test_feature_availability_includes_daily_and_minute(monkeypatch):
     assert feats["websocket"]["available"] is False
 
 
+def test_feature_availability_custom_depth_without_tickflow_cap(monkeypatch):
+    """Custom depth5 must not look unavailable just because TickFlow lacks DEPTH5."""
+    monkeypatch.setattr("app.services.preferences.get_realtime_data_provider", lambda: "public")
+    monkeypatch.setattr("app.services.preferences.get_depth5_data_provider", lambda: "depth_src")
+    monkeypatch.setattr("app.services.preferences.get_financial_provider", lambda: "tickflow")
+    monkeypatch.setattr("app.services.preferences.get_adj_factor_provider", lambda: "tickflow")
+    monkeypatch.setattr("app.services.preferences.is_public_financial_provider", lambda: False)
+    monkeypatch.setattr("app.services.preferences.is_public_adj_factor_provider", lambda: False)
+    monkeypatch.setattr("app.services.financial_normalize.local_financials_ready", lambda d: False)
+    monkeypatch.setattr("app.services.financial_normalize.local_adj_factor_ready", lambda d: False)
+    feats = feature_availability(_capset(Cap.KLINE_DAILY_BATCH))
+    assert feats["depth"]["available"] is True
+    assert feats["depth"]["source"] == "depth_src"
+    assert feats["depth"]["status"] == "available"
+
+
 def test_feature_availability_reports_custom_sources(monkeypatch):
     monkeypatch.setattr("app.services.preferences.get_realtime_data_provider", lambda: "fuyao")
     monkeypatch.setattr("app.services.preferences.get_financial_provider", lambda: "fuyao")

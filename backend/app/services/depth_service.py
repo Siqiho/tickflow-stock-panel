@@ -733,6 +733,12 @@ class DepthService:
         return capset.has(Cap.DEPTH5_BATCH) or capset.has(Cap.DEPTH5)
 
     def _depth_source(self) -> str:
+        from app.services import preferences
+        provider = preferences.get_depth5_data_provider()
+        if provider not in {"tickflow", "public"}:
+            return provider
+        if provider == "public":
+            return "local_public"
         return "tickflow" if self._has_tickflow_depth() else "local_public"
 
     def _get_capset(self):

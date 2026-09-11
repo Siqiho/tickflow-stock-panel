@@ -219,8 +219,8 @@ def resolve_universe(capset: CapabilitySet) -> list[str]:
 
     优先使用 preferences.pipeline_universe_scope：
       ALL / CSI300 / CSI500 / SSE50 / WATCHLIST
-    - ALL + 有 batch → TickFlow CN_Equity_A（若可用）
-    - ALL + free → instruments + watchlist + demo
+    - ALL + TickFlow pool + batch → TickFlow CN_Equity_A（若可用）
+    - ALL + public pool / free → instruments + watchlist + demo
     - CSI* → data/pools 缓存(缺则 public 刷新) + 用户自选
     """
     from app.services.universe_scope import (
@@ -233,8 +233,13 @@ def resolve_universe(capset: CapabilitySet) -> list[str]:
     scope = normalize_scope(_prefs.get_pipeline_universe_scope(), default=SCOPE_ALL)
     logger.info("resolve_universe scope=%s (%s)", scope, SCOPE_LABELS.get(scope, scope))
 
-    # Paid batch + ALL: prefer live CN_Equity_A universe when available
-    if scope == SCOPE_ALL and capset.has(Cap.KLINE_DAILY_BATCH):
+    # TickFlow universe only when pool_provider is TickFlow. Public pool
+    # must not silently expand ALL via quote.pool / CN_Equity_A.
+    if (
+        scope == SCOPE_ALL
+        and capset.has(Cap.KLINE_DAILY_BATCH)
+        and not _prefs.is_public_pool_provider()
+    ):
         try:
             all_a = get_pool("CN_Equity_A", refresh=True)
             if all_a:
@@ -420,8 +425,13 @@ def run_now(
             "sync_daily: [%s ~ %s] override done, rows=%s new_days=%s",
             start_date, today, written_daily, new_daily_days,
         )
-    elif today_exists and capset.has(Cap.QUOTE_POOL):
-        # 付费档:今天有数据(QuoteService 已落盘)→ 实时行情覆写,确保最新。
+    elif (
+        today_exists
+        and capset.has(Cap.QUOTE_POOL)
+        and not kline_sync.daily_provider_is_custom()
+    ):
+        # 付费档 + TickFlow 日K:今天有数据(QuoteService 已落盘)→ 实时行情覆写。
+        # 自定义日K 不得因 Cap.QUOTE_POOL 被 TickFlow quotes 静默换源。
         # free/none 档无 quote.pool 能力,即便今天已有数据(如从 expert 降级),
         # 也降级到下方 batch 路径刷新,避免调用无权限的实时行情接口。
         emit("sync_daily", 12, f"获取日K [{today} ~ {today}] 实时行情…")
@@ -796,7 +806,9 @@ def run_now(
     pull_index = _prefs.get_pipeline_pull_index()
     pull_etf = _prefs.get_pipeline_pull_etf()
 
-    if capset.has(Cap.KLINE_DAILY_BATCH) and (pull_index or pull_etf):
+    if (capset.has(Cap.KLINE_DAILY_BATCH) or kline_sync.daily_provider_is_custom()) and (
+        pull_index or pull_etf
+    ):
         _types = []
         if pull_index:
             _types.append("指数")
@@ -928,7 +940,9 @@ def run_now(
         "fallback_hint": minute_info.get("fallback_hint"),
     }
 
-    if minute_on and capset.has(Cap.KLINE_MINUTE_BATCH):
+    if minute_on and (
+        capset.has(Cap.KLINE_MINUTE_BATCH) or kline_sync.minute_provider_is_custom()
+    ):
         minute_start = today - _td(days=minute_days)
         emit("sync_minute", 90, f"获取分钟K [{minute_start} ~ {today}]…")
         logger.info("sync_minute: [%s ~ %s] start", minute_start, today)

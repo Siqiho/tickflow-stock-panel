@@ -71,6 +71,11 @@ def _body_with_quote(body: str, ev: dict) -> str:
 logger = logging.getLogger(__name__)
 
 
+def _persist_last_fetch(fetched_at: float) -> None:
+    """Hook for tests / optional last-fetch persistence. Default is a no-op."""
+    return
+
+
 class QuoteService:
     """全局实时行情服务 — 单例。"""
 
@@ -105,6 +110,7 @@ class QuoteService:
         self._max_pending_review: int = 200           # 背压上限: 超出丢弃最旧
         self._strategy_monitor = None            # 延迟注入
         self._app_state = None                   # 延迟注入 (FastAPI app.state)
+        self._last_final_confirmed: bool | None = None
 
         # 拉取元信息 (给 SSE / status 用)
         self._fetch_time: float = 0.0       # perf_counter (用于计算 quote_age_ms)
@@ -402,7 +408,10 @@ class QuoteService:
                     # Off-hours: keep core index snapshots fresh for Indices/overview,
                     # but skip expensive full-market stock batches.
                     from app.services import preferences
-                    if preferences.get_realtime_pull_index():
+                    if (
+                        preferences.get_realtime_data_provider() == "public"
+                        and preferences.get_realtime_pull_index()
+                    ):
                         core = set(preferences.get_realtime_index_symbols() or self.CORE_INDEX_SYMBOLS)
                         self._bootstrap_core_index_quotes(core)
                     else:
@@ -493,8 +502,10 @@ class QuoteService:
         """拉取全市场行情 → 写 daily + 计算 enriched + 更新缓存。
 
         Source selection:
-          - preferences.realtime_data_provider=public → 腾讯/新浪分批快照（无需 TickFlow）
-          - else TickFlow paid universes (Starter+)
+          - preferences.realtime_data_provider=public → 腾讯/新浪分批快照
+          - 自定义/插件实时源 → provider.get_realtime() (+ 可选指数补充)
+          - TickFlow paid universes (Starter+)
+        Custom / TickFlow are fail-closed: no silent public mix.
         """
         from app.services import preferences
 
@@ -506,7 +517,7 @@ class QuoteService:
             all_index_symbols = set(self._repo.get_index_symbol_set()) if self._repo else set()
             core_index_symbols = set(self.CORE_INDEX_SYMBOLS)
             all_index_symbols.update(core_index_symbols)
-            if preferences.get_realtime_pull_index() and core_index_symbols:
+            if provider == "public" and preferences.get_realtime_pull_index() and core_index_symbols:
                 self._bootstrap_core_index_quotes(core_index_symbols)
             all_etf_symbols = set()
             if self._repo:
@@ -520,12 +531,16 @@ class QuoteService:
                     core_index_symbols=core_index_symbols,
                     all_etf_symbols=all_etf_symbols,
                 )
+                replace_index_cache = bool(records)
+            elif provider != "tickflow":
+                records, replace_index_cache = self._fetch_custom_full_market_records()
             else:
                 records = self._fetch_tickflow_full_market_records(
                     all_index_symbols=all_index_symbols,
                     core_index_symbols=core_index_symbols,
                     all_etf_symbols=all_etf_symbols,
                 )
+                replace_index_cache = bool(records)
         except Exception as e:  # noqa: BLE001
             logger.warning("行情拉取失败: %s", e)
             return
@@ -534,23 +549,18 @@ class QuoteService:
             logger.warning("行情数据为空")
             return
 
-        index_records = [r for r in records if r.get("symbol") in all_index_symbols]
-        etf_records = [r for r in records if r.get("symbol") in all_etf_symbols]
-        stock_records = [
-            r for r in records
-            if r.get("symbol") not in all_index_symbols and r.get("symbol") not in all_etf_symbols
-        ]
-
-        # Public full-market batches can occasionally miss trailing index codes.
-        # Always top-up core indices with a dedicated small request.
-        if preferences.get_realtime_pull_index() and core_index_symbols:
-            have = {str(r.get("symbol") or "").upper() for r in index_records}
+        if provider == "public" and preferences.get_realtime_pull_index() and core_index_symbols:
+            have = {
+                str(r.get("symbol") or "").upper()
+                for r in records
+                if isinstance(r, dict) and r.get("symbol") in all_index_symbols
+            }
             missing = [s for s in sorted(core_index_symbols) if s not in have]
             if missing:
                 try:
                     extra = self._fetch_public_quote_rows(missing, batch_size=20, pause_s=0.0)
                     for r in extra or []:
-                        index_records.append(
+                        records.append(
                             {
                                 "symbol": r.get("symbol"),
                                 "name": r.get("name"),
@@ -572,104 +582,222 @@ class QuoteService:
                 except Exception as e:  # noqa: BLE001
                     logger.warning("core index top-up failed: %s", e)
 
+        self._process_full_market_records(
+            records,
+            t0=t0,
+            now_ts=now_ts,
+            replace_index_cache=replace_index_cache,
+        )
+
+
+    def _fetch_custom_full_market_records(self) -> tuple[list[dict], bool]:
+        """Custom/plugin realtime: get_realtime + optional get_realtime_indices.
+
+        Returns (records, replace_index_cache). None / exception on the optional
+        index hook keeps the previous index cache (fail-soft, no TickFlow mix).
+        """
+        from app.services import preferences
+        from app.indicators.pipeline import BENCHMARK_INDEX_SYMBOLS
+
+        provider_name = preferences.get_realtime_data_provider()
+        from app.data_providers import custom as custom_sources
+
+        if not custom_sources.provider_has_dataset(provider_name, "realtime"):
+            logger.warning("realtime provider %s 未声明 realtime, fail-closed", provider_name)
+            return [], False
+        provider = custom_sources.get_provider(provider_name)
+        fetch = getattr(provider, "get_realtime", None)
+        if not callable(fetch):
+            logger.warning("realtime provider %s 未实现 get_realtime, fail-closed", provider_name)
+            return [], False
+        records = list(fetch() or [])
+        replace_index_cache = True
+        index_fn = getattr(provider, "get_realtime_indices", None)
+        if callable(index_fn):
+            wanted = sorted(
+                set(self.CORE_INDEX_SYMBOLS)
+                | set(BENCHMARK_INDEX_SYMBOLS)
+                | self._collect_monitor_index_symbols()
+            )
+            try:
+                extra = index_fn(wanted)
+                if extra is None:
+                    replace_index_cache = False
+                else:
+                    records.extend(list(extra))
+            except Exception as e:  # noqa: BLE001
+                logger.warning("custom realtime indices failed (%s): %s", provider_name, e)
+                replace_index_cache = False
+        return records, replace_index_cache
+
+    def _process_full_market_records(
+        self,
+        records: list[dict],
+        *,
+        t0: float,
+        now_ts: float,
+        replace_index_cache: bool = True,
+        final_boundary_ms: int | None = None,
+    ) -> None:
+        """Classify / cache / persist a full-market quote payload."""
+        all_index_symbols = set(self._repo.get_index_symbol_set()) if self._repo else set()
+        all_index_symbols.update(self.CORE_INDEX_SYMBOLS)
+        all_etf_symbols: set[str] = set()
+        if self._repo:
+            etf_inst = self._repo.get_etf_instruments()
+            if not etf_inst.is_empty() and "symbol" in etf_inst.columns:
+                all_etf_symbols = set(etf_inst["symbol"].cast(pl.Utf8).to_list())
+
+        index_records = [r for r in records if r.get("symbol") in all_index_symbols]
+        etf_records = [r for r in records if r.get("symbol") in all_etf_symbols]
+        stock_records = [
+            r for r in records
+            if r.get("symbol") not in all_index_symbols and r.get("symbol") not in all_etf_symbols
+        ]
+
+        persist = True
+        if final_boundary_ms is None:
+            self._last_final_confirmed = None
+        else:
+            timestamps = [
+                r.get("timestamp")
+                for r in records
+                if isinstance(r, dict) and r.get("timestamp") not in (None, 0)
+            ]
+            if not timestamps:
+                persist = False
+                self._last_final_confirmed = False
+            else:
+                try:
+                    max_ts = max(int(ts) for ts in timestamps)
+                except (TypeError, ValueError):
+                    persist = False
+                    self._last_final_confirmed = False
+                else:
+                    persist = max_ts >= final_boundary_ms
+                    self._last_final_confirmed = persist
+
         fetch_ms = (time.perf_counter() - t0) * 1000
         fetched_at = time.time() * 1000
 
-        # ---- 更新元信息 ----
         with self._lock:
             self._fetch_time = now_ts
             self._fetch_ms = fetch_ms
             self._fetched_at = fetched_at
             self._symbol_count = len(stock_records)
             self._etf_symbol_count = len(etf_records)
-            if index_records:
-                self._index_quotes_cache = self._build_index_quotes(index_records)
+            if replace_index_cache:
+                self._index_quotes_cache = (
+                    self._build_index_quotes(index_records) if index_records else pl.DataFrame()
+                )
                 self._index_symbol_count = len(index_records)
             else:
-                # Keep previous index cache instead of wiping on a stock-only partial cycle.
                 self._index_symbol_count = (
                     0 if self._index_quotes_cache is None or self._index_quotes_cache.is_empty()
                     else int(self._index_quotes_cache.height)
                 )
 
-        logger.info("行情刷新: %d 只股票, %d 只ETF, %d 只指数, 耗时 %.0fms", len(stock_records), len(etf_records), len(index_records), fetch_ms)
+        logger.info(
+            "行情刷新: %d 只股票, %d 只ETF, %d 只指数, 耗时 %.0fms",
+            len(stock_records), len(etf_records), len(index_records), fetch_ms,
+        )
+        _persist_last_fetch(fetched_at)
+        self._update_volume_delta(records, fetched_at)
 
-        is_public_snapshot = provider == "public" or self._records_are_public(records)
-
-        # Public intraday data is persisted only as quote_snapshot. Canonical
-        # daily partitions remain owned by the end-of-day pipeline.
+        is_public_snapshot = self._records_are_public(records)
         daily_df = self._build_daily(stock_records)
-        if not daily_df.is_empty() and self._repo:
-            try:
-                if is_public_snapshot:
-                    self._repo.write_quote_snapshot_asset(
-                        "stock",
-                        self._build_quote_snapshot(stock_records),
-                        metadata=self._snapshot_metadata("full_market"),
-                    )
-                else:
-                    self._repo.flush_live_daily(daily_df)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("股票行情持久化失败: %s", e)
-
         etf_daily_df = self._build_daily(etf_records)
-        if not etf_daily_df.is_empty() and self._repo:
-            try:
-                if is_public_snapshot:
-                    self._repo.write_quote_snapshot_asset(
-                        "etf",
-                        self._build_quote_snapshot(etf_records),
-                        metadata=self._snapshot_metadata("full_market"),
-                    )
-                else:
-                    self._repo.flush_live_daily_asset("etf", etf_daily_df)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("ETF 行情持久化失败: %s", e)
-
-        # Index live bar → independent kline_index_* (data console / Indices daily chart)
         index_daily_df = self._build_daily(index_records)
-        if not index_daily_df.is_empty() and self._repo:
-            try:
-                if is_public_snapshot:
-                    self._repo.write_quote_snapshot_asset(
-                        "index",
-                        self._build_quote_snapshot(index_records),
-                        metadata=self._snapshot_metadata("full_market"),
-                    )
-                else:
-                    self._repo.flush_live_daily_asset("index", index_daily_df)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("指数行情持久化失败: %s", e)
-
-        # ---- 构建 API 直接值的补充表 (不写 daily, 只用于 enriched 计算) ----
         quote_extra = self._build_quote_extra(stock_records)
         etf_quote_extra = self._build_quote_extra(etf_records)
 
-        # ---- 增量计算 enriched + 写盘 + 更新缓存 ----
-        if not daily_df.is_empty() and self._repo:
-            self._flush_live_enriched(
-                daily_df,
-                quote_extra,
-                asset_type="stock",
-                persist=not is_public_snapshot,
-            )
-        if not etf_daily_df.is_empty() and self._repo:
-            self._flush_live_enriched(
-                etf_daily_df,
-                etf_quote_extra,
-                asset_type="etf",
-                persist=not is_public_snapshot,
-            )
-        if not index_daily_df.is_empty() and self._repo and not is_public_snapshot:
-            index_quote_extra = self._build_quote_extra(index_records)
-            self._flush_live_enriched(index_daily_df, index_quote_extra, asset_type="index")
+        if persist:
+            if not daily_df.is_empty() and self._repo:
+                try:
+                    if is_public_snapshot:
+                        self._repo.write_quote_snapshot_asset(
+                            "stock",
+                            self._build_quote_snapshot(stock_records),
+                            metadata=self._snapshot_metadata("full_market"),
+                        )
+                    else:
+                        self._repo.flush_live_daily(daily_df)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("股票行情持久化失败: %s", e)
 
-        # ---- 通知 SSE ----
+            if not etf_daily_df.is_empty() and self._repo:
+                try:
+                    if is_public_snapshot:
+                        self._repo.write_quote_snapshot_asset(
+                            "etf",
+                            self._build_quote_snapshot(etf_records),
+                            metadata=self._snapshot_metadata("full_market"),
+                        )
+                    else:
+                        self._repo.flush_live_daily_asset("etf", etf_daily_df)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("ETF 行情持久化失败: %s", e)
+
+            if not index_daily_df.is_empty() and self._repo:
+                try:
+                    if is_public_snapshot:
+                        self._repo.write_quote_snapshot_asset(
+                            "index",
+                            self._build_quote_snapshot(index_records),
+                            metadata=self._snapshot_metadata("full_market"),
+                        )
+                    else:
+                        self._repo.flush_live_daily_asset("index", index_daily_df)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("指数行情持久化失败: %s", e)
+
+            if not daily_df.is_empty() and self._repo:
+                self._flush_live_enriched(
+                    daily_df,
+                    quote_extra,
+                    asset_type="stock",
+                    persist=not is_public_snapshot,
+                )
+            if not etf_daily_df.is_empty() and self._repo:
+                self._flush_live_enriched(
+                    etf_daily_df,
+                    etf_quote_extra,
+                    asset_type="etf",
+                    persist=not is_public_snapshot,
+                )
+            if not index_daily_df.is_empty() and self._repo and not is_public_snapshot:
+                index_quote_extra = self._build_quote_extra(index_records)
+                self._flush_live_enriched(index_daily_df, index_quote_extra, asset_type="index")
+
+        self._broadcast_quote_updated()
+        if persist:
+            self._evaluate_monitors(daily_df, quote_extra)
+
+    def _broadcast_quote_updated(self) -> None:
         self._update_event.set()
 
-        # ---- 策略监控 + 告警评估 ----
-        self._evaluate_monitors(daily_df, quote_extra)
+    def _update_volume_delta(self, records: list[dict], fetched_at: float) -> None:
+        return
 
+    @classmethod
+    def _final_boundary_ms(cls, kind: str) -> int | None:
+        if kind == "close_final":
+            boundary = dt_time(15, 0)
+        elif kind == "morning_final":
+            boundary = dt_time(11, 30)
+        else:
+            return None
+        from app.market_time import CN_TZ, cn_today
+        return int(datetime.combine(cn_today(), boundary, tzinfo=CN_TZ).timestamp() * 1000)
+
+    @classmethod
+    def _past_final_deadline(cls, kind: str) -> bool:
+        now = cn_now()
+        if kind == "close_final":
+            return now.time() >= dt_time(15, 30)
+        if kind == "morning_final":
+            return now.time() >= dt_time(12, 10)
+        return False
 
     def _fetch_tickflow_full_market_records(
         self,
@@ -683,12 +811,8 @@ class QuoteService:
 
         tf = get_paid_realtime_client()
         if tf is None:
-            logger.warning("TickFlow 全市场实时不可用(无付费 Key)，回退公开源")
-            return self._fetch_public_full_market_records(
-                all_index_symbols=all_index_symbols,
-                core_index_symbols=core_index_symbols,
-                all_etf_symbols=all_etf_symbols,
-            )
+            logger.warning("TickFlow 全市场实时不可用(无付费 Key)，fail-closed")
+            return []
 
         universes: list[str] = []
         if preferences.get_realtime_pull_stock():

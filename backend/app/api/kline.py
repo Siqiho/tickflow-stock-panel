@@ -242,9 +242,17 @@ def get_daily(
 
     if df.is_empty():
         try:
-            raw = kline_sync.sync_daily_batch([symbol], count=days + 30)
+            capset = _http_capset(request)
+            raw = kline_sync.fetch_routed_daily(
+                [symbol],
+                start_time=datetime.combine(start, datetime.min.time()),
+                end_time=datetime.combine(end, datetime.max.time().replace(microsecond=0)),
+                asset_type="stock",
+                capset=capset,
+                count=days + 30,
+            )
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"TickFlow fetch failed: {e}") from e
+            raise HTTPException(status_code=502, detail=f"daily fetch failed: {e}") from e
         if raw.is_empty():
             return _gzip_payload(
                 request,
@@ -1202,8 +1210,8 @@ async def sync_minute(request: Request):
     repo = request.app.state.repo
     capset = _http_capset(request)
 
-    if not capset.has(Cap.KLINE_MINUTE_BATCH):
-        raise HTTPException(status_code=403, detail="需要 Pro+ 权限")
+    if not _minute_allowed(capset):
+        raise HTTPException(status_code=403, detail="需要分钟批量能力或已配置的自定义分钟源")
 
     created = job_store.create(work_key="kline.sync_minute", long_running=True)
     job_id = str(created)
@@ -1281,7 +1289,7 @@ async def extend_history(request: Request):
         capset = _http_capset(request)
 
         from app.tickflow.capabilities import Cap
-        if not capset.has(Cap.KLINE_DAILY_BATCH):
+        if not capset.has(Cap.KLINE_DAILY_BATCH) and not kline_sync.daily_provider_is_custom():
             raise HTTPException(status_code=403, detail="需要 Pro+ 权限 (batch K-line)")
 
         from app.services.extend_history import run_extend_history
@@ -1450,8 +1458,8 @@ async def extend_minute_history(request: Request):
         capset = _http_capset(request)
 
         from app.tickflow.capabilities import Cap
-        if not capset.has(Cap.KLINE_MINUTE_BATCH):
-            raise HTTPException(status_code=403, detail="需要 Pro+ 权限 (batch minute K-line)")
+        if not _minute_allowed(capset):
+            raise HTTPException(status_code=403, detail="需要分钟批量能力或已配置的自定义分钟源")
 
         # month 单位(按月扩展更长的分钟K历史)仅 Expert+ 开放;Pro 仅可用 day
         if unit == "month":
@@ -1607,14 +1615,11 @@ async def extend_minute_history(request: Request):
 
 
 def _resolve_minute_universe(capset, repo) -> list[str]:
-    """分钟K标的池解析。"""
-    from app.tickflow.capabilities import Cap
-    if capset.has(Cap.KLINE_MINUTE_BATCH):
-        try:
-            from app.tickflow.pools import get_pool
-            all_a = get_pool("CN_Equity_A", refresh=True)
-            if all_a:
-                return sorted(all_a)
-        except Exception:
-            pass
-    return []
+    """分钟K标的池解析。与盘后管道同一标的池，尊重 pool_provider。"""
+    if not _minute_allowed(capset):
+        return []
+    try:
+        from app.jobs.daily_pipeline import resolve_universe
+        return resolve_universe(capset)
+    except Exception:
+        return []
