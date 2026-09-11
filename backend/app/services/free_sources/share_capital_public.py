@@ -147,17 +147,38 @@ def sync_share_capital_public(
     单股失败只记录并继续; 全部失败则不写表。写入使用 staging 原子替换,
     既有 instruments_snapshot 行保留(仍为 pit_unsafe), 新增权威行与其共存。
     """
-    client = client or get_shared_client()
     data_dir = Path(data_dir)
-    syms = [str(s).upper().strip() for s in symbols if str(s).strip()]
+    try:
+        from app.services.financial_sync import (
+            _tag_financial_route,
+            financial_cache_usable,
+            financial_write_route,
+        )
+
+        route = financial_write_route()
+    except Exception:  # noqa: BLE001
+        route = "unresolved"
+        _tag_financial_route = None
+        financial_cache_usable = None
+
     stats: dict[str, Any] = {
-        "requested": len(syms),
+        "requested": len([str(s).upper().strip() for s in symbols if str(s).strip()]),
         "ok": 0,
         "empty": 0,
         "failed": 0,
         "failed_symbols": [],
         "rows_fetched": 0,
     }
+    if route not in {"public", "tickflow"}:
+        stats["published"] = False
+        stats["skipped"] = True
+        stats["error"] = f"financial route {route} must not write public share capital"
+        logger.info("sync_share_capital_public skipped for route=%s", route)
+        return stats
+
+    client = client or get_shared_client()
+    syms = [str(s).upper().strip() for s in symbols if str(s).strip()]
+    stats["requested"] = len(syms)
     frames: list[pl.DataFrame] = []
     total = len(syms)
     for index, sym in enumerate(syms, 1):
@@ -189,8 +210,17 @@ def sync_share_capital_public(
     new_rows = pl.concat(frames, how="diagonal_relaxed")
     shares_path = data_dir / "financials" / "shares" / "part.parquet"
     existing = pl.read_parquet(shares_path) if shares_path.exists() else None
+    if (
+        existing is not None
+        and financial_cache_usable is not None
+        and not financial_cache_usable(existing, route)
+    ):
+        logger.info("sync_share_capital_public: drop stale shares for route=%s", route)
+        existing = None
     stats["rows_before"] = int(existing.height) if existing is not None else 0
     merged = merge_financial_pit(existing, new_rows, table="shares")
+    if _tag_financial_route is not None and merged is not None and not merged.is_empty():
+        merged = _tag_financial_route(merged)
     info = staging_atomic_replace_financial_table(data_dir, "shares", merged)
     stats["published"] = True
     stats["rows_after"] = info["rows"]

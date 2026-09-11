@@ -1513,16 +1513,30 @@ class KlineRepository:
     # ================================================================
 
     def latest_minute_date(self, symbol: str) -> date | None:
-        try:
-            with self._lock:
-                row = self.db.execute(
-                    "SELECT max(CAST(datetime AS DATE)) FROM kline_minute WHERE symbol = ?",
-                    [symbol],
-                ).fetchone()
-            if row and row[0]:
-                return row[0] if isinstance(row[0], date) else date.fromisoformat(str(row[0]))
-        except duckdb.CatalogException:
-            pass
+        """Newest route-usable minute date that contains ``symbol``.
+
+        DuckDB ``kline_minute`` can be temporarily ungated; file provenance
+        is the source of truth so a custom minute route cannot treat leftover
+        TickFlow/public parquet as current coverage.
+        """
+        from app.services.kline_sync import usable_minute_partition_dates
+
+        dates = usable_minute_partition_dates(self.store.data_dir)
+        if not dates:
+            return None
+        wanted = str(symbol or "").strip()
+        if not wanted:
+            return dates[-1]
+        for day in reversed(dates):
+            part = self.store.data_dir / "kline_minute" / f"date={day.isoformat()}" / "part.parquet"
+            try:
+                frame = pl.read_parquet(part, columns=["symbol"])
+            except Exception:  # noqa: BLE001
+                continue
+            if "symbol" not in frame.columns:
+                continue
+            if frame.filter(pl.col("symbol") == wanted).height:
+                return day
         return None
 
     def earliest_daily_date(self) -> date | None:
@@ -1540,18 +1554,18 @@ class KlineRepository:
         return None
 
     def earliest_minute_date(self) -> date | None:
-        """本地分钟K数据的最早日期。"""
-        try:
-            with self._lock:
-                res = self.db.execute(
-                    "SELECT min(CAST(datetime AS DATE)) FROM kline_minute",
-                ).fetchone()
-            if res and res[0]:
-                d = res[0]
-                return d if isinstance(d, date) else date.fromisoformat(str(d))
-        except Exception:
-            return None
-        return None
+        """Earliest route-usable local minute date."""
+        from app.services.kline_sync import usable_minute_partition_dates
+
+        dates = usable_minute_partition_dates(self.store.data_dir)
+        return dates[0] if dates else None
+
+    def latest_minute_date_global(self) -> date | None:
+        """Newest route-usable local minute date (any symbol)."""
+        from app.services.kline_sync import usable_minute_partition_dates
+
+        dates = usable_minute_partition_dates(self.store.data_dir)
+        return dates[-1] if dates else None
 
     def latest_daily_date(self) -> date | None:
         """本地日K数据的最新日期。"""
@@ -1817,8 +1831,35 @@ class KlineRepository:
         except Exception as exc:  # noqa: BLE001
             logger.warning("minute view refresh failed: %s", exc)
 
+    def _daily_write_context(self, df: pl.DataFrame):
+        """Tag daily/enriched writes and refuse unresolved mix.
+
+        Returns ``(frame, incoming_route, usable_fn)`` or ``None`` when the
+        current daily route is unresolved (do not write leftover TickFlow).
+        """
+        from app.services.kline_sync import (
+            _incoming_daily_route,
+            _tag_daily_route,
+            daily_cache_usable,
+        )
+
+        tagged = _tag_daily_route(df)
+        incoming = _incoming_daily_route(tagged)
+        if incoming == "unresolved":
+            logger.warning("skip daily/enriched write for unresolved daily route")
+            return None
+        return tagged, incoming, daily_cache_usable
+
     def _write_daily_partition(self, df: pl.DataFrame, table: str) -> None:
-        """按 date 分区写入 parquet，每个日期一个文件，支持 merge-upsert。"""
+        """按 date 分区写入 parquet，每个日期一个文件，支持 merge-upsert。
+
+        Same-date leftover TickFlow/public/custom bars are replaced, not
+        concat-mixed. Historical other dates stay until the user re-syncs.
+        """
+        ctx = self._daily_write_context(df)
+        if ctx is None:
+            return
+        df, incoming_route, usable = ctx
         base = self.store.data_dir / table
         for date_df in df.partition_by("date"):
             dt = date_df["date"][0]
@@ -1827,6 +1868,12 @@ class KlineRepository:
             out.parent.mkdir(parents=True, exist_ok=True)
             if out.exists():
                 existing = pl.read_parquet(out)
+                if not usable(existing, incoming_route):
+                    logger.info(
+                        "replace stale %s partition %s for route=%s",
+                        table, ds, incoming_route,
+                    )
+                    existing = date_df.head(0)
                 date_df = pl.concat([existing, date_df], how="diagonal_relaxed").unique(
                     subset=["symbol", "date"], keep="last"
                 )
@@ -1858,6 +1905,10 @@ class KlineRepository:
         """按 symbol 合并当天指定资产日K分区。用于少量自选实时，不覆盖全市场。"""
         if df.is_empty() or "date" not in df.columns:
             return
+        ctx = self._daily_write_context(df)
+        if ctx is None:
+            return
+        df, incoming_route, usable = ctx
         table = {
             "stock": "kline_daily",
             "index": "kline_index_daily",
@@ -1875,12 +1926,19 @@ class KlineRepository:
             keys=["symbol", "date"],
             sort_by=["symbol", "date"],
             lock=self._write_lock,
+            prepare_existing=lambda existing, route=incoming_route: (
+                existing if usable(existing, route) else existing.head(0)
+            ),
         )
 
     def merge_live_enriched_asset(self, asset_type: str, df: pl.DataFrame) -> None:
         """按 symbol 合并当天 enriched 分区和内存缓存。用于少量自选实时。"""
         if df.is_empty() or "date" not in df.columns:
             return
+        ctx = self._daily_write_context(df)
+        if ctx is None:
+            return
+        df, incoming_route, usable = ctx
         dt = df["date"][0]
         if asset_type == "stock":
             table = "kline_daily_enriched"
@@ -1895,7 +1953,7 @@ class KlineRepository:
             return
 
         merged_cache = df
-        if existing_cache is not None and not existing_cache.is_empty():
+        if existing_cache is not None and not existing_cache.is_empty() and usable(existing_cache, incoming_route):
             merged_cache = pl.concat([existing_cache, df], how="diagonal_relaxed").unique(
                 subset=["symbol", "date"], keep="last"
             )
@@ -1911,6 +1969,8 @@ class KlineRepository:
 
         from app.indicators.pipeline import ENRICHED_STORAGE_COLS
         storage_cols = [c for c in ENRICHED_STORAGE_COLS if c in df.columns]
+        if "route" in df.columns and "route" not in storage_cols:
+            storage_cols.append("route")
         df_storage = df.select(storage_cols).sort(["symbol"])
         base = self.store.data_dir / table
         ds = dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
@@ -1918,6 +1978,8 @@ class KlineRepository:
         out.parent.mkdir(parents=True, exist_ok=True)
         if out.exists():
             existing = pl.read_parquet(out)
+            if not usable(existing, incoming_route):
+                existing = df_storage.head(0)
             df_storage = pl.concat([existing, df_storage], how="diagonal_relaxed").unique(
                 subset=["symbol", "date"], keep="last"
             )
@@ -1933,6 +1995,10 @@ class KlineRepository:
         """覆写当天指定资产日K分区 (实时行情落盘, 非merge)。"""
         if df.is_empty() or "date" not in df.columns:
             return
+        ctx = self._daily_write_context(df)
+        if ctx is None:
+            return
+        df, _incoming_route, _usable = ctx
         table = {
             "stock": "kline_daily",
             "index": "kline_index_daily",
@@ -1958,6 +2024,10 @@ class KlineRepository:
         """覆写当天指定资产 enriched 分区 (实时 enriched 落盘, 非merge)。"""
         if df.is_empty() or "date" not in df.columns:
             return
+        ctx = self._daily_write_context(df)
+        if ctx is None:
+            return
+        df, _incoming_route, _usable = ctx
         dt = df["date"][0]
         if asset_type == "stock":
             self._enriched_cache = df.sort(["symbol"])
@@ -1976,6 +2046,8 @@ class KlineRepository:
 
         from app.indicators.pipeline import ENRICHED_STORAGE_COLS
         storage_cols = [c for c in ENRICHED_STORAGE_COLS if c in df.columns]
+        if "route" in df.columns and "route" not in storage_cols:
+            storage_cols.append("route")
         df_storage = df.select(storage_cols).sort(["symbol"])
         base = self.store.data_dir / table
         ds = dt.isoformat() if hasattr(dt, "isoformat") else str(dt)

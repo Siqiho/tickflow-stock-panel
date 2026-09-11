@@ -213,6 +213,55 @@ def daily_route() -> str:
     return name or "custom"
 
 
+def daily_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
+    """Whether a same-date daily/enriched partition may be merged for ``route``.
+
+    Historical daily *reads* stay leftover until re-sync. This gate is for
+    write/merge only: a custom (or leftover TickFlow) re-sync must not
+    concat-mix the other source's bars into the same date partition.
+    Untagged legacy files stay valid for leftover TickFlow / public.
+    """
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return False
+    expected = (route or "").strip().lower()
+    if not expected or expected == "unresolved":
+        return False
+    if "route" not in df.columns:
+        return expected in {"tickflow", "public"}
+    stored = [str(v or "").strip().lower() for v in df["route"].to_list()]
+    nonempty = [s for s in stored if s]
+    if not nonempty:
+        return expected in {"tickflow", "public"}
+    if any(s != expected for s in nonempty):
+        return False
+    if len(nonempty) != len(stored):
+        return expected in {"tickflow", "public"}
+    return True
+
+
+def _tag_daily_route(df: pl.DataFrame) -> pl.DataFrame:
+    route = daily_route()
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return df
+    if not route or route == "unresolved" or "route" in df.columns:
+        return df
+    return df.with_columns(pl.lit(route).alias("route"))
+
+
+def _incoming_daily_route(df: pl.DataFrame) -> str:
+    if df is not None and "route" in df.columns:
+        stored = [str(v or "").strip().lower() for v in df["route"].to_list()]
+        nonempty = {s for s in stored if s}
+        if len(nonempty) == 1:
+            return next(iter(nonempty))
+    return daily_route()
+
+
+def adj_public_write_allowed() -> bool:
+    """Public sina adj / coverage writers may run only for leftover TickFlow or public."""
+    return adj_route() in {"public", "tickflow"}
+
+
 def live_enriched_overlay_allowed() -> bool:
     """Whether in-memory live enriched may overlay charts / screener / latest.
 

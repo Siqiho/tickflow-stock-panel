@@ -117,11 +117,13 @@ def _coverage_scope(symbol_count: int) -> str:
 
 def _load_pit_safe_shares(data_dir: Path, trade_date: date) -> pl.DataFrame:
     """可用于历史估值的股本: 严格 PIT 且非快照来源。"""
-    path = data_dir / "financials" / "shares" / "part.parquet"
-    if not path.exists():
+    try:
+        from app.services.financial_sync import get_financial_df
+
+        raw = get_financial_df(Path(data_dir), "shares")
+    except Exception:  # noqa: BLE001
         return pl.DataFrame()
-    raw = pl.read_parquet(path)
-    if raw.is_empty():
+    if raw is None or raw.is_empty():
         return pl.DataFrame()
     pit = ensure_pit_columns(raw, table="shares")
     safe = filter_as_of(pit, trade_date, table="shares", strict=True)

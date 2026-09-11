@@ -467,11 +467,22 @@ class FinancialScheduler:
                 if table in restored:
                     continue
                 parquet = data_dir / "financials" / table / "part.parquet"
-                if parquet.exists():
-                    mtime = datetime.fromtimestamp(parquet.stat().st_mtime, tz=UTC).isoformat()
-                    restored[table] = mtime
-                    preferences.set_financial_sync_time(table, mtime)
-                    logger.info("FinancialScheduler backfilled last_sync for %s from parquet mtime", table)
+                if not parquet.exists():
+                    continue
+                try:
+                    df = pl.read_parquet(parquet)
+                    if not financial_cache_usable(df, financial_write_route()):
+                        logger.info(
+                            "FinancialScheduler skip stale last_sync backfill for %s",
+                            table,
+                        )
+                        continue
+                except Exception:  # noqa: BLE001
+                    continue
+                mtime = datetime.fromtimestamp(parquet.stat().st_mtime, tz=UTC).isoformat()
+                restored[table] = mtime
+                preferences.set_financial_sync_time(table, mtime)
+                logger.info("FinancialScheduler backfilled last_sync for %s from parquet mtime", table)
             self._last_sync = restored
             if self._last_sync:
                 logger.info("FinancialScheduler restored last_sync: %s", list(self._last_sync.keys()))
