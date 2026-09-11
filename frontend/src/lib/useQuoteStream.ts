@@ -1,11 +1,21 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { SSE_INVALIDATE_PREFIXES, QK } from './queryKeys'
+import { isLiveSnapshotQueryKey, shanghaiCalendarDate } from './dashboardFeed'
+import { quoteTickActivePrefixes, QK } from './queryKeys'
 import { getQueryConfig } from './useQueryConfig'
 import { toast } from '@/components/Toast'
 import { pushAlertToasts } from '@/components/AlertToast'
 import { feedReviewEvent } from './reviewStore'
 import type { StrategyAlertEvent } from './api'
+
+function matchesQuoteTickQuery(queryKey: readonly unknown[], prefix: string, today = shanghaiCalendarDate()): boolean {
+  const head = String(queryKey[0] ?? '')
+  if (!head.startsWith(prefix)) return false
+  if (prefix === 'overview-market' || prefix === 'limit-ladder') {
+    return isLiveSnapshotQueryKey(queryKey, today)
+  }
+  return true
+}
 
 /**
  * 全局 SSE hook: 监听后端行情更新推送 + 策略监控通知。
@@ -65,35 +75,22 @@ export function useQuoteStream(
         if (!enabledRef.current) return
         // 根据用户配置过滤 invalidation
         const pages = pagesRef.current
-        if (pages) {
-          // 只 invalidate 开启的页面对应的 prefix
-          const activePrefixes = SSE_INVALIDATE_PREFIXES.filter((p) => {
-            // 'quote-status' 始终刷新 (全局状态)
-            if (p === 'quote-status') return true
-            return pages[p] !== false
-          })
-          qc.invalidateQueries({
-            predicate: (query) =>
-              activePrefixes.some(
-                (prefix) => String(query.queryKey[0]).startsWith(prefix),
-              ),
-          })
-        } else {
-          // 无配置时全部刷新 (向后兼容)
-          qc.invalidateQueries({
-            predicate: (query) =>
-              SSE_INVALIDATE_PREFIXES.some(
-                (prefix) => String(query.queryKey[0]).startsWith(prefix),
-              ),
-          })
-        }
+        const activePrefixes = quoteTickActivePrefixes(pages)
+        qc.invalidateQueries({
+          predicate: (query) =>
+            activePrefixes.some((prefix) => matchesQuoteTickQuery(query.queryKey, prefix)),
+        })
       })
 
       es.addEventListener('depth_updated', () => {
-        // 五档修正完成: 刷新连板梯队 + 看板封单数据。
-        // 不受实时行情开关限制 — 修正轮询独立于行情轮询, 用户开了修正就想看实时封单。
-        qc.invalidateQueries({ queryKey: ['limit-ladder'] })
-        qc.invalidateQueries({ queryKey: ['overview-market'] })
+        // 五档修正完成: 刷新连板梯队 + 当天总览封单。历史日总览保持静止。
+        const today = shanghaiCalendarDate()
+        qc.invalidateQueries({
+          predicate: (query) => String(query.queryKey[0]) === 'limit-ladder' && isLiveSnapshotQueryKey(query.queryKey, today),
+        })
+        qc.invalidateQueries({
+          predicate: (query) => String(query.queryKey[0]) === 'overview-market' && isLiveSnapshotQueryKey(query.queryKey, today),
+        })
       })
 
       es.addEventListener('strategy_alert', (e: MessageEvent) => {

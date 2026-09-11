@@ -1,0 +1,52 @@
+# one-trading private release upload boundary.
+# Zeabur CLI gives this file priority over .gitignore.
+
+# Runtime data and residual workspaces must never leave this Mac.
+/data/
+/backend/data/
+/.data.staging-*/
+/data.k4-residual-*/
+/output/
+/.worktrees/
+/.superpowers/
+
+# Credentials and private local operator files.
+/.env
+/.env.*
+/backend/.env
+/CLAUDE.md
+/DEPLOY.md
+/deploy.sh
+
+# Dependency trees, virtual environments, caches, and build products.
+**/node_modules/
+**/.venv/
+**/venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/*.py[cod]
+**/*.tsbuildinfo
+/frontend/dist/
+/frontend/android/
+/frontend/assets/
+/backend/static/
+/backend/app/static/
+/backend/dist/
+/backend/build/
+/.android-sdk/
+/.android-toolchain/
+/.private/
+/releases/
+/deploy/android-download/
+
+# Non-runtime material.
+/docs/
+/screenshots/
+/packaging/
+/design-qa.md
+/RELEASE.md
+/.DS_Store
+**/.DS_Store
+*.log

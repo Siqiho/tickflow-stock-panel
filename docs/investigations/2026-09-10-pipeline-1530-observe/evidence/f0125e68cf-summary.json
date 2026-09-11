@@ -1,0 +1,24 @@
+{
+  "job_id": "f0125e68cf",
+  "path": "/Users/simon/Trading/one-trading/data/job_store/f0125e68cf.json",
+  "work_key": "owner|daily_pipeline|daily_pipeline",
+  "started_at": "2026-09-09T07:30:01Z",
+  "started_at_cst": "2026-09-09T15:30:01+08:00",
+  "finished_at": "2026-09-09T07:35:01Z",
+  "duration_s": 300.0,
+  "status": "degraded",
+  "quality_ok": false,
+  "quality_issues": ["low_coverage", "turnover_unit_mismatch"],
+  "industry_fund_flow_daily": {
+    "ok": true,
+    "latest_data_date": "2026-09-09",
+    "latest_day_covered": 128,
+    "latest_day_complete": true
+  },
+  "concept_fund_flow_daily": null,
+  "notes": [
+    "job degraded != industry roll failed",
+    "job succeeded != industry complete",
+    "concept was not on this path yet"
+  ]
+}

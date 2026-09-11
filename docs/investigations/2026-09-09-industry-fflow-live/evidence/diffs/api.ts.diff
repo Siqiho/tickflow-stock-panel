@@ -1,0 +1,14 @@
+--- /Users/simon/备份/codex/20260909-131435-industry-fflow-live/files/api.ts	2026-09-09 01:12:30
++++ /Users/simon/Trading/one-trading/frontend/src/lib/api.ts	2026-09-09 13:16:52
+@@ -4339,6 +4339,11 @@
+   prior_note?: string | null
+   window_note?: string | null
+   source?: string
++  data_as_of?: string | null
++  freshness_status?: 'fresh' | 'stale' | 'unknown'
++  freshness_note?: string | null
++  expected_trading_day?: string | null
++  calendar_covers?: boolean
+ }
+ 
+ export interface FundFlowHistoryPoint {

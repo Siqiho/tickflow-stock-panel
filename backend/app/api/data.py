@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from app.indicators.pipeline import ENRICHED_COLUMNS
 
@@ -543,6 +544,7 @@ def _compute_storage(data_dir: Path) -> dict:
         "minute": data_dir / "kline_minute",
         "adj_factor": data_dir / "adj_factor",
         "instruments": data_dir / "instruments",
+        "f10": data_dir / "f10",
         "ext_data": data_dir / "ext_data",
     }
     stats = {}
@@ -640,6 +642,19 @@ def status(request: Request) -> dict:
         raise HTTPException(status_code=503, detail={"code": "catalog_unavailable"})
     scheduler = getattr(request.app.state, "scheduler", None)
     payload = service.compatibility_status()
+    from app.services import user_context
+
+    if not user_context.is_admin():
+        storage = dict(payload.get("storage") or {})
+        storage["total_size_mb"] = round(
+            sum(
+                float(value or 0)
+                for key, value in storage.items()
+                if key.endswith("_size_mb") and key != "total_size_mb"
+            ),
+            2,
+        )
+        payload["storage"] = storage
     payload["next_instruments_run"] = _next_cron_run(scheduler, "pre_market_instruments")
     payload["next_pipeline_run"] = _next_cron_run(scheduler, "daily_pipeline")
     for run in service.list_runs("daily_pipeline"):
@@ -664,7 +679,7 @@ def clear_data(request: Request):
     for sub in (
         "kline_daily", "kline_daily_enriched", "kline_index_daily", "kline_index_enriched",
         "kline_etf_daily", "kline_etf_enriched", "kline_etf_minute", "kline_minute",
-        "adj_factor", "adj_factor_etf", "instruments", "instruments_index", "instruments_etf", "pools", "financials",
+        "adj_factor", "adj_factor_etf", "instruments", "instruments_index", "instruments_etf", "pools", "financials", "f10",
         "backtest_results", "screener_results", "ai_cache",
     ):
         d = data_dir / sub
@@ -902,3 +917,63 @@ def get_version(request: Request) -> dict:
             return {"version": v}
 
     return {"version": "v0.0.0"}
+
+
+class RepairDailyIn(BaseModel):
+    start_date: str
+
+
+@router.get("/external-readonly-sources")
+def external_readonly_sources(request: Request) -> dict:
+    """只读报告已配置的外置包状态。只 stat 配置根目录, 不接受路径参数, 不扫包。"""
+    import stat as stat_mod
+
+    from app.config import settings
+    from app.services import user_context
+
+    if request.query_params.get("path") or request.query_params.get("root"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "external_readonly_path_not_accepted",
+                "message": "此接口只读服务端已配置根目录，不接受路径参数",
+            },
+        )
+
+    root = settings.offline_quantdb_root
+    payload: dict[str, Any] = {
+        "status": "unconfigured",
+        "supported": [{"id": "margin_trading", "label": "两融"}],
+        "note": (
+            "外置只读包目前仅支持按标的查询两融，不是全包已入库，"
+            "也不计入托管存储。"
+        ),
+    }
+    if user_context.is_admin():
+        payload["root_path"] = None
+
+    if root is None or not str(root).strip():
+        return payload
+
+    accessible = False
+    try:
+        mode = root.stat().st_mode
+        accessible = stat_mod.S_ISDIR(mode)
+    except OSError:
+        accessible = False
+
+    payload["status"] = "configured" if accessible else "inaccessible"
+    if user_context.is_admin():
+        payload["root_path"] = str(root)
+    return payload
+
+
+@router.post("/repair-daily")
+def repair_daily(req: RepairDailyIn, request: Request):
+    from datetime import date as date_cls
+    from app.services.repair_daily import run_repair_daily
+    start = date_cls.fromisoformat(req.start_date)
+    capset = getattr(request.app.state, "capset", None)
+    result = run_repair_daily(request.app.state.repo, capset, start)
+    return {"ok": True, **(result if isinstance(result, dict) else {"result": result})}
+

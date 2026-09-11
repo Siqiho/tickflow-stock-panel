@@ -1,0 +1,165 @@
+{
+  "result": "ok",
+  "backup": "/Users/simon/备份/codex/20260911-restore-pre-cursor-before-20260911T224838",
+  "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838",
+  "stamp": "20260911T224838",
+  "dry": {
+    "stamp": "20260911T224838",
+    "backup": "/Users/simon/备份/codex/20260911-restore-pre-cursor-before-20260911T224838",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838",
+    "source_count": 1537,
+    "a_count": 1497,
+    "b_count": 1537,
+    "b_fill_count": 40,
+    "b_fill": [
+      "frontend/src/components/data/ActiveJobCard.tsx",
+      "frontend/src/components/data/AdvancedDisclosure.tsx",
+      "frontend/src/components/data/AvailabilityBadge.tsx",
+      "frontend/src/components/data/ControlPlaneSummary.tsx",
+      "frontend/src/components/data/CoverageBar.tsx",
+      "frontend/src/components/data/DataCatalogSection.tsx",
+      "frontend/src/components/data/DataOperationsHistory.tsx",
+      "frontend/src/components/data/DataPageCategoryNav.tsx",
+      "frontend/src/components/data/DataSourceTracePanel.tsx",
+      "frontend/src/components/data/DatasetCatalogCard.tsx",
+      "frontend/src/components/data/DatasetDetailDrawer.tsx",
+      "frontend/src/components/data/DatasetRunHistory.tsx",
+      "frontend/src/components/data/DepthConfigCard.tsx",
+      "frontend/src/components/data/EnrichedRebuildPanel.tsx",
+      "frontend/src/components/data/ExtendHistoryPanel.tsx",
+      "frontend/src/components/data/HithinkSpecialDataSyncCard.tsx",
+      "frontend/src/components/data/MarginTradingSyncCard.tsx",
+      "frontend/src/components/data/MarketPulseSyncCard.tsx",
+      "frontend/src/components/data/MinuteSyncConfig.tsx",
+      "frontend/src/components/data/PageSettingsModal.tsx",
+      "frontend/src/components/data/PipelineScopeConfig.tsx",
+      "frontend/src/components/data/QualityLineagePanel.tsx",
+      "frontend/src/components/data/QuoteConfigCard.tsx",
+      "frontend/src/components/data/RegimeConfigCard.tsx",
+      "frontend/src/components/data/RepairDailyPanel.tsx",
+      "frontend/src/components/data/ScheduleEditor.tsx",
+      "frontend/src/components/data/SchemaModal.tsx",
+      "frontend/src/components/data/SectionTitle.tsx",
+      "frontend/src/components/data/SettingsModal.tsx",
+      "frontend/src/components/data/Skeleton.tsx",
+      "frontend/src/components/data/StatCard.tsx",
+      "frontend/src/components/data/StorageBreakdownCard.tsx",
+      "frontend/src/components/data/__tests__/AvailabilityBadge.test.tsx",
+      "frontend/src/components/data/__tests__/DataCatalogSection.test.tsx",
+      "frontend/src/components/data/__tests__/DatasetDetailDrawer.test.tsx",
+      "frontend/src/components/data/__tests__/HithinkSpecialDataSyncCard.test.tsx",
+      "frontend/src/components/data/__tests__/MarginTradingSyncCard.test.tsx",
+      "frontend/src/components/data/__tests__/PageSettingsModal.test.tsx",
+      "frontend/src/components/data/__tests__/StorageBreakdownCard.test.tsx",
+      "frontend/src/components/data/__tests__/catalogFixtures.ts"
+    ],
+    "restore_count": 206,
+    "unchanged_count": 1327,
+    "trash_count": 176,
+    "keep_extra_count": 384,
+    "derived": [
+      "frontend/tsconfig.tsbuildinfo",
+      "frontend/tsconfig.node.tsbuildinfo"
+    ],
+    "pycache_dirs": [
+      "backend/app/__pycache__",
+      "backend/app/api/__pycache__",
+      "backend/app/backtest/__pycache__",
+      "backend/app/data_catalog/__pycache__",
+      "backend/app/data_lab/__pycache__",
+      "backend/app/data_lab/sources/__pycache__",
+      "backend/app/data_providers/__pycache__",
+      "backend/app/data_providers/custom/__pycache__",
+      "backend/app/factors/__pycache__",
+      "backend/app/indicators/__pycache__",
+      "backend/app/jobs/__pycache__",
+      "backend/app/plugins/fuyao/__pycache__",
+      "backend/app/plugins/stocksdk/__pycache__",
+      "backend/app/services/__pycache__",
+      "backend/app/services/free_sources/__pycache__",
+      "backend/app/services/news_sources/__pycache__",
+      "backend/app/services/watchlist_ocr/__pycache__",
+      "backend/app/strategy/__pycache__",
+      "backend/app/strategy/builtin/__pycache__",
+      "backend/app/tickflow/__pycache__",
+      "backend/tests/__pycache__",
+      "backend/tests/backtest/__pycache__",
+      "backend/tests/data_catalog/__pycache__",
+      "backend/tests/data_lab/__pycache__",
+      "backend/tests/free_sources/__pycache__",
+      "scripts/__pycache__"
+    ],
+    "restore_tops": {
+      "README.md": 1,
+      "backend": 121,
+      "docs": 5,
+      "frontend": 79
+    },
+    "trash_tops": {
+      "CONTRIBUTING.md": 1,
+      "backend": 119,
+      "community-qr-code.jpg": 1,
+      "docs": 10,
+      "frontend": 42,
+      "scripts": 2,
+      "操作说明书.md": 1
+    },
+    "preserve_exact": [
+      ".env",
+      "docs/agent-platform-development-log.md",
+      "docs/data-platform-development-log.md",
+      "docs/workbench-development-log.md"
+    ],
+    "note": "SOURCE = A product files + B 40 frontend/src/components/data files. Current three logs and .env are not overwritten."
+  },
+  "git": {
+    "head": "31216dda527cd4ec177b9cbf6fd1c524dbadbe82",
+    "index_sha256": "b69739e11d4f0895bfd284dd0b1d409574d55e92e68569f298c7c1ab567e25fd",
+    "status_bytes": 36309,
+    "ls_files_stage_sha256": "ebaeca64935d92a65780c9c4054f4c20243377043975c3fc0dcf01eff58d5cba",
+    "untracked_count": 1381
+  },
+  "verify": {
+    "source_files_ok": 1533,
+    "failures": [],
+    "b_fill_verified_count": 40,
+    "leftover_trashed_paths": [],
+    "polars": "1.40.1",
+    "index_unchanged": true,
+    "index_restored_from_backup": "b69739e11d4f0895bfd284dd0b1d409574d55e92e68569f298c7c1ab567e25fd",
+    "venv_official_not_sandbox": true
+  },
+  "phase2_pointer": "/Users/simon/Trading/one-trading/docs/cursor-handoffs/restore-pre-cursor-20260911/restore-report.md",
+  "phase2_runtime": {
+    "backend_pid": 5762,
+    "frontend_pid": 5690,
+    "listen": ["127.0.0.1:3018", "127.0.0.1:3011"],
+    "wrapper": true,
+    "daily_run": false
+  },
+  "stop": {
+    "actions": [
+      {
+        "pid": 64083,
+        "role": "backend-3018",
+        "action": "SIGTERM",
+        "command": "/Users/simon/Trading/one-trading/backend/.venv/bin/python -B -m uvicorn app.main:app --host 127.0.0.1 --port 3018"
+      },
+      {
+        "pid": 98187,
+        "role": "frontend-3011-isolated-vite",
+        "action": "SIGTERM",
+        "command": "node ./node_modules/.bin/../vite/bin/vite.js --config /Users/simon/Trading/one-trading/data/shared-isolated-runtime-20260911/vite.isolated.config.ts --host 127.0.0.1 --port 3011 --strictPort"
+      },
+      {
+        "pid": 98201,
+        "role": "frontend-esbuild-child",
+        "action": "SIGTERM",
+        "command": "/Users/simon/Trading/one-trading/frontend/node_modules/.pnpm/@esbuild+darwin-arm64@0.21.5/node_modules/@esbuild/darwin-arm64/bin/esbuild --service=0.21.5 --ping"
+      }
+    ],
+    "listen_after": "",
+    "hermes_973_still": true,
+    "codex_73557_still": true
+  }
+}

@@ -4,7 +4,7 @@ import { storage } from '@/lib/storage'
 
 export type CardKey =
   | 'instruments' | 'daily' | 'adj_factor' | 'enriched'
-  | 'index' | 'etf' | 'minute' | 'financials'
+  | 'index' | 'etf' | 'minute' | 'financials' | 'f10' | 'reference'
 
 interface CardDef {
   key: CardKey
@@ -21,6 +21,8 @@ export const DATA_CARD_DEFS: CardDef[] = [
   { key: 'etf', label: 'ETF', desc: '场内基金维表、日 K 与指标' },
   { key: 'minute', label: '分钟 K', desc: '分钟级 K 线' },
   { key: 'financials', label: '财务数据', desc: '利润、资产负债、现金流、股本与指标' },
+  { key: 'f10', label: '股票 F10', desc: '融资融券等事件型与交易型补充数据' },
+  { key: 'reference', label: '参考数据', desc: '交易日历、派生估值、涨跌停事件、成分历史与公司行动' },
 ]
 
 const DEFAULT_KEYS = DATA_CARD_DEFS.map((definition) => definition.key)

@@ -1,0 +1,74 @@
+{
+  "job_id": "f7864b8bdd",
+  "path": "/Users/simon/Trading/one-trading/data/job_store/f7864b8bdd.json",
+  "work_key": "owner|daily_pipeline|daily_pipeline",
+  "started_at": "2026-09-10T07:30:00Z",
+  "started_at_cst": "2026-09-10T15:30:00+08:00",
+  "finished_at": "2026-09-10T07:35:31Z",
+  "finished_at_cst": "2026-09-10T15:35:31+08:00",
+  "duration_s": 331.0,
+  "status": "succeeded",
+  "start_class": "on_time",
+  "matches_prerecorded_next_run": true,
+  "quality_ok": true,
+  "quality_date": "2026-09-09",
+  "industry_fund_flow_daily": {
+    "ok": true,
+    "status": "ok",
+    "latest_data_date": "2026-09-10",
+    "latest_day_covered": 128,
+    "latest_day_complete": true,
+    "h5_max_date": "2026-09-10"
+  },
+  "concept_fund_flow_daily": {
+    "ok": true,
+    "status": "ok",
+    "latest_data_date": "2026-09-10",
+    "latest_day_covered": 504,
+    "latest_day_complete": true,
+    "h5_max_date": "2026-09-10"
+  },
+  "parquet_after": {
+    "industry": {
+      "h5_max_date": "2026-09-10",
+      "latest_rows": 128,
+      "latest_codes": 128,
+      "latest_sources": [
+        "eastmoney_fflow_day"
+      ]
+    },
+    "concept": {
+      "h5_max_date": "2026-09-10",
+      "latest_rows": 504,
+      "latest_codes": 504,
+      "latest_sources": [
+        "eastmoney_fflow_day"
+      ]
+    }
+  },
+  "parquet_before": {
+    "industry": {
+      "h5_max_date": "2026-09-09",
+      "latest_rows": 128,
+      "latest_codes": 128
+    },
+    "concept": {
+      "h5_max_date": "2026-09-09",
+      "latest_rows": 504,
+      "latest_codes": 504
+    }
+  },
+  "watcher_today_observe": {
+    "path": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-10-pipeline-1530-observe/evidence/today-observe.json",
+    "observed": false,
+    "reason": "no_new_daily_pipeline_job_by_15:35",
+    "note": "false negative: job_store writes only on finish; file landed 15:35:31 CST after watcher cutoff 15:35:00"
+  },
+  "notes": [
+    "job succeeded != daily-K already on 2026-09-10; quality checked 2026-09-09",
+    "job degraded != industry failed; today succeeded and industry+concept both ok",
+    "stale daily-K after 15:30 is observation, not schedule-change authorization",
+    "do not mark production"
+  ],
+  "captured_at": "2026-09-10T15:36:58.537152+08:00"
+}

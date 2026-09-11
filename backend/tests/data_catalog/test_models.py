@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from app.data_catalog.definitions import (
     DATASET_DEFINITIONS,
+    FIXED_EXT_DATA_DIRECTORY_IDS,
     get_dataset_definition,
     validate_dataset_definitions,
 )
@@ -38,11 +39,28 @@ REQUIRED_DATASET_IDS = {
     "pools",
     "trading_calendar",
     "ext_data",
+    "ext_fund_flow_bk",
+    "ext_fund_flow_bk_daily",
+    "ext_fund_flow_concept",
+    "ext_fund_flow_concept_daily",
+    "ext_fund_flow_stock",
+    "ext_gn_ths",
+    "ext_hy_ths",
     "financial_metrics",
     "financial_income",
     "financial_balance_sheet",
     "financial_cash_flow",
     "financial_shares",
+    "stock_margin_trading",
+    "market_pulse",
+    "valuation_daily",
+    "limit_up_events",
+    "index_membership_history",
+    "corporate_actions",
+    "hithink_limit_pool",
+    "hithink_dragon_tiger",
+    "hithink_auction_snapshot",
+    "hithink_valuation_snapshot",
 }
 
 
@@ -109,12 +127,68 @@ def test_registry_has_five_separate_financial_tables_including_shares() -> None:
         "financial_shares",
     }
     shares = get_dataset_definition("financial_shares").descriptor
+    assert shares.unit_version == "financial_cn_v2"
     assert {field.name for field in shares.fields} >= {
         "symbol",
         "period_end",
         "total_shares",
         "float_shares",
     }
+
+
+def test_market_pulse_has_owned_partition_and_unit_contract() -> None:
+    definition = get_dataset_definition("market_pulse")
+
+    assert definition.roots == ("market/pulse",)
+    assert definition.partition_key == "trade_date"
+    assert definition.coverage_policy == "on_demand"
+    assert definition.descriptor.primary_key == ["trade_date", "record_type", "event_id"]
+    assert definition.descriptor.unit_version == "market_pulse_v1"
+
+
+
+def test_hithink_official_special_data_uses_independent_reference_roots() -> None:
+    expected = {
+        "hithink_limit_pool": (
+            "reference/hithink_limit_pool",
+            "trade_date",
+            ["trade_date", "pool_kind", "symbol"],
+            "hithink_limit_pool_v1",
+        ),
+        "hithink_dragon_tiger": (
+            "reference/hithink_dragon_tiger",
+            "trade_date",
+            ["trade_date", "board_type", "symbol"],
+            "hithink_dragon_tiger_v1",
+        ),
+        "hithink_auction_snapshot": (
+            "reference/hithink_auction_snapshot",
+            "trade_date",
+            ["trade_date", "symbol", "stage"],
+            "hithink_auction_snapshot_v1",
+        ),
+        "hithink_valuation_snapshot": (
+            "reference/hithink_valuation_snapshot",
+            "as_of",
+            ["symbol", "as_of"],
+            "hithink_valuation_snapshot_v1",
+        ),
+    }
+    for dataset_id, (root, partition_key, primary_key, unit_version) in expected.items():
+        definition = get_dataset_definition(dataset_id)
+        assert definition.roots == (root,)
+        assert definition.storage_category == "reference"
+        assert definition.provider == "hithink"
+        assert definition.unit_policy == "reference"
+        assert definition.coverage_policy == "on_demand"
+        assert definition.partition_key == partition_key
+        assert definition.descriptor.primary_key == primary_key
+        assert definition.descriptor.unit_version == unit_version
+        assert definition.descriptor.point_in_time is False
+
+    auction = get_dataset_definition("hithink_auction_snapshot")
+    volume = next(field for field in auction.descriptor.fields if field.name == "auction_volume")
+    assert volume.unit == "lot"
 
 
 def test_limit_prices_are_nullable_cny_prices_without_percentage_scale() -> None:
@@ -226,6 +300,45 @@ def test_registry_validation_rejects_noncanonical_roots(root: str) -> None:
         validate_dataset_definitions((invalid_root,))
 
 
+def test_registry_allows_ext_data_remainder_and_fixed_child_roots() -> None:
+    remainder = get_dataset_definition("ext_data")
+    child = get_dataset_definition("ext_fund_flow_bk")
+
+    assert remainder.roots == ("ext_data",)
+    assert remainder.schema_policy == "opaque_dynamic"
+    assert child.roots == ("ext_data/ext_fund_flow_bk",)
+    assert set(FIXED_EXT_DATA_DIRECTORY_IDS) <= {
+        definition.descriptor.dataset_id for definition in DATASET_DEFINITIONS
+    }
+    validate_dataset_definitions((remainder, child))
+
+
+def test_registry_rejects_duplicate_ext_data_child_roots() -> None:
+    remainder = get_dataset_definition("ext_data")
+    child = get_dataset_definition("ext_fund_flow_bk")
+    duplicate = replace(
+        child,
+        descriptor=child.descriptor.model_copy(update={"dataset_id": "ext_fund_flow_bk_dup"}),
+    )
+
+    with pytest.raises(ValueError, match="overlap"):
+        validate_dataset_definitions((remainder, child, duplicate))
+
+
+def test_registry_rejects_nested_ext_data_root_beyond_one_level() -> None:
+    remainder = get_dataset_definition("ext_data")
+    nested = replace(
+        get_dataset_definition("ext_fund_flow_bk"),
+        descriptor=get_dataset_definition("ext_fund_flow_bk").descriptor.model_copy(
+            update={"dataset_id": "ext_fund_flow_bk_nested"}
+        ),
+        roots=("ext_data/ext_fund_flow_bk/extra",),
+    )
+
+    with pytest.raises(ValueError, match="overlap"):
+        validate_dataset_definitions((remainder, nested))
+
+
 def test_registry_validation_rejects_ancestor_descendant_root_ownership() -> None:
     stock_daily = get_dataset_definition("stock_daily")
     nested_owner = replace(
@@ -300,6 +413,12 @@ def test_writer_contracts_are_explicit_and_match_current_materialized_columns() 
     assert sealed.descriptor.unit_version == "sealed_l1_v1"
     assert ext_data.schema_policy == "opaque_dynamic"
     assert ext_data.required_columns == ()
+    assert ext_data.descriptor.title == "扩展数据余项"
+    daily = get_dataset_definition("ext_fund_flow_bk_daily")
+    assert daily.roots == ("ext_data/ext_fund_flow_bk_daily",)
+    assert daily.unit_policy == "reference"
+    assert daily.coverage_policy == "on_demand"
+    assert daily.required_columns == ("code", "name", "date", "main_net", "source")
 
 
 def test_enriched_and_financial_descriptors_describe_persisted_narrow_tables() -> None:
@@ -345,3 +464,29 @@ def test_trading_calendar_definition_is_reference_owned() -> None:
         "source",
         "as_of",
     } <= field_names
+
+
+def test_margin_trading_definition_is_first_class_f10_data() -> None:
+    definition = get_dataset_definition("stock_margin_trading")
+    assert definition.roots == ("f10/stock_margin_trading",)
+    assert definition.storage_category == "f10"
+    assert definition.time_column == "trade_date"
+    assert definition.descriptor.primary_key == ["symbol", "trade_date"]
+    assert definition.descriptor.unit_version == "stock_margin_trading_v1"
+    assert definition.descriptor.point_in_time is False
+    fields = {field.name: field for field in definition.descriptor.fields}
+    for name in (
+        "financing_balance",
+        "financing_buy_amount",
+        "financing_repayment_amount",
+        "financing_net_buy_amount",
+        "securities_lending_balance",
+        "margin_balance",
+    ):
+        assert fields[name].unit == "CNY"
+    for name in (
+        "securities_lending_sell_volume",
+        "securities_lending_repayment_volume",
+        "securities_lending_balance_volume",
+    ):
+        assert fields[name].unit == "share"

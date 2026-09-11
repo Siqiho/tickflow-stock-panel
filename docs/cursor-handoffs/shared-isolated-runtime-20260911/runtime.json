@@ -1,0 +1,191 @@
+{
+  "purpose": "隔离验收服务。不是正式服务恢复，也不是 15:30 管道恢复。",
+  "kind": "isolated_acceptance_runtime",
+  "created_at": "2026-09-11T14:52:00+08:00",
+  "started_by_this_task": true,
+  "reused_existing": false,
+  "ports_before_start": {
+    "3011": "not listening",
+    "3018": "not listening",
+    "3041": "not listening",
+    "3048": "not listening"
+  },
+  "baseline": {
+    "repo": "/Users/simon/Trading/one-trading",
+    "branch": "main",
+    "head": "31216dda527cd4ec177b9cbf6fd1c524dbadbe82",
+    "dirty_paths_count": 825,
+    "backend_version": "0.1.68",
+    "frontend_package_version": "0.1.69"
+  },
+  "launch_commands": {
+    "backend": "DATA_DIR=/Users/simon/Trading/one-trading/data/shared-isolated-runtime-20260911 ONE_TRADING_DISABLE_BACKGROUND=1 NEWS_CACHE_MODE=isolated_preview ONE_TRADING_HERMES_RUNTIME_ENABLED=false ONE_TRADING_HERMES_MULTIUSER_ENABLED=false ONE_TRADING_HERMES_ROOT=/Users/simon/Trading/one-trading/data/shared-isolated-runtime-20260911/hermes-unused HOST=127.0.0.1 PORT=3018 PYTHONDONTWRITEBYTECODE=1 /Users/simon/Trading/one-trading/backend/.venv/bin/python -B -m uvicorn app.main:app --host 127.0.0.1 --port 3018",
+    "frontend": "VITE_API_PROXY_TARGET=http://127.0.0.1:3018 /Users/simon/Trading/one-trading/frontend/node_modules/.bin/vite --config /Users/simon/Trading/one-trading/data/shared-isolated-runtime-20260911/vite.isolated.config.ts --host 127.0.0.1 --port 3011 --strictPort",
+    "not_used": ["./dev.sh", "uvicorn --reload", "system browser", "pnpm install", "uv sync"]
+  },
+  "backend": {
+    "pid": 64083,
+    "started": "2026-09-11 14:50:41 +0800",
+    "cwd": "/Users/simon/Trading/one-trading/backend",
+    "host": "127.0.0.1",
+    "port": 3018,
+    "url": "http://127.0.0.1:3018",
+    "reload": false,
+    "DATA_DIR": "/Users/simon/Trading/one-trading/data/shared-isolated-runtime-20260911",
+    "NEWS_CACHE_MODE": "isolated_preview",
+    "ONE_TRADING_DISABLE_BACKGROUND": "1",
+    "hermes_runtime_enabled": false,
+    "hermes_multiuser_enabled": false,
+    "OFFLINE_QUANTDB_ROOT_process_env": null,
+    "OFFLINE_QUANTDB_ROOT_from_dotenv": "/Users/simon/Trading/下载数据/quant_data",
+    "log": "/Users/simon/Trading/one-trading/data/shared-isolated-runtime-20260911/logs/app.log"
+  },
+  "frontend": {
+    "pid": 64159,
+    "started": "2026-09-11 14:51:26 +0800",
+    "cwd": "/Users/simon/Trading/one-trading/frontend",
+    "host": "127.0.0.1",
+    "port": 3011,
+    "url": "http://127.0.0.1:3011/",
+    "proxy": "http://127.0.0.1:3011 -> http://127.0.0.1:3018",
+    "kind": "current_source_vite_dev",
+    "not_old_dist": true,
+    "cacheDir": "/Users/simon/Trading/one-trading/data/shared-isolated-runtime-20260911/vite-cache",
+    "log": "/Users/simon/Trading/one-trading/data/shared-isolated-runtime-20260911/logs/frontend-startup.txt"
+  },
+  "urls": {
+    "frontend": "http://127.0.0.1:3011/",
+    "backend": "http://127.0.0.1:3018",
+    "health": "http://127.0.0.1:3018/health",
+    "news": "http://127.0.0.1:3011/news",
+    "news_policy": "http://127.0.0.1:3011/news?tab=policy",
+    "catalog": "http://127.0.0.1:3011/data?section=catalog",
+    "market_home": "http://127.0.0.1:3011/"
+  },
+  "scheduler": {
+    "status": "disabled",
+    "evidence": [
+      "fixture mode: quote/daily/extpull/financial/minute/depth schedulers disabled",
+      "fixture mode: depth polling disabled",
+      "fixture mode: ext_pull scheduler disabled",
+      "fixture mode: financial scheduler disabled",
+      "fixture mode: minute_refresh disabled"
+    ],
+    "collection_or_sync_this_task": false
+  },
+  "auth": {
+    "configured": false,
+    "authenticated": false,
+    "user": null,
+    "login_write": false,
+    "official_identity_copied": false,
+    "note": "隔离库未设密码。本机 GET 走现有未初始化+本机放行，不是绕过认证，也未创建会话。Codex IAB 若遇到登录页，需用户自行登录；本任务不写账户。"
+  },
+  "readonly_checks": {
+    "health_3018": 200,
+    "health_3011": 200,
+    "news_cache_identity": "isolated_preview",
+    "news_counts": {"cls": 20, "sina": 20, "foreign": 20, "departments": 82, "policy": 56},
+    "old_isolated_526_used_as_live": false,
+    "catalog_stock_margin_trading": {
+      "http": 200,
+      "provider": "local",
+      "quality_status": "healthy",
+      "row_count": 1886,
+      "symbols": 8,
+      "latest": "2026-08-04"
+    },
+    "external_readonly": {
+      "status": "configured",
+      "supported": ["margin_trading"],
+      "source": "offline_quantdb"
+    },
+    "margin_offline_300502": {
+      "http": 200,
+      "source": "offline_quantdb",
+      "as_of": "2026-08-26",
+      "count": 2
+    },
+    "boards_windows": {
+      "5": {"complete": true, "start": "2026-09-04", "end": "2026-09-10", "full": "128/128"},
+      "63": {"complete": true, "start": "2026-06-15", "end": "2026-09-10", "full": "128/128"},
+      "126": {"complete": true, "start": "2026-03-12", "end": "2026-09-10", "full": "128/128"}
+    },
+    "concepts_windows": {
+      "5": {"complete": true, "start": "2026-09-04", "end": "2026-09-10", "full": "504/504"},
+      "63": {"complete": true, "start": "2026-06-15", "end": "2026-09-10", "full": "490/504"},
+      "126": {"complete": false, "start": "2026-03-12", "end": "2026-09-10", "full": "448/504", "note": "现有 H5 概念窗不足，未伪造"}
+    }
+  },
+  "code_hashes": {
+    "backend/app/main.py": "8e99368b67d11ca9ef55520fe9d016a2852c24f41b5afdf7b6c2fa15ec4049e5",
+    "backend/app/config.py": "4da118f97ba8e00ddce32ddeed3121c59b63239ca4a2d7e9b79fe8058d879cf2",
+    "backend/app/api/news.py": "ef7e2340de1e3ef3e648d22760b9b42f58188aae813b5c0c1e70f8829de92492",
+    "backend/app/services/auth.py": "370d10c6afecf071261ed15b37bd9e7cf262cc14fb327f610391a1d8c5b0d839",
+    "backend/app/services/news.py": "49b5cd14573128de95c82f9a7b45417bfc5b8666c5953c4ba362c3b9f04c4d81",
+    "backend/app/services/news_metadata.py": "f82696859793d5c63c28dea6239c0ebcfdfddb1b3ccc679e015586d8c62139e6",
+    "frontend/package.json": "f3fba986b88e605ce3d0eb71dd901fad8229031c3b69c69bc0ab7b988dd60569",
+    "frontend/vite.config.ts": "2b84784ad2715eea7cab50cbc654b4947fc39d4020183f975e724263837c1191",
+    "frontend/src/pages/News.tsx": "eb6f450aa42b0d1493c4eec8cc3bbcb586ef7aea79b1f6bc70864651ad2d85da",
+    "frontend/src/pages/Data.tsx": "a022b537e70516860f1d5aff4a97d906376aad76e350abc730dde8612675e37d",
+    "frontend/src/components/data/DataCatalogSection.tsx": "12fcb4c654f55c1feac1d77f48df0c4ba4b572e412f3f9a581684aae330b56e4"
+  },
+  "protected_inputs": {
+    "compared_files": 23,
+    "changed": 0,
+    "official_news": {
+      "cls": {"count": 20, "sha256": "2640933d509513955b3e95fdc6640310580e9dd107ad9da957409e7718fdec0e"},
+      "sina": {"count": 20, "sha256": "05f739ac296eaf9bbc4c3732fceec8a235e53f0b946ef31b935d95099ff6b4de"},
+      "foreign": {"count": 20, "sha256": "ebd5ce0b75673c06bfb350d00a19d7ca09529c6d099ad21eff4c9c2b330da632"},
+      "departments": {"count": 82, "sha256": "baedbec137718c65815e2d13d7bd3a7c3e3b0e093cc5ad940a46937b20ed20fd"},
+      "items": {"count": 56, "sha256": "de17d4826c89b72c3990470b3c52316819dba82cb990638a54d737eb9e5bfd1a"}
+    },
+    "old_isolated_news": {
+      "cls": "ed12c33a20123ae0efd25da75969741135b5716f14b118333adc05a7813304ca",
+      "sina": "693b2c30d764ed574f44300a16414d8c751095221adf252dac540d137f2a0ffd",
+      "foreign": "cf00c7548ac0e85a1abdbdf04179f78ad034f3f639bb8d1e13bd3e079833d41c",
+      "departments": "3f1b5c2b1b61a0c1f058576c713ea746ede49e32e53b0dfa80955acb7fbbd0ae",
+      "items_526": "bf6a424d87e7437eb3786e0657feba4857ff0c28ea2eafa4ba24078e4a8aa84c"
+    },
+    "also_unchanged_in_compare_set": [
+      "data/control/catalog.sqlite3",
+      "data/control/identity.sqlite3",
+      ".env",
+      "copied H5 snapshot/daily sample files",
+      "f10/stock_margin_trading/part.parquet"
+    ],
+    "formal_data_changed_in_compared_scope": false
+  },
+  "copy_manifest": {
+    "path": "/Users/simon/Trading/one-trading/data/shared-isolated-runtime-20260911/copy-manifest.json",
+    "copied_count": 282,
+    "copied_bytes": 4223874,
+    "live_news_source": "official data/news 20/20/20/82/56",
+    "not_copied": [
+      "80GB OFFLINE_QUANTDB_ROOT",
+      "official kline_*",
+      "official catalog.sqlite3 / identity.sqlite3",
+      "old isolated policy 526 as live",
+      "roll lock files",
+      "symlinks/hardlinks"
+    ]
+  },
+  "source_snapshot_note": "后端无 reload。后续其他任务改源码不会自动更新此后端快照。前端是当前 Vite 源码，不是旧 dist。",
+  "residuals": [
+    "隔离 DATA_DIR 内 catalog/identity/logs/vite-cache/内置 ext 预设 config（允许的正常初始化）",
+    "frontend/node_modules/.vite 仍存在但 mtime=2026-08-31，本轮未用默认缓存",
+    "Settings 仍只读加载项目 .env；OFFLINE_QUANTDB_ROOT 来自 .env，未改持久配置"
+  ],
+  "keep_running": true,
+  "stop_commands": {
+    "backend": "kill 64083",
+    "frontend": "kill 64159",
+    "note": "本任务不停止。不要用 dev.sh，不要 kill 其他 PID。"
+  },
+  "blockers": [],
+  "model": {
+    "requested": "Grok 4.6 Extra High",
+    "config_display": "Grok 4.6 Extra High requested via task",
+    "vendor_return_evidence": "未核验"
+  }
+}

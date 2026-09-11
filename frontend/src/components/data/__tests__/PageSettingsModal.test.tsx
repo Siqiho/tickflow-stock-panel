@@ -17,6 +17,7 @@ describe('PageSettingsModal', () => {
       etf: true,
       minute: true,
       financials: true,
+      f10: true,
     })
   })
 

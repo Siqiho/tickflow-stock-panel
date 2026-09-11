@@ -1,0 +1,125 @@
+{
+  "byte_stable": true,
+  "coverage_codes": {
+    "corrupt_unreadable": "valuation_offline_unreadable",
+    "duplicate_key": "valuation_offline_duplicate_key",
+    "empty_symbol": "valuation_offline_invalid_symbol",
+    "empty_window": "valuation_offline_empty_window",
+    "file_symlink_escape": "valuation_offline_symlink_escape",
+    "invalid_date": "valuation_offline_invalid_date",
+    "invalid_limit_bool": "valuation_offline_invalid_limit",
+    "invalid_limit_float": "valuation_offline_invalid_limit",
+    "invalid_symbol": "valuation_offline_invalid_symbol",
+    "missing_file": "valuation_offline_not_found",
+    "missing_root": "valuation_offline_root_missing",
+    "nan_inf": "ok",
+    "parent_symlink_escape": "valuation_offline_symlink_escape",
+    "permission": "valuation_offline_permission",
+    "write_evidence_denied_new_dir": "valuation_offline_evidence_path_denied"
+  },
+  "env_sha_unchanged": true,
+  "four_sample_queries_ok": true,
+  "historical_dir_unchanged": true,
+  "inputs_unchanged": true,
+  "reconcile_keys": {
+    "common_keys": 36,
+    "join_boundary": {
+      "direct_concat": false,
+      "pit_verified": false,
+      "side_by_side_only": true,
+      "two_source_agreement_is_market_truth": false
+    },
+    "package_keys": 68,
+    "project_keys": 36
+  },
+  "restored_query_sha": "d33d6d1354d9c8e79361b2fbf31968422e78a62322acf09ff55d9cf9e05b8a85",
+  "restored_test_sha": "10aa5a107ff98e94080ae48453a6909a6209886051018108a4c20713a045fe50",
+  "summary_samples": [
+    {
+      "max_date": "2026-08-27",
+      "min_date": "2016-01-04",
+      "negative_pe_ttm": 0,
+      "non_finite_counts": {},
+      "rows": 2588,
+      "share_market_value": {
+        "checked_rows": 2530,
+        "conversion_applied": false,
+        "exact_rows": 2530,
+        "float_checked_rows": 2530,
+        "float_max_abs_error": 0.0,
+        "identity_consistent_on_checked_rows": true,
+        "inference": "unknown",
+        "max_abs_error": 0.0,
+        "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+        "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+        "units": "unknown/unverified"
+      },
+      "symbol": "000001.SZ"
+    },
+    {
+      "max_date": "2026-08-27",
+      "min_date": "2016-01-04",
+      "negative_pe_ttm": 0,
+      "non_finite_counts": {},
+      "rows": 2588,
+      "share_market_value": {
+        "checked_rows": 2530,
+        "conversion_applied": false,
+        "exact_rows": 2530,
+        "float_checked_rows": 2530,
+        "float_max_abs_error": 0.0,
+        "identity_consistent_on_checked_rows": true,
+        "inference": "unknown",
+        "max_abs_error": 0.0,
+        "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+        "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+        "units": "unknown/unverified"
+      },
+      "symbol": "000338.SZ"
+    },
+    {
+      "max_date": "2026-08-27",
+      "min_date": "2016-01-04",
+      "negative_pe_ttm": 0,
+      "non_finite_counts": {},
+      "rows": 2588,
+      "share_market_value": {
+        "checked_rows": 2530,
+        "conversion_applied": false,
+        "exact_rows": 2530,
+        "float_checked_rows": 2530,
+        "float_max_abs_error": 0.0,
+        "identity_consistent_on_checked_rows": true,
+        "inference": "unknown",
+        "max_abs_error": 0.0,
+        "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+        "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+        "units": "unknown/unverified"
+      },
+      "symbol": "600519.SH"
+    },
+    {
+      "max_date": "2026-08-27",
+      "min_date": "2018-06-11",
+      "negative_pe_ttm": 0,
+      "non_finite_counts": {},
+      "rows": 1995,
+      "share_market_value": {
+        "checked_rows": 1995,
+        "conversion_applied": false,
+        "exact_rows": 1995,
+        "float_checked_rows": 1995,
+        "float_max_abs_error": 0.0,
+        "identity_consistent_on_checked_rows": true,
+        "inference": "unknown",
+        "max_abs_error": 0.0,
+        "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+        "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+        "units": "unknown/unverified"
+      },
+      "symbol": "300750.SZ"
+    }
+  ],
+  "test_returncode": 0,
+  "tests_18_passed": true
+}

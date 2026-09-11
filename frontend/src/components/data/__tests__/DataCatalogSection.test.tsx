@@ -1,9 +1,26 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type { ReactNode } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { api } from '@/lib/api'
 import { CoverageBar } from '../CoverageBar'
 import { DataCatalogSection } from '../DataCatalogSection'
 import { DatasetCatalogCard } from '../DatasetCatalogCard'
 import { catalogFixture, makeEntry } from './catalogFixtures'
+
+function renderCatalog(ui: ReactNode) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } },
+  })
+  return {
+    client,
+    ...render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>),
+  }
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('catalog presentation', () => {
   it('keeps stale data visible, shows ETF and all five financial tables', () => {
@@ -45,6 +62,22 @@ describe('catalog presentation', () => {
     expect(within(reference).getByRole('heading', { name: 'Trading calendar' })).toBeInTheDocument()
   })
 
+  it('renders fixed ext pools and remainder under the extension group', () => {
+    render(<DataCatalogSection catalog={catalogFixture} />)
+    const ext = screen.getByRole('region', { name: '扩展数据' })
+    expect(ext).toHaveAttribute('id', 'catalog-group-ext')
+    expect(within(ext).getByRole('heading', { name: '行业资金流日线' })).toBeInTheDocument()
+    expect(within(ext).getByRole('heading', { name: '扩展数据余项' })).toBeInTheDocument()
+  })
+
+  it('renders margin trading as a separate stock F10 business', () => {
+    render(<DataCatalogSection catalog={catalogFixture} />)
+
+    const f10 = screen.getByRole('region', { name: '股票 F10' })
+    expect(within(f10).getByRole('heading', { name: '个股融资融券' })).toBeInTheDocument()
+    expect(within(f10).getByText('1')).toBeInTheDocument()
+  })
+
   it('renders first-class quote, sealed-L1, and pool cards and selects by accessible control', () => {
     const onSelect = vi.fn()
     render(<DataCatalogSection catalog={catalogFixture} onSelectDataset={onSelect} />)
@@ -68,6 +101,8 @@ describe('catalog presentation', () => {
     expect(screen.getByText('2026-07-20')).toBeInTheDocument()
     expect(screen.getByText('1.5 KiB')).toBeInTheDocument()
     expect(screen.getByText('降级')).toBeInTheDocument()
+    expect(screen.queryByText('准入状态未登记')).not.toBeInTheDocument()
+    expect(screen.queryByText('未使用控制库准入')).not.toBeInTheDocument()
     expect(screen.getByLabelText('数据源支持：是')).toBeInTheDocument()
     expect(screen.getByLabelText('当前有权限：否')).toBeInTheDocument()
   })
@@ -106,5 +141,48 @@ describe('catalog presentation', () => {
 
     rerender(<DataCatalogSection catalog={{ ...catalogFixture, datasets: [] }} />)
     expect(screen.getByText('暂无数据目录')).toBeInTheDocument()
+  })
+
+  it('keeps the admin offline-margin fold outside catalog groups and collapsed by default', () => {
+    const meta = vi.spyOn(api, 'externalReadonlySources')
+    render(<DataCatalogSection catalog={catalogFixture} isAdmin />)
+
+    const fold = screen.getByRole('button', { name: /外部只读原包·两融查询/ })
+    expect(fold).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByLabelText('两融股票代码')).not.toBeInTheDocument()
+    expect(meta).not.toHaveBeenCalled()
+    expect(screen.queryByText(/80\s*GB|80GB/)).not.toBeInTheDocument()
+
+    const f10 = screen.getByRole('region', { name: '股票 F10' })
+    expect(within(f10).getByRole('heading', { name: '个股融资融券' })).toBeInTheDocument()
+    expect(within(f10).getByText('1')).toBeInTheDocument()
+    expect(within(f10).queryByText(/外部只读原包/)).not.toBeInTheDocument()
+  })
+
+  it('mounts the offline query only after an admin expands the fold', async () => {
+    const meta = vi.spyOn(api, 'externalReadonlySources').mockResolvedValue({
+      status: 'configured',
+      supported: [{ id: 'margin_trading', label: '两融' }],
+      note: 'x',
+      root_path: '/tmp/fixture-quantdb',
+    })
+    const query = vi.spyOn(api, 'getMarginTrading')
+    renderCatalog(<DataCatalogSection catalog={catalogFixture} isAdmin />)
+
+    expect(meta).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /外部只读原包·两融查询/ }))
+    expect(await screen.findByLabelText('两融股票代码')).toBeInTheDocument()
+    await waitFor(() => expect(meta).toHaveBeenCalledTimes(1))
+    expect(query).not.toHaveBeenCalled()
+    expect(screen.getByText('截止按标的查询获取。')).toBeInTheDocument()
+    expect(document.getElementById('catalog-offline-margin-symbol')).toBeInTheDocument()
+  })
+
+  it('does not render the offline-margin fold or request metadata for ordinary users', () => {
+    const meta = vi.spyOn(api, 'externalReadonlySources')
+    render(<DataCatalogSection catalog={catalogFixture} isAdmin={false} />)
+
+    expect(screen.queryByRole('button', { name: /外部只读原包·两融查询/ })).not.toBeInTheDocument()
+    expect(meta).not.toHaveBeenCalled()
   })
 })

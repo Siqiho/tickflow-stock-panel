@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -19,6 +21,7 @@ from app.services.free_sources.financials_public import (
     sync_financials_public,
 )
 from app.services.free_sources.fund_flow import (
+    aggregate_board_window,
     fetch_board_daily_history,
     fetch_board_fund_flow_top,
     fetch_board_intraday_flow,
@@ -84,9 +87,19 @@ def get_chips(
     request: Request,
     days: int = Query(120, ge=5, le=500),
     bins: int = Query(80, ge=10, le=300),
+    as_of: Annotated[
+        date | None,
+        Query(description="筹码计算截止交易日, 默认最新"),
+    ] = None,
 ) -> dict:
     try:
-        result = chips_for_symbol(_data_dir(request), symbol.upper(), days=days, bins=bins)
+        result = chips_for_symbol(
+            _data_dir(request),
+            symbol.upper(),
+            days=days,
+            bins=bins,
+            as_of=as_of,
+        )
         return {"ok": True, "data": result}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -156,13 +169,33 @@ def get_concepts(request: Request, top: int = Query(20, ge=1, le=500)) -> dict:
     return {"ok": True, "items": items, "count": len(items), "cached": True}
 
 
+@router.get("/fund-flow/boards/window")
+def get_boards_window(
+    request: Request,
+    days: int = Query(63, ge=1, le=250),
+    top: int = Query(8, ge=1, le=200),
+) -> dict:
+    """Industry fund-flow ranking by summed daily main_net over a trading-day window."""
+    return aggregate_board_window(_data_dir(request), kind="board", days=days, top=top)
+
+
+@router.get("/fund-flow/concepts/window")
+def get_concepts_window(
+    request: Request,
+    days: int = Query(63, ge=1, le=250),
+    top: int = Query(8, ge=1, le=200),
+) -> dict:
+    """Concept fund-flow ranking by summed daily main_net over a trading-day window."""
+    return aggregate_board_window(_data_dir(request), kind="concept", days=days, top=top)
+
+
 @router.post("/fund-flow/boards/history/refresh")
 def refresh_boards_history(
     request: Request,
-    top_n: int = Query(20, ge=1, le=50),
+    top_n: int = Query(20, ge=1, le=200),
     limit: int = Query(60, ge=5, le=500),
 ) -> dict:
-    """Refresh industry ranking + daily history for top inflow/outflow boards."""
+    """Refresh industry daily history. top_n>=100 backfills the current snapshot universe."""
     try:
         result = refresh_top_boards_daily_history(
             _data_dir(request), kind="board", top_n=top_n, limit=limit
@@ -205,7 +238,9 @@ def get_board_history(
     rows = load_board_daily_history(data_dir, code.upper(), kind=k, limit=limit)
     if refresh or not rows:
         try:
-            fetched = fetch_board_daily_history(code.upper(), limit=limit, kind=k)
+            fetched = fetch_board_daily_history(
+                code.upper(), limit=limit, kind=k, allow_local_fallback=False
+            )
             persist_board_daily_history(data_dir, code.upper(), fetched, kind=k)
             rows = load_board_daily_history(data_dir, code.upper(), kind=k, limit=limit) or fetched
             return {

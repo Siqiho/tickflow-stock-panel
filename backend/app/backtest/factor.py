@@ -14,11 +14,13 @@ from typing import Literal
 import numpy as np
 import polars as pl
 
+from app.backtest import stats_v2
 from app.backtest.engine import BacktestEngine
 
 logger = logging.getLogger(__name__)
 
 # 可用因子列 (从 ENRICHED_COLUMNS 过滤出数值型指标)
+FACTOR_METHODOLOGY_VERSION = "factor_v2"
 FACTOR_COLUMNS: list[dict] = [
     {"id": "momentum_5d",  "label": "5日动量",     "group": "动量", "desc": "5日涨跌幅，正值表示上涨趋势"},
     {"id": "momentum_10d", "label": "10日动量",    "group": "动量", "desc": "10日涨跌幅，中短期趋势指标"},
@@ -52,6 +54,7 @@ class FactorConfig:
     weight: Literal["equal", "factor_weight"] = "equal"
     fees_pct: float = 0.0002
     slippage_bps: float = 5.0
+    asset_type: str = "stock"
 
 
 @dataclass
@@ -88,9 +91,91 @@ class FactorResult:
     error: str | None = None
 
 
+@dataclass
+class FactorBatchConfig:
+    factor_names: list[str]
+    symbols: list[str] | None
+    start: date
+    end: date
+    n_groups: int = 5
+    rebalance: Literal["daily", "weekly", "monthly"] = "monthly"
+    weight: Literal["equal", "factor_weight"] = "equal"
+    fees_pct: float = 0.0002
+    slippage_bps: float = 5.0
+    asset_type: str = "stock"
+    commission_pct: float | None = None
+    stamp_tax_pct: float | None = None
+
+
+@dataclass
+class FactorBatchItem:
+    factor_name: str
+    label: str
+    group: str
+    ic_mean: float | None = None
+    ir: float | None = None
+    ic_win_rate: float | None = None
+    long_short_return: float | None = None
+    long_short_max_drawdown: float | None = None
+    n_symbols: int = 0
+    methodology_version: str = FACTOR_METHODOLOGY_VERSION
+    error: str | None = None
+
+
+@dataclass
+class FactorBatchResult:
+    items: list[FactorBatchItem] = field(default_factory=list)
+    elapsed_ms: float = 0.0
+
+
 class FactorBacktestService:
     def __init__(self, engine: BacktestEngine) -> None:
         self.engine = engine
+
+    def _data_generation(self, asset_type: str) -> str | None:
+        loader = getattr(self.engine, "data_generation", None)
+        return loader(asset_type) if callable(loader) else None
+
+    def _assert_data_generation(
+        self,
+        asset_type: str,
+        expected: str | None,
+    ) -> None:
+        verifier = getattr(self.engine, "assert_data_generation", None)
+        if callable(verifier):
+            verifier(asset_type, expected)
+
+    def run_batch(self, config: FactorBatchConfig) -> FactorBatchResult:
+        t0 = time.perf_counter()
+        meta = {str(item["id"]): item for item in FACTOR_COLUMNS}
+        items: list[FactorBatchItem] = []
+        for name in config.factor_names:
+            info = meta.get(name, {"id": name, "label": name, "group": ""})
+            one = self.run(FactorConfig(
+                factor_name=name,
+                symbols=config.symbols,
+                start=config.start,
+                end=config.end,
+                n_groups=config.n_groups,
+                rebalance=config.rebalance,
+                weight=config.weight,
+                fees_pct=config.fees_pct,
+                slippage_bps=config.slippage_bps,
+            ))
+            ls = one.long_short_stats or {}
+            items.append(FactorBatchItem(
+                factor_name=name,
+                label=str(info.get("label") or name),
+                group=str(info.get("group") or ""),
+                ic_mean=one.ic_mean,
+                ir=one.ir,
+                ic_win_rate=one.ic_win_rate,
+                long_short_return=ls.get("total_return"),
+                long_short_max_drawdown=ls.get("max_drawdown"),
+                n_symbols=one.n_symbols,
+                error=one.error,
+            ))
+        return FactorBatchResult(items=items, elapsed_ms=(time.perf_counter() - t0) * 1000)
 
     def run(self, config: FactorConfig) -> FactorResult:
         t0 = time.perf_counter()
@@ -201,6 +286,15 @@ class FactorBacktestService:
             logger.warning("factor %s cannot be computed, missing columns: %s", factor_col, missing)
             return panel
 
+        # 扩展表因子 (ext_ base 条目) = 外部物化列, 指标补算管线不认识;
+        # 请求的因子集合命中时在此按 (symbol, date) 时序对齐注入 (与
+        # compute_signals 同一原语, 历史帧不含快照 → 无未来函数)。
+        from app.factors import ext_factors
+
+        if factor_cols & ext_factors.ext_factor_ids():
+            panel = ext_factors.attach_ext_columns(panel, include_snapshot=False)
+
+        from app.factors.registry import get_factor
         from app.indicators.pipeline import compute_indicators
 
         computed = compute_indicators(panel)

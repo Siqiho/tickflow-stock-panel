@@ -1,0 +1,10 @@
+--- /Users/simon/备份/codex/20260909-131435-industry-fflow-live/files/pipeline.py	2026-09-09 02:05:13
++++ /Users/simon/Trading/one-trading/backend/app/api/pipeline.py	2026-09-09 13:16:50
+@@ -107,6 +107,7 @@
+     if j["status"] not in ("running", "pending"):
+         raise HTTPException(status_code=400, detail=f"job status is {j['status']}, cannot cancel")
+     request_cancel(job_id)
++    daily_pipeline.request_industry_roll_cancel()
+     job_store.fail(job_id, "用户手动取消")
+     # 工作线程仍存活时不得放槽, 否则新请求会并发写。槽由执行体 finally 在真正结束后释放。
+     return {"cancelled": job_id}

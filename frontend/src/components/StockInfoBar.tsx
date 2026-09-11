@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from 'react'
-import { Settings2, RadioTower, Star } from 'lucide-react'
+import { Settings2, RadioTower, Star, ExternalLink } from 'lucide-react'
 import type { KlineRow, FinancialMetricRecord } from '@/lib/api'
 import { fmtPrice, fmtBigNum, fmtVolume } from '@/lib/format'
 import { ListColumnCustomizer } from '@/components/ListColumnCustomizer'
 import { INFO_GROUPS, type ColumnConfig } from '@/lib/stock-info-fields'
+import { buildStockExternalUrl, loadStockExternalTemplate } from '@/lib/stock-external-link'
 
 const BULL = '#C74040'
 const BEAR = '#2D9B65'
@@ -106,13 +107,44 @@ export function StockInfoBar({ symbol, name, stockInfo, rows, fields, onFieldsCh
     })
   }
 
-  if (rows.length === 0) return null
+  // 字段分组: 加载态预留高度与完整态渲染共用同一规则
+  const visibleFields = fields.filter(f => f.visible)
+  const inlineFields = visibleFields.filter(f => !f.standalone)
+  const standaloneFields = visibleFields.filter(f => f.standalone)
+
+  // 无数据时保持信息条挂载 (切股/首次加载): 只留 symbol+名称+小 spinner 作为加载态,
+  // 不渲染假占位值; 数据到位后价格/市值等原位填充, 避免整行消失造成布局跳动。
+  // 同时按字段配置预留与完整态相同的行数, 切股瞬间弹窗整体高度不塌陷 (不抖动)。
+  if (rows.length === 0) {
+    const reserveLines = (inlineFields.length > 0 ? 1 : 0) + standaloneFields.length
+    return (
+      <div className="px-2 pb-3 font-mono text-[12px] select-none space-y-1">
+        {/* 首行 min-h-7 对齐完整态的 text-lg 价格行高, 加载中不整体变矮 */}
+        <div className="flex min-h-7 items-baseline gap-x-3 flex-wrap">
+          <span className="text-foreground font-bold text-sm tracking-wide">{symbol}</span>
+          {name && <span className="text-secondary font-medium">{name}</span>}
+          <span className="ml-auto self-center text-muted">
+            <span className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
+          </span>
+        </div>
+        {Array.from({ length: reserveLines }).map((_, i) => (
+          <div key={i} className="h-4" />
+        ))}
+      </div>
+    )
+  }
 
   const latest = rows[rows.length - 1]
   const prev = rows.length >= 2 ? rows[rows.length - 2] : null
   const close = Number(latest.close)
-  const chg = prev ? close - Number(prev.close) : 0
-  const chgPct = prev ? chg / Number(prev.close) * 100 : 0
+  const explicitChange = latest.change_amount == null ? Number.NaN : Number(latest.change_amount)
+  const explicitChangePct = latest.change_pct == null ? Number.NaN : Number(latest.change_pct)
+  const chg = Number.isFinite(explicitChange)
+    ? explicitChange
+    : prev ? close - Number(prev.close) : 0
+  const chgPct = Number.isFinite(explicitChangePct)
+    ? explicitChangePct * 100
+    : prev ? chg / Number(prev.close) * 100 : 0
   const isUp = chg >= 0
   const clr = isUp ? BULL : BEAR
 
@@ -136,7 +168,9 @@ export function StockInfoBar({ symbol, name, stockInfo, rows, fields, onFieldsCh
       case 'turnover':         return turnoverRate != null ? `${turnoverRate.toFixed(2)}%` : null
       case 'volume':           return latest.volume != null ? fmtVolume(Number(latest.volume)) : null
       case 'amplitude': {
-        const prevClose = prev ? Number(prev.close) : null
+        const prevClose = latest.prev_close != null
+          ? Number(latest.prev_close)
+          : prev ? Number(prev.close) : null
         if (prevClose == null || prevClose === 0) return null
         const hi = Number(latest.high)
         const lo = Number(latest.low)
@@ -167,11 +201,6 @@ export function StockInfoBar({ symbol, name, stockInfo, rows, fields, onFieldsCh
     }
   }
 
-  const visibleFields = fields.filter(f => f.visible)
-  // 按是否单独显示分组：普通列共一行，standalone 列各占一行
-  const inlineFields = visibleFields.filter(f => !f.standalone)
-  const standaloneFields = visibleFields.filter(f => f.standalone)
-
   // 渲染单个字段（builtin / ext 通用）
   const renderField = (f: ColumnConfig): ReactNode => {
     if (f.source.type === 'ext') {
@@ -199,6 +228,8 @@ export function StockInfoBar({ symbol, name, stockInfo, rows, fields, onFieldsCh
     )
   }
 
+  const extUrl = buildStockExternalUrl(loadStockExternalTemplate(), symbol)
+
   return (
     <div className="px-2 pb-3 font-mono text-[12px] select-none space-y-1">
       {/* Row 1: code, name, price, change, change% */}
@@ -214,8 +245,19 @@ export function StockInfoBar({ symbol, name, stockInfo, rows, fields, onFieldsCh
         <span style={{ color: clr }} className="tabular-nums">
           {isUp ? '+' : ''}{fmtPrice(chgPct)}%
         </span>
-        {/* 右侧操作按钮：加自选 + 加监控 + 信息条配置 */}
+        {/* 右侧操作按钮：外链 + 加自选 + 加监控 + 信息条配置 */}
         <div className="ml-auto self-center flex items-center gap-1">
+          {extUrl && (
+            <a
+              href={extUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={extUrl}
+              className="p-1 rounded-btn text-muted hover:text-foreground hover:bg-elevated transition-colors"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          )}
           {onToggleWatchlist && (
             <button
               onClick={onToggleWatchlist}
@@ -272,6 +314,7 @@ export function StockInfoBar({ symbol, name, stockInfo, rows, fields, onFieldsCh
         builtinSectionLabel="可选指标"
         extColumnAlign="left"
         showStandaloneToggle
+        disableBackdropBlur
       />
     </div>
   )

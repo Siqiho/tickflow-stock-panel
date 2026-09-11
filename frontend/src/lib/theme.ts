@@ -108,11 +108,15 @@ export interface ChartChrome {
   border: string
   tooltipBg: string
   tooltipBorder: string
+  tooltipText: string
   crosshair: string
   refLine: string
   infoBarBg: string
   handle: string
   labelBg: string
+  fillSubtle: string
+  textStrong: string
+  zoomFill: string
 }
 
 /** 图表 UI 色（随主题变化）。涨跌语义色保持固定。 */
@@ -129,11 +133,15 @@ export function getChartChrome(isDark = isDarkTheme()): ChartChrome {
       border: '#27272A',
       tooltipBg: 'rgba(39,39,42,0.92)',
       tooltipBorder: 'rgba(255,255,255,0.1)',
+      tooltipText: '#E4E4E7',
       crosshair: 'rgba(255,255,255,0.2)',
       refLine: 'rgba(255,255,255,0.25)',
       infoBarBg: 'rgba(39,39,42,0.6)',
       handle: '#52525B',
       labelBg: 'rgba(15,23,42,0.85)',
+      fillSubtle: 'rgba(255,255,255,0.06)',
+      textStrong: '#FAFAFA',
+      zoomFill: 'rgba(255,255,255,0.08)',
     }
   }
   return {
@@ -143,15 +151,23 @@ export function getChartChrome(isDark = isDarkTheme()): ChartChrome {
     border: '#E4E4E7',
     tooltipBg: 'rgba(255,255,255,0.96)',
     tooltipBorder: 'rgba(24,24,27,0.08)',
+    tooltipText: '#18181B',
     crosshair: 'rgba(24,24,27,0.18)',
     refLine: 'rgba(24,24,27,0.22)',
     infoBarBg: 'rgba(244,244,245,0.92)',
     handle: '#A1A1AA',
     labelBg: 'rgba(255,255,255,0.92)',
+    fillSubtle: 'rgba(24,24,27,0.04)',
+    textStrong: '#18181B',
+    zoomFill: 'rgba(24,24,27,0.06)',
   }
 }
 
 /** React 辅助：主题变化时返回最新 chrome，驱动图表重建。 */
+export function useChartTheme(): ChartChrome {
+  return useChartChrome()
+}
+
 export function useChartChrome(): ChartChrome {
   const { isDark } = useTheme()
   // 用 state 确保 DOM class 应用后再读

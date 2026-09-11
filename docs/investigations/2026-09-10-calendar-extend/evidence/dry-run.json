@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "merged_rows": 2007,
+  "incoming_rows": 276,
+  "prior_rows": 1824,
+  "min": "2025-01-01",
+  "max": "2026-10-31",
+  "staging": "/tmp/wp2-calendar-dryrun/.staging/trading_calendar/wp2-dryrun"
+}

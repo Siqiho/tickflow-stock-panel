@@ -1,9 +1,10 @@
 """API 路由 — /health 与 /api/capabilities。"""
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from app import __version__
+from app.config import settings
 from app.services import preferences
 from app.tickflow import client as tf_client
 from app.tickflow.capabilities import feature_availability
@@ -38,7 +39,11 @@ def _capabilities_payload(force: bool = False) -> dict:
         }
     # Single-symbol minute view via public source — marker for legacy UI checks.
     minute_feat = features.get("minute") or {}
-    if minute_feat.get("view_available") and "kline.minute.batch" not in caps and "kline.minute.by_symbol" not in caps:
+    if (
+        minute_feat.get("view_available")
+        and "kline.minute.batch" not in caps
+        and "kline.minute.by_symbol" not in caps
+    ):
         caps["kline.minute.by_symbol"] = {
             "rpm": None,
             "batch": 1,
@@ -78,6 +83,8 @@ def health() -> dict:
     return {
         "status": "ok",
         "version": __version__,
+        "release_channel": settings.release_channel,
+        "build_sha": settings.build_sha,
         # 三态: none(无key/无效) / free(免费key) / api_key(付费档)
         "mode": tf_client.current_mode(),
     }
@@ -94,6 +101,6 @@ def capabilities() -> dict:
 
 
 @router.post("/api/capabilities/redetect")
-def redetect() -> dict:
+def redetect(request: Request) -> dict:
     """用户在设置页"重新检测"按钮。"""
     return _capabilities_payload(force=True)

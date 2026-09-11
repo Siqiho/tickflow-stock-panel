@@ -96,6 +96,29 @@ def plugin_dir_of(name: str) -> Path:
     return plugins_dir() / (name or "")
 
 
+def probe_plugin_key(name: str, api_key: str) -> tuple[bool, str]:
+    """调用插件的 probe_api_key(key) 探测候选 Key(不落盘)。"""
+    manifest = plugin_manifest(name)
+    if manifest is None:
+        return False, f"插件 '{name}' 不存在"
+    if not manifest.get("api_key_env"):
+        return False, f"插件 '{name}' 不支持在界面配置 Key"
+    entry = str(manifest.get("entry") or "")
+    if ":" not in entry:
+        return False, f"插件 '{name}' entry 非法"
+    try:
+        module = importlib.import_module(entry.split(":", 1)[0])
+    except Exception as e:
+        return False, f"插件模块加载失败: {e}"
+    probe = getattr(module, "probe_api_key", None)
+    if probe is None:
+        return False, f"插件 '{name}' 未提供 Key 探测"
+    try:
+        return probe(api_key)
+    except Exception as e:
+        return False, f"探测失败: {e}"
+
+
 def install_plugin(name: str) -> tuple[bool, str]:
     """安装指定插件的依赖。根据 runtime 执行 npm install / pip install。
 
@@ -239,6 +262,29 @@ def errors() -> list[dict]:
     return list(_LOAD_ERRORS)
 
 
+def create_provider(config: dict) -> GenericHTTPProvider:
+    """Build a temporary provider from an unsaved config dict (settings test)."""
+    from app.data_providers.custom.config import (
+        CustomSourceConfig,
+        _auth_from_dict,
+        _dataset_from_dict,
+    )
+
+    datasets = {
+        name: _dataset_from_dict(cfg)
+        for name, cfg in (config.get("datasets") or {}).items()
+        if isinstance(cfg, dict)
+    }
+    name = str(config.get("name") or "preview").lower()
+    cfg = CustomSourceConfig(
+        name=name,
+        display_name=str(config.get("display_name") or name),
+        auth=_auth_from_dict(config.get("auth")),
+        datasets=datasets,
+    )
+    return GenericHTTPProvider(cfg)
+
+
 def get_provider(name: str) -> GenericHTTPProvider:
     provider = _PROVIDERS.get((name or "").lower())
     if provider is None:
@@ -351,7 +397,7 @@ def _sanitize_for_yaml(config: dict) -> dict:
 
     datasets_out: dict = {}
     for ds_name, ds_cfg in (config.get("datasets") or {}).items():
-        if ds_name not in {"daily", "adj_factor", "realtime", "minute", "financial"}:
+        if ds_name not in {"daily", "adj_factor", "realtime", "minute", "full_minute", "financial"}:
             continue
         if not isinstance(ds_cfg, dict):
             continue

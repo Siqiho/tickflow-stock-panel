@@ -7,8 +7,10 @@ from __future__ import annotations
 import logging
 import time
 
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app import secrets_store
 from app.tickflow import client as tf_client
@@ -23,6 +25,33 @@ from app.tickflow.policy import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+
+def _require_self_hosted_ai_settings() -> None:
+    """Cloud subscription credentials are deployment-owned, never WebView-owned."""
+    from app.services.ai_provider import is_cloud_subscription_mode
+
+    if is_cloud_subscription_mode():
+        raise HTTPException(status_code=403, detail="云端 AI 订阅由服务器统一管理，APK 不能修改 AI 凭据")
+
+
+def _require_server_ai_login_request(request: Request) -> None:
+    """Cloud OAuth is manageable from the server web UI, never from the APK."""
+    from app.services.ai_provider import is_cloud_subscription_mode
+
+    if not is_cloud_subscription_mode():
+        return
+    user_agent = request.headers.get("user-agent", "").lower()
+    if "one-trading-android/" in user_agent:
+        raise HTTPException(status_code=403, detail="APK 只能使用云端 AI，不能管理服务器 OAuth 会话")
+
+
+def _server_xai_status() -> dict:
+    status = _ai_xai_status()
+    return {
+        **status,
+        "auth_type": "server_oauth" if status.get("has_oauth") else "server_managed",
+    }
 
 
 def _ai_xai_status() -> dict:
@@ -61,32 +90,52 @@ class TickflowKeyIn(BaseModel):
 def get_settings() -> dict:
     """返回当前配置概况(Key 脱敏)。"""
     from app.config import settings
-    from app.services import preferences
-    from app.services.ai_provider import ai_configured, current_ai_model, current_codex_command
+    from app.services import preferences, user_context
+    from app.services.ai_provider import (
+        ai_access_status,
+        ai_configured,
+        current_ai_model,
+        current_ai_provider,
+        current_codex_command,
+        is_cloud_subscription_mode,
+        list_server_subscriptions,
+    )
 
     key = secrets_store.get_tickflow_key()
-    ai_provider = secrets_store.get_ai_config("ai_provider", settings.ai_provider)
+    ai_provider = current_ai_provider()
+    cloud_managed = is_cloud_subscription_mode()
+    admin = user_context.is_admin()
     return {
         "mode": tf_client.current_mode(),
-        "tickflow_api_key_masked": secrets_store.mask(key),
-        "has_tickflow_key": bool(key),
+        "tickflow_api_key_masked": secrets_store.mask(key) if admin else "",
+        "has_tickflow_key": bool(key) if admin else False,
         "tier_label": tier_label(),
         "current_endpoint": tf_client.current_endpoint(),
-        "probe_log": probe_log(),
-        "missing_caps": missing_caps(),
-        "extras_caps": extras_caps(),
+        "probe_log": probe_log() if admin else [],
+        "missing_caps": missing_caps() if admin else [],
+        "extras_caps": extras_caps() if admin else [],
         # 首次使用引导
-        "onboarding_completed": preferences.get_onboarding_completed(),
+        "onboarding_completed": preferences.get_onboarding_completed() if admin else True,
         # AI 配置
         "ai_provider": ai_provider,
-        "ai_base_url": secrets_store.get_ai_config("ai_base_url", settings.ai_base_url),
-        "ai_api_key_masked": secrets_store.mask(secrets_store.get_ai_key()),
-        "has_ai_key": bool(secrets_store.get_ai_key()),
+        "ai_base_url": "" if cloud_managed else secrets_store.get_ai_config("ai_base_url", settings.ai_base_url),
+        "ai_api_key_masked": "" if cloud_managed else secrets_store.mask(secrets_store.get_ai_key()),
+        "has_ai_key": bool(settings.ai_api_key) if cloud_managed else bool(secrets_store.get_ai_key()),
         "ai_configured": ai_configured(ai_provider),
         "ai_model": current_ai_model(),
         "ai_codex_command": current_codex_command(),
-        "ai_user_agent": secrets_store.get_ai_config("ai_user_agent", settings.ai_user_agent),
-        "ai_xai": _ai_xai_status(),
+        "ai_user_agent": "" if cloud_managed else secrets_store.get_ai_config("ai_user_agent", settings.ai_user_agent),
+        "ai_xai": (
+            (_server_xai_status() if cloud_managed else _ai_xai_status())
+            if admin else {"auth_type": "server_managed", "has_oauth": False,
+                           "has_access_token": False, "expires_at": None, "expired": False}
+        ),
+        "ai_access": ai_access_status(),
+        "ai_subscriptions": (
+            list_server_subscriptions(include_secrets=admin) if cloud_managed else []
+        ),
+        "is_admin": admin,
+        "credential_management": "owner" if admin else "admin_only",
     }
 
 
@@ -251,6 +300,7 @@ class AiSettingsIn(BaseModel):
 @router.post("/ai")
 def save_ai_settings(req: AiSettingsIn) -> dict:
     """保存 AI 配置（全部持久化到 secrets.json）"""
+    _require_self_hosted_ai_settings()
     from app.config import settings
     from app.services.ai_provider import (
         XAI_API_BASE,
@@ -314,12 +364,104 @@ def save_ai_settings(req: AiSettingsIn) -> dict:
     }
 
 
+class AiSubscriptionIn(BaseModel):
+    provider: str
+    model: str = ""
+    base_url: str = ""
+    api_key: str = ""
+
+
+class AiSubscriptionSourceIn(BaseModel):
+    provider: str
+    base_url: str = ""
+    api_key: str | None = None
+    clear_api_key: bool = False
+
+
+@router.post("/ai/subscription")
+def save_ai_subscription(req: AiSubscriptionIn, request: Request) -> dict:
+    """Switch the hosted subscription source. Keys stay server-owned."""
+    _require_server_ai_login_request(request)
+    from app.services import user_context
+    if not user_context.is_admin():
+        raise HTTPException(status_code=403, detail="仅服务器管理员可以切换模型提供商")
+    from app.services.ai_provider import (
+        ai_configured,
+        current_ai_model,
+        current_ai_provider,
+        list_server_subscriptions,
+        select_server_subscription,
+    )
+
+    try:
+        access = select_server_subscription(req.provider, req.model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    provider = current_ai_provider()
+    return {
+        "ok": True,
+        "ai_provider": provider,
+        "ai_model": current_ai_model(),
+        "ai_configured": ai_configured(provider),
+        "ai_access": access,
+        "ai_subscriptions": list_server_subscriptions(include_secrets=True),
+        "ai_xai": _server_xai_status(),
+    }
+
+
+@router.post("/ai/subscription/source")
+def save_ai_subscription_source(req: AiSubscriptionSourceIn, request: Request) -> dict:
+    """Save admin-managed provider URL/key without exposing raw credentials."""
+    _require_server_ai_login_request(request)
+    from app.services import user_context
+    if not user_context.is_admin():
+        raise HTTPException(status_code=403, detail="仅服务器管理员可以配置模型提供商")
+    from app.services.ai_provider import save_server_subscription_source
+
+    try:
+        return save_server_subscription_source(
+            req.provider,
+            base_url=req.base_url,
+            api_key=req.api_key,
+            clear_api_key=req.clear_api_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/ai/subscription/test")
+async def test_ai_subscription(req: AiSubscriptionIn, request: Request) -> dict:
+    """Probe the selected hosted source without applying it."""
+    _require_server_ai_login_request(request)
+    from app.services import user_context
+    if not user_context.is_admin():
+        raise HTTPException(status_code=403, detail="仅服务器管理员可以测试模型提供商")
+    from app.services.ai_provider import probe_server_subscription
+
+    try:
+        return await probe_server_subscription(
+            req.provider,
+            req.model,
+            api_key=req.api_key,
+            base_url=req.base_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.delete("/ai")
 def clear_ai_settings() -> dict:
     """一键清空 AI 配置(provider / base_url / api_key / model)。
 
     保留 ai_user_agent —— 自定义请求头与凭证解耦,清空凭证不影响绕过 CDN 拦截的设置。
     """
+    _require_self_hosted_ai_settings()
     from app.config import settings
 
     secrets_store.clear(
@@ -355,8 +497,9 @@ class XaiDeviceStartOut(BaseModel):
 
 
 @router.post("/ai/xai/device/start")
-def xai_device_start() -> dict:
+def xai_device_start(request: Request) -> dict:
     """发起 xAI 设备码登录（SuperGrok 订阅 OAuth）。"""
+    _require_server_ai_login_request(request)
     from app.services import xai_oauth
     try:
         return xai_oauth.request_device_code()
@@ -375,8 +518,9 @@ class XaiDevicePollIn(BaseModel):
 
 
 @router.post("/ai/xai/device/poll")
-def xai_device_poll(req: XaiDevicePollIn) -> dict:
+def xai_device_poll(req: XaiDevicePollIn, request: Request) -> dict:
     """单次探测设备码状态；前端按 interval 轮询本接口。"""
+    _require_server_ai_login_request(request)
     from app.config import settings
     from app.services import xai_oauth
     from app.services.ai_provider import (
@@ -385,6 +529,8 @@ def xai_device_poll(req: XaiDevicePollIn) -> dict:
         XAI_PROVIDER,
         ai_configured,
         current_ai_model,
+        is_cloud_subscription_mode,
+        select_server_subscription,
     )
 
     try:
@@ -410,7 +556,10 @@ def xai_device_poll(req: XaiDevicePollIn) -> dict:
     settings.ai_provider = XAI_PROVIDER
     settings.ai_base_url = XAI_API_BASE
     settings.ai_model = model
-    settings.ai_api_key = ""
+    if is_cloud_subscription_mode():
+        select_server_subscription(XAI_PROVIDER, model)
+    else:
+        settings.ai_api_key = ""
 
     return {
         "ok": True,
@@ -424,12 +573,16 @@ def xai_device_poll(req: XaiDevicePollIn) -> dict:
 
 @router.get("/ai/xai/status")
 def xai_status() -> dict:
+    from app.services.ai_provider import is_cloud_subscription_mode
+    if is_cloud_subscription_mode():
+        return _server_xai_status()
     return _ai_xai_status()
 
 
 @router.delete("/ai/xai/session")
-def xai_logout() -> dict:
+def xai_logout(request: Request) -> dict:
     """仅清除 xAI OAuth 会话，保留其它 AI 配置。"""
+    _require_server_ai_login_request(request)
     from app.services import xai_oauth
     xai_oauth.clear_oauth_tokens()
     return {"ok": True, "ai_xai": _ai_xai_status()}
@@ -485,7 +638,15 @@ def get_preferences() -> dict:
         "system_notify_enabled": preferences.get_system_notify_enabled(),
         "feishu_webhook_url": preferences.get_feishu_webhook_url(),
         "feishu_webhook_secret": preferences.get_feishu_webhook_secret(),
+        "wecom_webhook_url": preferences.get_wecom_webhook_url(),
+        "custom_webhook_url": preferences.get_custom_webhook_url(),
+        "custom_webhook_secret_set": bool(secrets_store.get_custom_webhook_secret()),
+        "email_smtp_config": preferences.get_email_smtp_config(),
+        "email_smtp_password_set": bool(secrets_store.get_email_smtp_password()),
         "webhook_enabled_default": preferences.get_webhook_enabled_default(),
+        "webhook_default_channels": preferences.get_webhook_default_channels(),
+        "minute_batch_compress": preferences.get_minute_batch_compress(),
+        "daily_batch_compress": preferences.get_daily_batch_compress(),
         "sidebar_index_symbols": preferences.get_sidebar_index_symbols(),
         "nav_order": preferences.get_nav_order(),
         "nav_hidden": preferences.get_nav_hidden(),
@@ -495,6 +656,21 @@ def get_preferences() -> dict:
         "depth_finalize_time": preferences.get_depth_finalize_time(),
         "review_schedule": preferences.get_review_schedule(),
         "review_push_channels": preferences.get_review_push_channels(),
+        "review_push_mode": preferences.get_review_push_mode(),
+        "pipeline_regime_enabled": preferences.get_pipeline_regime_enabled(),
+        "regime_batch_days": preferences.get_regime_batch_days(),
+        "regime_warmup_days": preferences.get_regime_warmup_days(),
+        "wecom_bot_id": preferences.get_wecom_bot_id(),
+        "wecom_bot_secret": preferences.get_wecom_bot_secret(),
+        "wecom_bot_enabled": preferences.get_wecom_bot_enabled(),
+        "watchlist_groups_in_nav": preferences.get_watchlist_groups_in_nav(),
+        "minute_refresh_enabled": preferences.get_minute_refresh_enabled(),
+        "minute_refresh_interval": preferences.get_minute_refresh_interval(),
+        "depth5_data_provider": preferences.get_depth5_data_provider(),
+        "financial_data_provider": preferences.get_financial_provider(),
+        "data_source_job_timeout_s": preferences.get_data_source_job_timeout_s(),
+        "data_source_long_job_timeout_s": preferences.get_data_source_long_job_timeout_s(),
+        **preferences.get_mining_schedule(),
     }
 
 
@@ -561,7 +737,7 @@ def update_minute_sync(req: MinuteSyncPrefs) -> dict:
     """保存分钟 K 同步偏好。"""
     from app.services import preferences
     days = max(1, min(30, req.minute_sync_days))
-    preferences.save({
+    preferences.save_server({
         "minute_sync_enabled": req.minute_sync_enabled,
         "minute_sync_days": days,
     })
@@ -578,9 +754,6 @@ class RealtimeQuotesPrefs(BaseModel):
 class RealtimeQuoteScopePrefs(BaseModel):
     realtime_pull_stock: bool | None = None
     realtime_pull_etf: bool | None = None
-    realtime_pull_index: bool | None = None
-    realtime_index_mode: str | None = None
-    realtime_index_symbols: list[str] | None = None
 
 
 
@@ -597,7 +770,7 @@ def update_adj_factor_provider(req: AdjFactorProviderPrefs) -> dict:
     val = (req.adj_factor_provider or "same_as_daily").strip().lower()
     if val not in allowed:
         raise HTTPException(status_code=400, detail=f"unsupported adj_factor_provider: {val}")
-    preferences.save({"adj_factor_provider": val})
+    preferences.save_server({"adj_factor_provider": val})
     return {"adj_factor_provider": preferences.get_adj_factor_provider()}
 
 
@@ -615,7 +788,7 @@ def update_financial_provider(req: FinancialProviderPrefs) -> dict:
     val = (req.financial_provider or "tickflow").strip().lower()
     if val not in allowed:
         raise HTTPException(status_code=400, detail=f"unsupported financial_provider: {val}")
-    preferences.save({"financial_provider": val})
+    preferences.save_server({"financial_provider": val, "financial_data_provider": val})
     return {"financial_provider": preferences.get_financial_provider()}
 
 
@@ -633,7 +806,7 @@ def update_pool_provider(req: PoolProviderPrefs) -> dict:
     val = (req.pool_provider or "public").strip().lower()
     if val not in allowed:
         raise HTTPException(status_code=400, detail=f"unsupported pool_provider: {val}")
-    preferences.save({"pool_provider": val})
+    preferences.save_server({"pool_provider": val})
     return {"pool_provider": preferences.get_pool_provider()}
 
 
@@ -650,15 +823,15 @@ def update_realtime_quotes(req: RealtimeQuotesPrefs, request: Request) -> dict:
     allowed = qs.is_realtime_allowed() if qs else True
     if req.realtime_quotes_enabled and not allowed:
         # 当前档位不允许开启实时行情 — 强制关闭
-        preferences.save({"realtime_quotes_enabled": False})
+        preferences.save_server({"realtime_quotes_enabled": False})
         if qs:
             qs.disable()
         return {"realtime_quotes_enabled": False, "realtime_allowed": False}
     if req.realtime_quotes_enabled and qs and qs.realtime_mode() == "watchlist" and not preferences.get_realtime_watchlist_symbols():
-        preferences.save({"realtime_quotes_enabled": False})
+        preferences.save_server({"realtime_quotes_enabled": False})
         return {"realtime_quotes_enabled": False, "realtime_allowed": True, "mode": "watchlist", "error": "watchlist_empty"}
 
-    preferences.save({"realtime_quotes_enabled": req.realtime_quotes_enabled})
+    preferences.save_server({"realtime_quotes_enabled": req.realtime_quotes_enabled})
     if qs:
         if req.realtime_quotes_enabled:
             qs.enable()
@@ -763,7 +936,7 @@ class PipelineIndexSymbolsIn(BaseModel):
 
 
 class UniverseScopeIn(BaseModel):
-    """标的范围: ALL | CSI300 | CSI500 | SSE50 | WATCHLIST"""
+    """标的范围: ALL | CSI300 | CSI500 | CSI800 | CSI1000 | CSI1800 | SSE50 | WATCHLIST"""
     scope: str
 
 
@@ -872,6 +1045,236 @@ def update_feishu_webhook(req: FeishuWebhookPrefsIn) -> dict:
     return {"feishu_webhook_url": saved_url, "feishu_webhook_secret": saved_secret}
 
 
+class WecomWebhookPrefsIn(BaseModel):
+    url: str
+
+
+@router.put("/preferences/wecom-webhook")
+def update_wecom_webhook(req: WecomWebhookPrefsIn) -> dict:
+    """企业微信群推送 Webhook — 已实现, 默认空/不推送。"""
+    from app.services import preferences, webhook_adapter
+
+    url = (req.url or "").strip()
+    if url and not webhook_adapter.is_valid_wecom_url(url):
+        raise HTTPException(
+            status_code=400,
+            detail="Webhook 地址非法, 需为企业微信群推送地址或纯 key",
+        )
+    return {"wecom_webhook_url": preferences.set_wecom_webhook_url(url)}
+
+
+class CustomWebhookPrefsIn(BaseModel):
+    url: str
+    secret: str | None = None
+
+
+@router.put("/preferences/custom-webhook")
+def update_custom_webhook(req: CustomWebhookPrefsIn) -> dict:
+    """Configure the generic third-party JSON webhook and optional HMAC secret."""
+    from app.services import preferences, webhook_adapter
+
+    url = (req.url or "").strip()
+    if url and not webhook_adapter.is_valid_custom_url(url):
+        raise HTTPException(status_code=400, detail="Webhook 地址必须是完整的 HTTP(S) URL")
+    saved_url = preferences.set_custom_webhook_url(url)
+    if not saved_url:
+        secrets_store.set_custom_webhook_secret("")
+    elif req.secret is not None:
+        secrets_store.set_custom_webhook_secret(req.secret)
+    return {
+        "custom_webhook_url": saved_url,
+        "custom_webhook_secret_set": bool(secrets_store.get_custom_webhook_secret()),
+    }
+
+
+class EmailSmtpPrefsIn(BaseModel):
+    host: str
+    port: int = Field(default=465, ge=1, le=65535)
+    security: Literal["ssl", "starttls", "none"] = "ssl"
+    username: str = ""
+    password: str | None = None
+    from_address: str = ""
+    to_addresses: list[str] = Field(default_factory=list)
+
+
+@router.put("/preferences/email-smtp")
+def update_email_smtp(req: EmailSmtpPrefsIn) -> dict:
+    """Configure the SMTP transport shared by monitor alerts and review reports."""
+    from app.services import email_adapter, preferences
+
+    host = (req.host or "").strip()
+    username = (req.username or "").strip()
+    from_address = (req.from_address or username).strip()
+    recipients = list(dict.fromkeys(item.strip() for item in req.to_addresses if item.strip()))
+    if host:
+        if not from_address or not email_adapter.is_valid_email(from_address):
+            raise HTTPException(status_code=400, detail="请填写有效的发件人邮箱")
+        if not recipients or any(not email_adapter.is_valid_email(item) for item in recipients):
+            raise HTTPException(status_code=400, detail="请至少填写一个有效的收件人邮箱")
+        effective_password = (
+            secrets_store.get_email_smtp_password()
+            if req.password is None
+            else req.password
+        )
+        if username and not effective_password:
+            raise HTTPException(status_code=400, detail="已填写 SMTP 登录用户名, 请同时填写密码或授权码")
+    else:
+        username = ""
+        from_address = ""
+        recipients = []
+
+    config = preferences.set_email_smtp_config({
+        "host": host,
+        "port": req.port,
+        "security": req.security,
+        "username": username,
+        "from_address": from_address,
+        "to_addresses": recipients,
+    })
+    if not host or not username:
+        secrets_store.set_email_smtp_password("")
+    elif req.password is not None:
+        secrets_store.set_email_smtp_password(req.password)
+    return {
+        "email_smtp_config": config,
+        "email_smtp_password_set": bool(secrets_store.get_email_smtp_password()),
+    }
+
+
+class MinuteBatchCompressPrefs(BaseModel):
+    minute_batch_compress: bool
+
+
+class DailyBatchCompressPrefs(BaseModel):
+    daily_batch_compress: bool
+
+
+@router.put("/preferences/minute-batch-compress")
+def update_minute_batch_compress(req: MinuteBatchCompressPrefs) -> dict:
+    """保存分时详情与批量响应的 gzip 传输压缩开关。逐请求即时读取, 保存后立即生效。"""
+    from app.services import preferences
+    preferences.save({"minute_batch_compress": req.minute_batch_compress})
+    return {"minute_batch_compress": preferences.get_minute_batch_compress()}
+
+
+@router.put("/preferences/daily-batch-compress")
+def update_daily_batch_compress(req: DailyBatchCompressPrefs) -> dict:
+    """保存日K详情与批量响应的 gzip 传输压缩开关 (与分时独立)。逐请求即时读取。"""
+    from app.services import preferences
+    preferences.save({"daily_batch_compress": req.daily_batch_compress})
+    return {"daily_batch_compress": preferences.get_daily_batch_compress()}
+
+
+class WecomBotPrefsIn(BaseModel):
+    bot_id: str
+    secret: str
+    enabled: bool = False
+
+
+@router.put("/preferences/wecom-bot")
+def update_wecom_bot(req: WecomBotPrefsIn) -> dict:
+    """保存企业微信智能机器人凭证。默认关闭, 本阶段不建立外发长连接。"""
+    from app.services import preferences
+
+    bot_id = (req.bot_id or "").strip()
+    secret = (req.secret or "").strip()
+    preferences.set_wecom_bot_id(bot_id)
+    preferences.set_wecom_bot_secret(secret)
+    enabled = bool(req.enabled and bot_id and secret)
+    preferences.set_wecom_bot_enabled(enabled)
+    return {
+        "wecom_bot_id": preferences.get_wecom_bot_id(),
+        "wecom_bot_secret": preferences.get_wecom_bot_secret(),
+        "wecom_bot_enabled": enabled,
+        "wecom_bot_status": {
+            "running": False,
+            "connected": False,
+            "reason": "default_off" if not enabled else "outbound_disabled",
+        },
+    }
+
+
+class WecomBotToggleIn(BaseModel):
+    enabled: bool
+
+
+@router.put("/preferences/wecom-bot-toggle")
+def toggle_wecom_bot(req: WecomBotToggleIn) -> dict:
+    from app.services import preferences
+
+    bot_id = preferences.get_wecom_bot_id()
+    secret = preferences.get_wecom_bot_secret()
+    enabled = bool(req.enabled and bot_id and secret)
+    preferences.set_wecom_bot_enabled(enabled)
+    return {
+        "wecom_bot_enabled": enabled,
+        "wecom_bot_status": {
+            "running": False,
+            "connected": False,
+            "reason": "default_off" if not enabled else "outbound_disabled",
+        },
+    }
+
+
+class WebhookTestIn(BaseModel):
+    channel: Literal["feishu", "wecom", "custom", "email"]
+
+
+@router.post("/preferences/webhook-test")
+def test_webhook(req: WebhookTestIn) -> dict:
+    """只打已保存配置。未配置返回 ok=False, 不发起外发。测试通道需自行 mock。"""
+    from app.services import preferences, webhook_adapter
+
+    title = "one-trading 推送测试"
+    body = "配置探测 (默认关闭, 仅在已保存地址时才会请求)"
+    if req.channel == "feishu":
+        url = preferences.get_feishu_webhook_url()
+        if not url:
+            return {"ok": False, "detail": "尚未配置飞书 Webhook，请先保存"}
+        if not webhook_adapter.is_valid_feishu_url(url):
+            return {"ok": False, "detail": "地址非法"}
+        ok = webhook_adapter.send_feishu(
+            url, title, body, preferences.get_feishu_webhook_secret(), max_attempts=1,
+        )
+    elif req.channel == "wecom":
+        url = preferences.get_wecom_webhook_url()
+        if not url:
+            return {"ok": False, "detail": "尚未配置企业微信 Webhook，请先保存"}
+        if not webhook_adapter.is_valid_wecom_url(url):
+            return {"ok": False, "detail": "地址非法"}
+        ok = webhook_adapter.send_wecom(url, title, body)
+    elif req.channel == "custom":
+        url = preferences.get_custom_webhook_url()
+        if not url:
+            return {"ok": False, "detail": "尚未配置第三方 Webhook, 请先保存"}
+        if not webhook_adapter.is_valid_custom_url(url):
+            return {"ok": False, "detail": "地址非法"}
+        ok = webhook_adapter.send_custom(
+            url,
+            title,
+            body,
+            event_type="test",
+            secret=secrets_store.get_custom_webhook_secret(),
+            max_attempts=1,
+        )
+    else:
+        from app.services import email_adapter
+
+        config = preferences.get_email_smtp_config()
+        if not email_adapter.is_configured(config):
+            return {"ok": False, "detail": "尚未完整配置邮件 SMTP, 请先保存"}
+        ok = email_adapter.send_email(
+            config,
+            secrets_store.get_email_smtp_password(),
+            title,
+            body,
+            max_attempts=1,
+        )
+    if ok:
+        return {"ok": True, "detail": "测试消息已发送"}
+    return {"ok": False, "detail": "推送失败或被默认关闭拦截"}
+
+
 class WebhookEnabledDefaultIn(BaseModel):
     enabled: bool
 
@@ -894,7 +1297,7 @@ def update_quote_interval(req: QuoteIntervalIn, request: Request) -> dict:
     """更新行情轮询间隔。按档位自动 clamp。"""
     qs = getattr(request.app.state, "quote_service", None)
     if not qs:
-        return {"interval": req.interval, "min_interval": qs.get_min_interval(), "max_interval": 60.0}
+        return {"interval": req.interval, "min_interval": 6.0, "max_interval": 60.0}
     clamped = qs.set_interval(req.interval)
     return {
         "interval": clamped,
@@ -908,7 +1311,7 @@ def get_quote_interval(request: Request) -> dict:
     """获取当前行情轮询间隔和档位限制。"""
     qs = getattr(request.app.state, "quote_service", None)
     if not qs:
-        return {"interval": 10.0, "min_interval": 5.0, "max_interval": 60.0}
+        return {"interval": 15.0, "min_interval": 5.0, "max_interval": 60.0}
     return {
         "interval": qs._interval,
         "min_interval": qs.get_min_interval(),
@@ -1196,7 +1599,7 @@ class LimitLadderMonitorIn(BaseModel):
 def update_limit_ladder_monitor(req: LimitLadderMonitorIn, request: Request) -> dict:
     """连板梯队 5 档监控开关。开启→启动 depth 轮询, 关闭→停止。"""
     from app.services import preferences
-    preferences.save({"limit_ladder_monitor_enabled": req.enabled})
+    preferences.save_server({"limit_ladder_monitor_enabled": req.enabled})
 
     # 立即应用: 启停 depth 轮询线程
     depth_svc = getattr(request.app.state, "depth_service", None)
@@ -1301,18 +1704,321 @@ def update_review_schedule(req: ReviewScheduleIn, request: Request) -> dict:
 
 
 class ReviewPushIn(BaseModel):
-    channels: list[str]  # 多选: ['feishu'] 等; 空数组=不推送。微信等开发中
+    channels: list[str]  # 多选: feishu / wecom / custom / email; 空数组=不推送
+    mode: str | None = None  # 可选: auto=归档即推 / manual=仅显式 push; 不传则不变
 
 
 @router.put("/preferences/review-push")
 def update_review_push(req: ReviewPushIn) -> dict:
-    """复盘推送渠道(多选) — 选定把复盘报告(手动生成 / 定时生成归档后)推送到哪些外部工具。
+    """复盘推送设置(渠道多选 + 触发方式)。
 
     纯偏好, 与定时复盘 / 实时行情完全独立, 常驻可单独设置。空数组=不推送。
     实际推送由归档端点(POST /api/market-recap/reports)与定时任务(_run_scheduled_review)
-    在归档后读取本列表逐个推送。白名单外的渠道会被过滤掉。
+    在归档后读取渠道列表, 并按 review_push_mode 决定是否外发:
+      - manual: 定时复盘只归档不推送, 手动保存需显式 push=true
+      - auto: 归档即推(行为与旧逻辑一致)
+    白名单外的渠道会被过滤掉, 白名单外的 mode 值回退 manual。
     """
     from app.services import preferences
     saved = preferences.set_review_push_channels(req.channels)
-    return {"review_push_channels": saved}
+    mode = preferences.get_review_push_mode()
+    if req.mode is not None:
+        mode = preferences.set_review_push_mode(req.mode)
+    return {"review_push_channels": saved, "review_push_mode": mode}
+
+
+class PipelineRegimeEnabledIn(BaseModel):
+    pipeline_regime_enabled: bool
+
+
+class RegimeBatchParamsIn(BaseModel):
+    batch_days: int | None = None
+    warmup_days: int | None = None
+
+
+@router.post("/preferences/pipeline-regime-enabled")
+def update_pipeline_regime_enabled(req: PipelineRegimeEnabledIn) -> dict:
+    from app.services import preferences
+    enabled = preferences.set_pipeline_regime_enabled(req.pipeline_regime_enabled)
+    return {"pipeline_regime_enabled": enabled}
+
+
+@router.post("/preferences/regime-batch-params")
+def update_regime_batch_params(req: RegimeBatchParamsIn) -> dict:
+    from app.services import preferences
+    return preferences.set_regime_batch_params(req.batch_days, req.warmup_days)
+
+
+class PluginKeyIn(BaseModel):
+    plugin: str
+    api_key: str
+
+
+class DataSourceTimeoutsIn(BaseModel):
+    data_source_job_timeout_s: int | None = None
+    data_source_long_job_timeout_s: int | None = None
+
+
+class WatchlistGroupsInNavIn(BaseModel):
+    watchlist_groups_in_nav: bool
+
+
+@router.get("/data-sources")
+def list_data_sources() -> dict:
+    from app.data_providers import custom as custom_sources
+
+    return {
+        "builtin": [{
+            "name": "tickflow",
+            "display_name": "TickFlow",
+            "datasets": ["daily", "adj_factor", "realtime", "minute"],
+        }],
+        "plugins": custom_sources.list_plugins(),
+        "custom": custom_sources.list_sources(),
+        "errors": custom_sources.errors(),
+        "config_dir": str(custom_sources.data_sources_dir()),
+    }
+
+
+@router.get("/capability-matrix")
+def get_capability_matrix() -> dict:
+    from app.data_providers.capabilities import build_capability_matrix
+    from app.services import preferences
+    from app.tickflow.policy import detect_capabilities, tier_label
+
+    capset = detect_capabilities()
+    current = {
+        "daily_data_provider": preferences.get_daily_data_provider(),
+        "adj_factor_provider": preferences.get_adj_factor_provider(),
+        "minute_data_provider": preferences.get_minute_data_provider(),
+        "realtime_data_provider": preferences.get_realtime_data_provider(),
+        "depth5_data_provider": preferences.get_depth5_data_provider(),
+        "financial_data_provider": preferences.get_financial_provider(),
+        "depth5_data_provider": preferences.get_depth5_data_provider(),
+    }
+    return build_capability_matrix(current, tickflow_tier=tier_label())
+
+
+@router.post("/plugin-key")
+def save_plugin_key(req: PluginKeyIn) -> dict:
+    from app.data_providers import custom as custom_sources
+    from app import secrets_store
+
+    name = req.plugin.strip().lower()
+    key = req.api_key.strip()
+    ok, message = custom_sources.probe_plugin_key(name, key)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    secrets_store.save({f"{name}_api_key": key})
+    custom_sources.load_all()
+    status = next((p for p in custom_sources.list_plugins() if p["name"] == name), None)
+    return {
+        "ok": True,
+        "message": message,
+        "plugin_available": bool(status and status.get("available")),
+        "plugin": status,
+    }
+
+
+@router.delete("/plugin-key/{name}")
+def clear_plugin_key(name: str) -> dict:
+    from app.data_providers import custom as custom_sources
+    from app import secrets_store
+
+    secrets_store.clear(f"{name.strip().lower()}_api_key")
+    custom_sources.load_all()
+    status = next((p for p in custom_sources.list_plugins() if p["name"] == name), None)
+    return {
+        "ok": True,
+        "plugin_available": bool(status and status.get("available")),
+        "plugin": status,
+    }
+
+
+@router.post("/data-sources/reload")
+def reload_data_sources() -> dict:
+    from app.data_providers import custom as custom_sources
+    custom_sources.load_all()
+    return list_data_sources()
+
+
+@router.post("/plugins/{name}/install")
+def install_plugin(name: str) -> dict:
+    from app.data_providers import custom as custom_sources
+    ok, message = custom_sources.install_plugin(name)
+    custom_sources.load_all()
+    result = list_data_sources()
+    result["ok"] = ok
+    result["message"] = message
+    return result
+
+
+@router.delete("/plugins/{name}/install")
+def uninstall_plugin(name: str) -> dict:
+    from app.data_providers import custom as custom_sources
+    ok, message = custom_sources.uninstall_plugin(name)
+    custom_sources.load_all()
+    result = list_data_sources()
+    result["ok"] = ok
+    result["message"] = message
+    return result
+
+
+@router.put("/preferences/watchlist-groups-in-nav")
+def update_watchlist_groups_in_nav(req: WatchlistGroupsInNavIn) -> dict:
+    from app.services import preferences
+    return {"watchlist_groups_in_nav": preferences.set_watchlist_groups_in_nav(req.watchlist_groups_in_nav)}
+
+
+@router.put("/preferences/data-source-job-timeouts")
+def update_data_source_job_timeouts(req: DataSourceTimeoutsIn) -> dict:
+    from app.services import preferences
+    return preferences.set_data_source_job_timeouts(
+        req.data_source_job_timeout_s,
+        req.data_source_long_job_timeout_s,
+    )
+
+
+class DataProvidersIn(BaseModel):
+    daily_data_provider: str | None = None
+    adj_factor_provider: str | None = None
+    minute_data_provider: str | None = None
+    depth5_data_provider: str | None = None
+    realtime_data_provider: str | None = None
+    financial_data_provider: str | None = None
+
+
+class MiningSchedulePrefs(BaseModel):
+    mining_schedule_enabled: bool
+    mining_schedule_weekday: int = Field(ge=0, le=4)
+    mining_budget_profile: str = "balanced"
+
+
+class CustomSourceIn(BaseModel):
+    name: str
+    display_name: str = ""
+    auth: dict = {}
+    datasets: dict = {}
+
+
+class CustomSourceTestIn(BaseModel):
+    provider: str
+    dataset: str
+    symbols: list[str] | None = None
+    config: CustomSourceIn | None = None
+
+
+@router.put("/preferences/data-providers")
+def update_data_providers(req: DataProvidersIn, request: Request) -> dict:
+    from app.services import preferences
+    updates = req.model_dump(exclude_none=True)
+    if "financial_data_provider" in updates:
+        updates["financial_provider"] = updates["financial_data_provider"]
+    if updates:
+        preferences.save(updates)
+    try:
+        request.app.state.capabilities = detect_capabilities()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("capability refresh after data-provider change failed: %s", exc)
+    return {
+        "daily_data_provider": preferences.get_daily_data_provider(),
+        "adj_factor_provider": preferences.get_adj_factor_provider(),
+        "minute_data_provider": preferences.get_minute_data_provider(),
+        "depth5_data_provider": preferences.get_depth5_data_provider(),
+        "realtime_data_provider": preferences.get_realtime_data_provider(),
+        "financial_data_provider": preferences.get_financial_provider(),
+    }
+
+
+@router.put("/preferences/mining-schedule")
+def update_mining_schedule(req: MiningSchedulePrefs) -> dict:
+    from app.services import preferences
+    return preferences.set_mining_schedule(
+        req.mining_schedule_enabled,
+        req.mining_schedule_weekday,
+        req.mining_budget_profile,
+    )
+
+
+@router.get("/data-sources/{name}")
+def get_data_source(name: str) -> dict:
+    from app.data_providers import custom as custom_sources
+    cfg = custom_sources.get_config_dict(name)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail=f"数据源 '{name}' 不存在")
+    return cfg
+
+
+@router.post("/data-sources")
+def save_data_source(req: CustomSourceIn) -> dict:
+    from app.data_providers import custom as custom_sources
+    config = req.model_dump()
+    config["name"] = (config.get("name") or "").lower()
+    try:
+        custom_sources.save_config(config["name"], config)
+        custom_sources.load_all()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return list_data_sources()
+
+
+@router.delete("/data-sources/{name}")
+def delete_data_source(name: str, request: Request) -> dict:
+    from app.data_providers import custom as custom_sources
+    from app.services import preferences
+    try:
+        custom_sources.delete_config(name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    custom_sources.load_all()
+    updates: dict = {}
+    if preferences.get_daily_data_provider() == name:
+        updates["daily_data_provider"] = "tickflow"
+    if preferences.get_realtime_data_provider() == name:
+        updates["realtime_data_provider"] = "tickflow"
+    if preferences.get_financial_provider() == name:
+        updates["financial_provider"] = "tickflow"
+        updates["financial_data_provider"] = "tickflow"
+    if preferences.get_adj_factor_provider() == name:
+        updates["adj_factor_provider"] = "tickflow"
+    if updates:
+        preferences.save(updates)
+    try:
+        request.app.state.capabilities = detect_capabilities()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("capability refresh after data-source delete failed: %s", exc)
+    return list_data_sources()
+
+
+@router.post("/data-sources/test")
+def test_data_source(req: CustomSourceTestIn) -> dict:
+    from app.data_providers import custom as custom_sources
+    temporary = req.config is not None
+    provider = None
+    try:
+        if req.config:
+            config = req.config.model_dump()
+            dataset_config = (config.get("datasets") or {}).get(req.dataset)
+            if dataset_config is None:
+                raise ValueError(f"dataset '{req.dataset}' is not configured")
+            config["datasets"] = {req.dataset: dataset_config}
+            provider = custom_sources.create_provider(config)
+        else:
+            provider = custom_sources.get_provider(req.provider)
+        return provider.test_dataset(req.dataset, req.symbols)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"自定义数据源测试失败: {e}") from e
+    finally:
+        if temporary and provider is not None:
+            provider.close()
+
+
+@router.get("/minute-refresh/status")
+def minute_refresh_status(request: Request) -> dict:
+    svc = getattr(request.app.state, "minute_refresh", None)
+    if svc is None:
+        return {"available": False, "enabled": False, "running": False}
+    payload = dict(svc.status())
+    payload["available"] = True
+    return payload
 

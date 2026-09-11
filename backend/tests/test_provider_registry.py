@@ -12,8 +12,16 @@ def test_public_provider_exposes_typed_operations():
     assert provider.supports("adj_factor") is True
     assert provider.supports("financial") is True
     assert provider.supports("pools") is True
+    assert provider.supports("market_pulse") is True
     assert provider.supports("depth5") is False
     assert "public" in list_provider_names()
+
+    manifest = next(
+        item for item in get_provider_manifests("public") if item.dataset_id == "market_pulse"
+    )
+    assert manifest.operations == ["market_pulse"]
+    assert manifest.canonical_units["change_ratio"] == "ratio"
+    assert manifest.history_guarantee == "exact_trade_date_on_demand_no_fallback"
 
 
 def test_manifest_registry_returns_detached_builtin_metadata():

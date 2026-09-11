@@ -1,0 +1,79 @@
+{
+  "task": "news-policy P2-1/P2-3/P2-4 fix",
+  "at": "2026-09-09T17:56:30+08:00",
+  "model": {
+    "requested": "Grok 4.6 / Extra High",
+    "vendor_return_evidence": "未核验"
+  },
+  "backup": "/Users/simon/备份/codex/news-policy-p2-fix-20260909-174907",
+  "tests": {
+    "command": "PYTHONDONTWRITEBYTECODE=1 python -B -m pytest tests/free_sources/test_news_public.py tests/test_news_service.py tests/test_news_api.py -q -p no:cacheprovider",
+    "observed": "39 passed in 0.55s",
+    "frontend_reused": "32 passed + prior tsc/vite build; not rerun"
+  },
+  "runtime": {
+    "backend_pid": 97934,
+    "frontend_pid": 97951,
+    "stopped_after_verify": [53690, 93005, 94803, 94831],
+    "not_touched": {"3018": 3510, "3011": 3528},
+    "data_dir": "/Users/simon/Trading/one-trading/data/news-isolated-20260909",
+    "live_stdout": {
+      "backend": "/Users/simon/Trading/one-trading/data/news-isolated-20260909/logs/news-p2-backend.log",
+      "frontend": "/Users/simon/Trading/one-trading/data/news-isolated-20260909/logs/news-p2-frontend.log",
+      "p2_fix": "static snapshot only; no live stdout"
+    }
+  },
+  "items_json": {
+    "before_sha256": "70e1bd38b03efa14d76055d9576cc366b1dd7c971801460be6de2e291a9be3b0",
+    "after_pbc_refresh_sha256": "340bb1395ff6304e4a51da2e248d026dc7446fb3996d79557f7bc37b4bf7f0a3",
+    "after_safe_restore_sha256": "bf6a424d87e7437eb3786e0657feba4857ff0c28ea2eafa4ba24078e4a8aa84c",
+    "before_total": 525,
+    "after_total": 526,
+    "get_wrote": false
+  },
+  "pbc_refresh": {
+    "department": "中国人民银行",
+    "source_url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html",
+    "redirect": "https://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html",
+    "http": "302 then 200",
+    "fetched": 15,
+    "added_reported": 0,
+    "date_source": "list",
+    "invented_from_long_id": false,
+    "pubdate_fallback_used": false,
+    "sample_long_id": {
+      "title": "中国人民银行副行长宣昌能出席国际清算银行行长例会",
+      "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090909080511735/index.html",
+      "before_date": "",
+      "after_date": "2026-09-09",
+      "date_source": "list"
+    }
+  },
+  "other_departments": {
+    "neac_1194319": "2026-09-09",
+    "has_2026-09-11": false,
+    "title_dedupe_dropped_safe": {
+      "title": "中国人民银行 国家外汇管理局发布《关于跨国公司本外币跨境资金集中运营业务有关事宜的通知》",
+      "dropped_url": "https://www.safe.gov.cn/safe/2026/0814/27784.html",
+      "kept_pbc_url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026081410142217598/index.html",
+      "restored_from_backup": true
+    }
+  },
+  "get": {
+    "3048_total": 526,
+    "3041_total": 526,
+    "pbc_total": 15,
+    "pbc_empty": 0,
+    "keyword_新能源": 4,
+    "departments": 82,
+    "market": {"cls": 20, "sina": 20, "foreign": 20},
+    "from_cache": true
+  },
+  "source_sha256": {
+    "html_extract.py": "6848102cf11a57c71958b62f45698841393f60b66bdefd55c648e81b87b65ecb",
+    "news.py": "530e80a477a2bed9889575273aba289027e09b058a74fd527bba7ce29ebeb49e",
+    "policy.py": "17b523c2019b36bc68ec159adba5289f4a16bf2853462f6104339c526b8c7a45",
+    "news_public.py": "552d57c7572732558665c0ac2f3cd6706609f513ea34a572a8bc4658cec2c00a"
+  },
+  "official_data_news": "gitkeep only"
+}

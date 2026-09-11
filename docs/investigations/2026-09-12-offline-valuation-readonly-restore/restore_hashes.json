@@ -1,0 +1,18 @@
+{
+  "offline_valuation_query.py": {
+    "expected": "d33d6d1354d9c8e79361b2fbf31968422e78a62322acf09ff55d9cf9e05b8a85",
+    "match": true,
+    "path": "/Users/simon/Trading/one-trading/scripts/offline_valuation_query.py",
+    "sha256": "d33d6d1354d9c8e79361b2fbf31968422e78a62322acf09ff55d9cf9e05b8a85",
+    "size": 47160
+  },
+  "source": "/Users/simon/备份/codex/20260911-restore-pre-cursor-before-20260911T224838/overwritten-or-removed/scripts/",
+  "test_offline_valuation_query.py": {
+    "expected": "10aa5a107ff98e94080ae48453a6909a6209886051018108a4c20713a045fe50",
+    "match": true,
+    "path": "/Users/simon/Trading/one-trading/scripts/test_offline_valuation_query.py",
+    "sha256": "10aa5a107ff98e94080ae48453a6909a6209886051018108a4c20713a045fe50",
+    "size": 23153
+  },
+  "unchanged_from_final_post_p2_backup": true
+}

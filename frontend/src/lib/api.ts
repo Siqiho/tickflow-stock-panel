@@ -5,8 +5,37 @@
 
 import { toast } from '@/components/Toast'
 import { logApiCall } from '@/lib/runtimeLogger'
-
+import type { MarketPhase, MonitorExtFieldItem } from './api-v02'
+import type {
+  DepartmentCatalog,
+  KeyDepartments,
+  MarketNewsResponse,
+  MarketSourceId,
+  PolicyNewsResponse,
+} from './news'
 const BASE = ''
+
+// 后端错误 detail 可能是字符串, 也可能是 {code, message} 等对象;
+// 必须归一化为字符串, 否则对象会被塞进 toast/JSX 渲染并击穿整个路由树。
+function errorDetailToText(detail: unknown): string {
+  if (typeof detail === 'string') return detail
+  if (detail && typeof detail === 'object') {
+    const obj = detail as Record<string, unknown>
+    if (typeof obj.message === 'string' && obj.message) return obj.message
+    if (typeof obj.detail === 'string' && obj.detail) return obj.detail
+    try { return JSON.stringify(detail) } catch { return '' }
+  }
+  return ''
+}
+
+function extractErrorMessage(rawBody: string, fallback: string): string {
+  try {
+    const parsed = JSON.parse(rawBody) as Record<string, unknown>
+    return errorDetailToText(parsed.detail ?? parsed.message ?? '') || fallback
+  } catch {
+    return fallback
+  }
+}
 
 function summarizeRequestBody(body: BodyInit | null | undefined): unknown {
   if (body == null) return undefined
@@ -32,20 +61,39 @@ function summarizeRequestBody(body: BodyInit | null | undefined): unknown {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const isFormData = init?.body instanceof FormData
+type RequestOptions = RequestInit & {
+  /** 为 true 时不弹错误 toast（由调用方自行汇总提示） */
+  quiet?: boolean
+  /** 请求超时毫秒数; null 关闭。默认 30s。 */
+  timeoutMs?: number | null
+}
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+/** 同步计算型接口 (回测/筛选等) 的放宽超时。 */
+const COMPUTE_REQUEST_TIMEOUT_MS = 300_000
+
+async function request<T>(path: string, init?: RequestOptions): Promise<T> {
+  const { quiet, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...fetchInit } = init ?? {}
+  const isFormData = fetchInit.body instanceof FormData
   const headers: Record<string, string> = {}
   if (!isFormData) headers['Content-Type'] = 'application/json'
-  const method = (init?.method || 'GET').toUpperCase()
+  Object.assign(headers, fetchInit.headers as Record<string, string> | undefined)
+  const method = (fetchInit.method || 'GET').toUpperCase()
   const started = performance.now()
-  const reqBody = method === 'GET' || method === 'HEAD' ? undefined : summarizeRequestBody(init?.body ?? null)
+  const reqBody = method === 'GET' || method === 'HEAD' ? undefined : summarizeRequestBody(fetchInit.body ?? null)
+  const ctl = timeoutMs == null || fetchInit.signal ? undefined : new AbortController()
+  const timeoutSeconds = Math.round((timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS) / 1000)
+  let timer: number | undefined
+  if (ctl && timeoutMs != null) timer = window.setTimeout(() => ctl.abort(), timeoutMs)
   try {
-    const res = await fetch(`${BASE}${path}`, { ...init, headers })
+    const res = await fetch(`${BASE}${path}`, {
+      ...fetchInit,
+      headers,
+      ...(ctl ? { signal: ctl.signal } : {}),
+    })
     const duration_ms = performance.now() - started
     if (!res.ok) {
-      let detail = ''
-      try { const j = JSON.parse(await res.text()); detail = j.detail ?? j.message ?? '' } catch { /* ignore */ }
-      const msg = detail || `${res.status} ${res.statusText}`
+      const msg = extractErrorMessage(await res.text(), `${res.status} ${res.statusText}`)
       logApiCall({
         method,
         path,
@@ -56,7 +104,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         error: msg,
       })
       // 401 (未登录/会话过期) 不弹 toast — 由全局认证拦截器统一跳登录页, 避免刷屏
-      if (res.status !== 401) toast(msg, 'error')
+      if (res.status !== 401 && !quiet) toast(msg, 'error')
       throw new Error(msg)
     }
     logApiCall({
@@ -70,14 +118,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return res.json() as Promise<T>
   } catch (err) {
     const duration_ms = performance.now() - started
-    // 已在 !res.ok 分支记录过的 Error 不再重复
-    if (!(err instanceof Error && (err as any)._apiLogged)) {
-      // network failures only
-      if (!(err instanceof Error && err.message && !err.message.includes(' '))) {
-        /* fallthrough */
-      }
+    if (ctl && err instanceof DOMException && err.name === 'AbortError') {
+      const msg = `请求超时（${timeoutSeconds}s）· ${path.split('?')[0]}`
+      logApiCall({
+        method,
+        path,
+        ok: false,
+        duration_ms,
+        requestBody: reqBody,
+        error: msg,
+      })
+      if (!quiet) toast(msg, 'error')
+      throw new Error(msg)
     }
-    // 仅对真正的网络异常补一条(非我们 throw 的业务 Error)
     if (err instanceof TypeError) {
       logApiCall({
         method,
@@ -89,6 +142,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       })
     }
     throw err
+  } finally {
+    if (timer !== undefined) window.clearTimeout(timer)
   }
 }
 
@@ -240,6 +295,18 @@ export interface FinancialCashFlowRecord {
   [key: string]: any
 }
 
+export interface MarginTradingSyncResponse {
+  symbols_requested: number
+  symbols_with_data: number
+  empty_symbols: string[]
+  rows_fetched: number
+  rows_published: number
+  latest_trade_date: string | null
+  artifact_path: string
+  lineage_path: string
+  catalog_refreshed: boolean
+}
+
 /** AI 财务分析历史报告 */
 export interface AiFinancialReport {
   id: string
@@ -296,6 +363,18 @@ export interface AiStockReport {
   created_at: string
 }
 
+export interface AiPageReport {
+  id: string
+  title: string
+  route: string
+  as_of?: string | null
+  focus: string
+  summary?: string
+  content: string
+  session_id?: string
+  created_at: string
+}
+
 // ===== Kline =====
 export interface MinuteKlineRow {
   datetime: string
@@ -304,7 +383,7 @@ export interface MinuteKlineRow {
   low: number
   close: number
   volume: number
-  amount: number
+  amount: number | null
 }
 
 export interface KlineRow {
@@ -315,6 +394,8 @@ export interface KlineRow {
   low: number
   close: number
   volume?: number
+  prev_close?: number | null
+  change_amount?: number | null
   change_pct?: number
   ma5?: number | null
   ma20?: number | null
@@ -327,12 +408,28 @@ export interface KlineRow {
   [key: string]: any
 }
 
+export interface KlineDailyResponse {
+  symbol: string
+  name?: string
+  stock_info?: { name?: string; total_shares?: number; float_shares?: number; ext?: Record<string, unknown> }
+  rows: KlineRow[]
+  source?: string
+}
+
+export interface KlineDailyLatestResponse {
+  symbol: string
+  row: KlineRow | null
+  source: 'live' | 'none'
+}
+
 // ===== Watchlist =====
 export interface WatchlistEntry {
   symbol: string
   added_at: string
   note?: string
   name?: string | null
+  group_ids?: string[]
+  group_id?: string | null
 }
 
 export interface Quote {
@@ -375,6 +472,8 @@ export interface ScreenerStrategy {
   name: string
   description: string
   source?: string
+  timeframes?: string[]
+  asset_types?: string[]
 }
 
 export interface ScreenerResult {
@@ -402,6 +501,31 @@ export interface MarketSnapshotRow {
   [key: string]: any
 }
 
+export interface MarketSnapshotCoverageMarket {
+  instruments: number
+  priced: number
+  coverage_pct: number
+}
+
+export interface MarketSnapshotCoverage {
+  instrument_rows: number
+  snapshot_rows: number
+  priced_rows: number
+  missing_rows: number
+  coverage_pct: number
+  markets: Record<string, MarketSnapshotCoverageMarket>
+}
+
+export interface MarketSnapshotResponse {
+  as_of: string | null
+  source: 'quote_snapshot+enriched' | 'quote_snapshot' | 'enriched' | 'none'
+  fetched_at?: string | null
+  scope?: string | null
+  quality_status?: string[]
+  coverage: MarketSnapshotCoverage
+  rows: MarketSnapshotRow[]
+}
+
 export interface OverviewDimensionRankItem {
   name: string
   count: number
@@ -418,6 +542,12 @@ export interface OverviewDimensionRankItem {
 
 export interface OverviewMarket {
   as_of: string | null
+  data_mode?: 'official' | 'intraday_snapshot' | null
+  official_as_of?: string | null
+  snapshot_as_of?: string | null
+  available_as_of?: string | null
+  indicators_source?: 'official' | 'intraday_approx' | null
+  indicators_approx?: boolean
   quote_status: {
     enabled?: boolean
     running?: boolean
@@ -440,18 +570,110 @@ export interface OverviewMarket {
   }
   amount: { total: number; avg: number }
   boards: { board: string; count: number; up: number; down: number; up_pct: number; amount: number }[]
-  limit: { limit_up: number; broken: number; failed: number; limit_down: number; max_boards: number; seal_rate?: number; tiers: { boards: number; count: number }[]; sealed_ready?: boolean; fake_up?: number; fake_down?: number }
+  limit: { limit_up: number; broken: number; failed: number; limit_down: number; max_boards: number; seal_rate?: number | null; tiers: { boards: number; count: number }[]; sealed_ready?: boolean; fake_up?: number; fake_down?: number; ready?: boolean; source?: 'official' | 'intraday_approx' | 'hithink_official_pool' | null; source_as_of?: string | null }
   distribution: { label: string; count: number; pct: number }[]
-  trend: { above_ma5: number; above_ma20: number; above_ma60: number; above_ma5_pct: number; above_ma20_pct: number; above_ma60_pct: number; new_high: number; new_low: number }
-  activity: { avg_turnover: number; high_turnover: number; high_vol_ratio: number; vol_ratio: number }
-  radar: { key: string; label: string; value: number }[]
-  emotion: { score: number; label: string }
+  trend: { above_ma5: number; above_ma20: number; above_ma60: number; above_ma5_pct: number; above_ma20_pct: number; above_ma60_pct: number; new_high: number; new_low: number; ready?: boolean; extremes_ready?: boolean }
+  activity: { avg_turnover: number; high_turnover: number; high_vol_ratio: number | null; vol_ratio: number | null; vol_ready?: boolean }
+  radar: { key: string; label: string; value: number | null; ready?: boolean }[]
+  emotion: { score: number; label: string; partial?: boolean; ready_count?: number; note?: string | null }
   top_gainers: MarketSnapshotRow[]
   top_losers: MarketSnapshotRow[]
   turnover_leaders: MarketSnapshotRow[]
   active_leaders: MarketSnapshotRow[]
   concept_rank: { leading: OverviewDimensionRankItem[]; lagging: OverviewDimensionRankItem[] }
   industry_rank: { leading: OverviewDimensionRankItem[]; lagging: OverviewDimensionRankItem[] }
+}
+
+export interface MarketPulsePoint {
+  event_id: string
+  trade_date: string
+  event_time: string
+  minute: number
+  benchmark_symbol: string
+  benchmark_name: string
+  last_price: number
+  change_ratio: number
+  preclose: number
+  open: number
+  volume: number
+  amount: number
+  source: string
+  unit_version: string
+}
+
+export interface MarketPulseEvent {
+  event_id: string
+  trade_date: string
+  event_time: string
+  minute: number
+  benchmark_symbol: string
+  benchmark_name: string
+  sector_code: string
+  sector_name: string
+  direction: 'up' | 'down'
+  article_id: number
+  source: string
+  unit_version: string
+}
+
+export interface MarketPulseResponse {
+  available: boolean
+  requested_date: string | null
+  resolved_date: string | null
+  updated_at: string | null
+  benchmark: { symbol: string; name: string }
+  points: MarketPulsePoint[]
+  events: MarketPulseEvent[]
+  minute_rows: number
+  event_rows: number
+  source: 'local'
+  producer: 'cls'
+  unit_version: 'market_pulse_v1'
+}
+
+export interface MarketPulseSyncResult {
+  requested_date: string
+  resolved_date: string
+  minute_rows: number
+  event_rows: number
+  rows_published: number
+  artifact_path: string
+  lineage_path: string
+  catalog_refreshed: boolean
+}
+
+export type HithinkSyncTarget = 'limit_pool' | 'dragon_tiger' | 'auction' | 'valuation'
+
+export interface HithinkDatasetPublishStats {
+  dataset_id: string
+  rows_published: number
+  artifact_path: string
+  lineage_path: string
+  extra: Record<string, unknown>
+}
+
+export interface HithinkLocalQueryResponse {
+  available: boolean
+  dataset_id: string
+  requested_date: string | null
+  resolved_date: string | null
+  rows: Record<string, unknown>[]
+  row_count: number
+  source: 'local'
+  producer: 'hithink_fuyao'
+  unit_version: string
+  volume_unit?: 'lot' | null
+  amount_unit?: 'CNY'
+  history_guarantee?: 'latest_snapshot_only'
+}
+
+export interface HithinkSyncResult {
+  requested_date: string
+  resolved_date: string
+  rows_published: number
+  datasets: HithinkDatasetPublishStats[]
+  catalog_refreshed: string[]
+  source: 'hithink_fuyao'
 }
 
 // ===== 概念涨幅轮动矩阵 =====
@@ -487,16 +709,22 @@ export interface StrategyParamDef {
 }
 
 export interface StrategyDetail {
+  composite_children?: { strategy_id: string; weight: number }[] | null
   id: string
   name: string
   description: string
   tags: string[]
-  source: 'builtin' | 'custom' | 'ai'
+  source: 'builtin' | 'custom' | 'ai' | 'composite'
+  research_only?: boolean
   version: string
   basic_filter: Record<string, any>
   params: StrategyParamDef[]
   params_defaults: Record<string, any>
   scoring: Record<string, number>
+  scoring_directions?: Record<string, 'high' | 'low' | string>
+  execution_backend?: string
+  asset_types?: string[]
+  timeframes?: string[]
   entry_signals: string[]
   exit_signals: string[]
   stop_loss: number | null
@@ -510,6 +738,8 @@ export interface StrategyDetail {
   order_by: string
   descending: boolean
   limit: number
+  rules?: string
+  owner_user_id?: string | null
 }
 
 // ===== Custom Signals (自定义信号) =====
@@ -517,6 +747,8 @@ export interface CustomSignalCondition {
   left: string     // 字段名
   op: string       // > >= < <= == !=
   right: string    // "field:xxx" 或数字字符串
+  leftDays?: number
+  rightDays?: number
 }
 
 export interface CustomSignal {
@@ -530,6 +762,9 @@ export interface CustomSignal {
 export interface CustomSignalOptions {
   fields: { key: string; label: string }[]
   operators: string[]
+  /** string 扩展字段 (概念/行业归属): 这些字段用 stringOperators + 字符串右值 */
+  stringFields?: string[]
+  stringOperators?: string[]
   kinds: { key: string; label: string }[]
 }
 
@@ -544,12 +779,14 @@ export interface MonitorRule {
   id: string
   name: string
   enabled: boolean
-  type: 'strategy' | 'signal' | 'price' | 'market'
-  scope: 'symbols' | 'all' | 'sector'
+  type: 'strategy' | 'signal' | 'price' | 'market' | 'abnormal' | 'sector' | 'volume_delta' | 'ladder' | 'date'
+  scope: 'symbols' | 'all' | 'sector' | 'watchlist_group'
   symbols: string[]
   sector?: string | null
+  group_id?: string | null
   strategy_id?: string | null
-  direction: 'entry' | 'exit' | 'both'
+  asset_type?: 'stock' | 'etf' | 'index' | string | null
+  direction: 'entry' | 'exit' | 'both' | 'up' | 'down'
   conditions: MonitorCondition[]
   logic: 'and' | 'or'
   cooldown_seconds: number
@@ -557,7 +794,47 @@ export interface MonitorRule {
   message: string
   webhook_url?: string
   webhook_enabled?: boolean
+  webhook_channels?: string[]
+  runtime_warning?: string | null
   created_at?: string
+  threshold_pct?: number | null
+  threshold_amount?: number | null
+  threshold_volume?: number | null
+  window_minutes?: number | null
+  sector_trigger?: string | null
+  sector_targets?: Array<{ key?: string; kind?: string; name?: string; code?: string } | string>
+  abnormal_window?: string | number | null
+  metric?: string | null
+  basic_filter?: Record<string, unknown> | null
+  score_min?: number | null
+  score_max?: number | null
+  notify_events?: string[]
+  lot_id?: string
+  remind_date?: string | null
+  lead_days?: number
+  threshold?: number
+}
+
+export interface Lot {
+  id: string
+  symbol: string
+  qty: number
+  cost_price: number
+  buy_date?: string | null
+  target_pct: number
+  stop_pct: number
+  remind_date?: string | null
+  lead_days: number
+  created_at?: string
+}
+
+export interface EmailSmtpConfig {
+  host: string
+  port: number
+  security: 'ssl' | 'starttls' | 'none'
+  username: string
+  from_address: string
+  to_addresses: string[]
 }
 
 export interface MonitorRuleOptions {
@@ -655,6 +932,56 @@ export interface FactorColumn {
   desc: string
 }
 
+// ===== Factor Library (注册表, P1) =====
+export type FactorKind = 'base' | 'virtual' | 'composite' | 'custom'
+export type FactorStability = 'stable' | 'experimental' | 'deprecated'
+
+export interface FactorLibraryItem {
+  id: string
+  label: string
+  group: string
+  kind: FactorKind
+  version: number
+  formula: string
+  direction: 'high' | 'low' | 'none'
+  unit: string
+  warmup_bars: number
+  pit: boolean
+  asset_types: string[]
+  stability: FactorStability
+  scale_free: boolean
+  dependencies: string[]
+}
+
+export interface FactorDslError {
+  code: string
+  message: string
+  position: { offset: number; line: number }
+  detail?: Record<string, unknown>
+}
+
+export interface FactorValidateResponse {
+  ok: boolean
+  errors: FactorDslError[]
+  dependencies: string[]
+  referenced_factors: string[]
+  warmup_bars: number
+  cross_sectional: boolean
+}
+
+export interface FactorTrialResponse {
+  ok: boolean
+  n_dates: number
+  null_ratio: number | null
+  ic_mean: number | null
+  ic_std: number | null
+  ir: number | null
+  ic_win_rate: number | null
+  t_newey_west?: number | null
+  ic_series: { date: string; ic: number; n_symbols: number }[]
+  message?: string
+}
+
 export interface GroupStat {
   group: number
   label: string
@@ -714,6 +1041,12 @@ export interface StrategyBacktestResult {
   drawdown_curve: { date: string; value: number }[]
   benchmark_curve?: { date: string; value: number; close?: number; name?: string; symbol?: string }[]
   trades: StrategyBacktestTrade[]
+  /** v1 因子归因: 入场信号日因子值快照 × 成交盈亏 (胜/败单均值对比); 无评分因子或分钟路径时为 null */
+  factor_attribution?: {
+    factors: { factor: string; win_mean: number | null; lose_mean: number | null; win_n: number; lose_n: number }[]
+    n_win: number
+    n_lose: number
+  } | null
   per_symbol_stats: {
     symbol: string
     n_trades: number
@@ -742,6 +1075,50 @@ export interface StrategyBacktestResult {
   error: string | null
 }
 
+export interface StrategyBacktestHistoryItem {
+  run_id: string
+  saved_at: string
+  strategy_id: string
+  strategy_name: string
+  strategy_source?: string | null
+  strategy_owner_user_id: string
+  start?: string | null
+  end?: string | null
+  total_return?: number | null
+  trade_count: number
+  error?: string | null
+}
+
+// ===== Portfolio (per-account ledger; no order execution) =====
+export interface PortfolioHolding {
+  symbol: string
+  name?: string | null
+  quantity: number
+  avg_cost: number
+  note: string
+  close?: number | null
+  change_pct?: number | null
+  cost_value: number
+  market_value?: number | null
+  pnl_amount?: number | null
+  pnl_pct?: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PortfolioSnapshot {
+  as_of: string | null
+  holdings: PortfolioHolding[]
+  summary: {
+    holding_count: number
+    priced_count: number
+    total_cost: number
+    total_market_value: number | null
+    total_pnl: number | null
+    total_pnl_pct: number | null
+  }
+}
+
 // ===== Settings =====
 
 /** 端点发现清单 —— 对应 tickflow.org/endpoints.json */
@@ -765,6 +1142,25 @@ export interface EndpointManifest {
   source?: 'remote' | 'fallback'
 }
 
+export interface AiSubscriptionSource {
+  provider: string
+  label: string
+  website: string
+  website_label: string
+  description: string
+  base_url: string
+  default_base_url?: string
+  default_model: string
+  models: string[]
+  ready: boolean
+  active: boolean
+  model: string
+  credential_source?: 'server_oauth' | 'api_key' | null
+  message: string
+  has_api_key?: boolean
+  api_key_masked?: string
+}
+
 export interface SettingsState {
   mode: 'none' | 'free' | 'api_key'
   tickflow_api_key_masked: string
@@ -774,6 +1170,8 @@ export interface SettingsState {
   probe_log: string[]
   missing_caps: string[]
   extras_caps: string[]
+  is_admin?: boolean
+  credential_management?: 'owner' | 'admin_only'
   // 首次使用引导
   onboarding_completed: boolean
   // AI 配置
@@ -785,6 +1183,19 @@ export interface SettingsState {
   ai_model: string
   ai_codex_command?: string
   ai_user_agent: string
+  ai_access?: {
+    mode: 'self_hosted' | 'cloud_subscription'
+    state: 'active' | 'not_configured' | 'subscription_required' | 'service_unavailable'
+    allowed: boolean
+    entitled: boolean
+    configured: boolean
+    provider: string
+    model: string
+    plan?: string | null
+    message: string
+    credential_source?: 'server_oauth' | 'api_key' | null
+  }
+  ai_subscriptions?: AiSubscriptionSource[]
   ai_xai?: {
     auth_type?: string | null
     has_oauth?: boolean
@@ -807,6 +1218,116 @@ export interface SaveTickflowKeyResult {
   capabilities_count?: number
 }
 
+
+export type RegimeState = 'strong' | 'lean_strong' | 'range' | 'lean_weak' | 'weak'
+
+export const REGIME_STATE_LABELS: Record<RegimeState, string> = {
+  strong: '强势',
+  lean_strong: '偏强',
+  range: '震荡',
+  lean_weak: '偏弱',
+  weak: '弱势',
+}
+
+export const REGIME_STATE_COLORS: Record<RegimeState, string> = {
+  strong: '#ef4444',
+  lean_strong: '#f97316',
+  range: '#6b7280',
+  lean_weak: '#3b82f6',
+  weak: '#10b981',
+}
+
+export const MARKET_PHASE_COLORS: Record<MarketPhase, string> = {
+  ice: '#38bdf8',
+  ignite: '#f59e0b',
+  rally: '#ef4444',
+  climax: '#d946ef',
+  ebb: '#14b8a6',
+  repair: '#94a3b8',
+}
+
+export const MARKET_PHASE_ORDER: MarketPhase[] = ['ice', 'ignite', 'rally', 'climax', 'ebb', 'repair']
+
+export interface RegimeRow {
+  date: string
+  state: RegimeState
+  score: number
+  limit_up: number
+  limit_down: number
+  broken_limit: number
+  max_consecutive: number
+  seal_rate: number
+  up_count: number
+  down_count: number
+  up_ratio: number
+  index_pct: number
+  above_ma20_pct: number
+  total_amount: number
+  avg_turnover: number
+  avg_pct?: number
+  median_pct?: number
+  strong_up_pct?: number
+  strong_down_pct?: number
+  phase?: 'ice' | 'ignite' | 'rally' | 'climax' | 'ebb' | 'repair' | null
+  first_board?: number | null
+  ge2_count?: number | null
+  promo_rate?: number | null
+  promo_pool?: number | null
+  ladder_completeness?: number | null
+  profit_score?: number
+  speculation_score?: number
+  resilience_score?: number
+  trend_score?: number
+}
+
+export interface RegimeHistory {
+  rows: RegimeRow[]
+  total: number
+}
+
+export interface RegimeStateItem {
+  state: RegimeState
+  label: string
+  count: number
+  pct: number
+}
+
+export interface RegimeStates {
+  distribution: RegimeStateItem[]
+  days: number
+}
+
+export interface RegimeCoverage {
+  rows: number
+  earliest_date: string | null
+  latest_date: string | null
+}
+
+export interface WecomBotStatus {
+  enabled: boolean
+  running: boolean
+  connected: boolean
+  bot_id_configured: boolean
+  secret_configured: boolean
+  last_error: string
+}
+
+export interface WatchlistImportCandidate {
+  code: string
+  symbol: string | null
+  name: string | null
+  matched: boolean
+  already_in_watchlist: boolean
+}
+
+export interface WatchlistImportResult {
+  provider: string
+  codes: string[]
+  candidates: WatchlistImportCandidate[]
+  matched_count: number
+  unmatched_count: number
+}
+
 export interface Preferences {
   realtime_quotes_enabled: boolean
   indices_nav_pinned: boolean
@@ -815,15 +1336,28 @@ export interface Preferences {
   daily_data_provider?: string
   adj_factor_provider?: string
   financial_provider?: string
+  financial_data_provider?: string
   pool_provider?: string
   minute_data_provider?: string
+  full_minute_data_provider?: string
+  minute_history_days?: number | null
   realtime_data_provider?: string
+  depth5_data_provider?: string
+  minute_batch_compress?: boolean
+  daily_batch_compress?: boolean
+  watchlist_groups_in_nav?: boolean
+  minute_refresh_enabled?: boolean
+  minute_refresh_interval?: number
+  minute_intraday_refresh?: boolean
+  minute_intraday_refresh_interval?: number
+  data_source_job_timeout_s?: number
+  data_source_long_job_timeout_s?: number
+  mining_schedule_enabled?: boolean
+  mining_schedule_weekday?: number
+  mining_budget_profile?: 'exploratory' | 'balanced' | 'strict'
   realtime_watchlist_symbols?: string[]
   realtime_pull_stock?: boolean
   realtime_pull_etf?: boolean
-  realtime_pull_index?: boolean
-  realtime_index_mode?: 'core' | 'all'
-  realtime_index_symbols?: string[]
   pipeline_pull_a_share: boolean
   pipeline_pull_etf: boolean
   pipeline_pull_index: boolean
@@ -832,6 +1366,12 @@ export interface Preferences {
   financial_max_periods?: number
   pipeline_index_symbols: string
   pipeline_schedule: { hour: number; minute: number }
+  pipeline_regime_enabled?: boolean
+  regime_batch_days?: number
+  regime_warmup_days?: number
+  wecom_bot_id?: string
+  wecom_bot_secret?: string
+  wecom_bot_enabled?: boolean
   instruments_schedule: { hour: number; minute: number }
   enriched_batch_size: number
   index_daily_batch_size: number
@@ -840,13 +1380,24 @@ export interface Preferences {
   depth_finalize_time: { hour: number; minute: number }
   review_schedule: { enabled: boolean; hour: number; minute: number }
   review_push_channels: string[]
+  review_push_mode?: 'auto' | 'manual'
   sse_refresh_pages: Record<string, boolean>
   strategy_monitor_enabled: boolean
   strategy_monitor_ids: string[]
   system_notify_enabled: boolean
   feishu_webhook_url?: string
   feishu_webhook_secret?: string
+  wecom_webhook_url?: string
+  custom_webhook_url?: string
+  custom_webhook_secret_set?: boolean
+  email_smtp_config?: EmailSmtpConfig
+  email_smtp_password_set?: boolean
   webhook_enabled_default?: boolean
+  webhook_default_channels?: string[]
+  monitor_ext_fields?: {
+    concept?: MonitorExtFieldItem | null
+    industry?: MonitorExtFieldItem | null
+  }
   sidebar_index_symbols: string[]
   nav_order: string[]
   nav_hidden: string[]
@@ -969,6 +1520,95 @@ export interface CatalogResponse {
   stale: boolean
 }
 
+export type SourceProvenanceSubjectKind = 'dataset' | 'extension'
+export type SourceProvenanceIssueSeverity = 'info' | 'warning' | 'error'
+
+export interface SourceProvenanceProducer {
+  producer_id: string
+  name: string
+  kind: string
+  role: string
+  access?: string | null
+  note?: string | null
+}
+
+export interface SourceProvenanceRun {
+  run_id: string
+  status: string
+  operation: string
+  provider?: string | null
+  error_code?: string | null
+  error_message?: string | null
+  finished_at?: string | null
+}
+
+export interface SourceProvenanceLocalChain {
+  providers: string[]
+  adapter_paths: string[]
+  physical_paths: string[]
+  lineage_sources: string[]
+  lifecycle?: string | null
+  quality_status?: string | null
+  materialized: boolean
+  serving_ready: boolean
+  latest_time?: string | null
+  checkpoint_watermark?: string | null
+  latest_run?: SourceProvenanceRun | null
+}
+
+export interface SourceProvenanceGithubReference {
+  project_id: string
+  name: string
+  repo_url: string
+  pinned_ref?: string | null
+  commit_url?: string | null
+  reviewed_at?: string | null
+  roles: string[]
+  contributions: string | string[]
+  runtime_dependency: boolean
+  adoption_status: string
+  evidence_level: string
+}
+
+export interface SourceProvenanceCandidate extends SourceProvenanceGithubReference {
+  status?: string
+  reason?: string
+}
+
+export interface SourceProvenanceIssue {
+  code: string
+  severity: SourceProvenanceIssueSeverity
+  message: string
+}
+
+export interface SourceProvenanceExplanation {
+  category: string
+  cadence: string
+  description: string
+  provides: string
+}
+
+export interface SourceProvenanceRecord {
+  subject_id: string
+  subject_kind: SourceProvenanceSubjectKind
+  title: string
+  explanation?: SourceProvenanceExplanation | null
+  summary: string
+  true_producers: SourceProvenanceProducer[]
+  local_chain: SourceProvenanceLocalChain
+  github_references: SourceProvenanceGithubReference[]
+  replacement_candidates: SourceProvenanceCandidate[]
+  issues: SourceProvenanceIssue[]
+}
+
+export interface SourceProvenanceResponse {
+  generated_at: string
+  catalog_refreshed_at: string | null
+  catalog_stale: boolean
+  records: SourceProvenanceRecord[]
+  missing_reference_count: number
+}
+
 export interface SyncRun {
   run_id: string
   dataset_id: string
@@ -996,22 +1636,522 @@ export interface CatalogRunsResponse {
   runs: SyncRun[]
 }
 
+export interface DataSourceHealth {
+  provider: string
+  operation: string
+  last_success_at: string | null
+  last_failure_at: string | null
+  consecutive_failures: number
+  cooldown_until: string | null
+  last_error_code: string | null
+}
+
+export interface DatasetControlPolicy {
+  dataset_id: string
+  phase: string
+  max_lag_trading_days: number | null
+  sync_mode: string | null
+  schedule_cron: string | null
+  supports_backfill: boolean
+  supports_repair: boolean
+  updated_at: string | null
+}
+
+export interface DataSyncCheckpoint {
+  dataset_id: string
+  scope: string
+  watermark: string | null
+  updated_at: string | null
+  cursor: Record<string, unknown>
+  last_success_run_id: string | null
+}
+
+export interface DataQueryAudit {
+  audit_id: string
+  created_at: string
+  dataset_id: string
+  tool_name: string | null
+  row_count: number
+  duration_ms: number | null
+  status: string
+  error_code: string | null
+}
+
+export interface UnregisteredPhysicalData {
+  key: string
+  title: string
+  relative_path: string
+  files: number
+  bytes: number
+  updated_at: string | null
+}
+
+export interface DataControlSummary {
+  generated_at: string
+  catalog_refreshed_at: string | null
+  catalog_stale: boolean
+  source_health: DataSourceHealth[]
+  dataset_policies: DatasetControlPolicy[]
+  sync_checkpoints: DataSyncCheckpoint[]
+  query_audits: DataQueryAudit[]
+  unregistered_physical: UnregisteredPhysicalData[]
+  physical_scan_scope: 'reference'
+}
+
 // ===== API surface =====
+export interface AuthUser {
+  id: string
+  username: string
+  role: 'admin' | 'user'
+}
+
+export interface AuthQuota {
+  metric: string
+  day: string
+  limit: number
+  used: number
+  remaining: number
+}
+
+export interface AuthStatus {
+  configured: boolean
+  authenticated: boolean
+  multi_user?: boolean
+  registration_enabled?: boolean
+  invite_required?: boolean
+  user?: AuthUser | null
+  ai_quota?: AuthQuota | null
+}
+
+export interface HermesAgentStatus {
+  connected: boolean
+  profile: string | null
+  isolation?: 'dedicated_profile'
+  gateway_kind?: 'managed_local' | 'unavailable'
+  gateway_running?: boolean
+  gateway_startable?: boolean
+  can_start_gateway?: boolean
+  model?: string
+  model_source?: 'server_grok_subscription' | 'server_subscription'
+  model_plan?: string
+  model_subscription_active?: boolean
+  api_model?: string
+  version?: string
+  enabled_toolsets?: string[]
+  memory_enabled?: boolean
+  memory_provider?: string | null
+  enabled_mcp_servers?: string[]
+  enabled_skills?: string[]
+  lieflat_charts_enabled?: boolean
+  data_tool_enabled?: boolean
+  data_view_count?: number
+  message?: string
+  detail?: string
+}
+
+export interface HermesSession {
+  id: string
+  title?: string | null
+  preview?: string | null
+  model?: string | null
+  started_at?: number | null
+  last_active?: number | null
+  message_count?: number | null
+}
+
+export interface HermesMessage {
+  id?: string
+  role: 'user' | 'assistant' | 'tool' | 'system'
+  content: string
+  timestamp?: number | null
+}
+
+export type AdminProfileRuntimeStatus = 'ready' | 'not_ready' | 'unavailable' | 'disabled'
+
+export interface AdminUserSummary {
+  id: string
+  username: string
+  role: 'admin' | 'user'
+  status: string
+  ai_daily_limit: number | null
+  created_at: number
+  updated_at: number
+  profile_name?: string | null
+  profile_status?: 'pending' | 'ready' | 'error' | null
+  profile_last_error?: string | null
+  profile_updated_at?: number | null
+  ai_requests_today: number
+  ai_requests_7d: number
+  active_login_sessions: number
+  last_login_at?: number | null
+  conversation_count: number | null
+  last_conversation_at?: number | null
+  conversation_count_capped: boolean
+  profile_runtime_status: AdminProfileRuntimeStatus
+  strategy_count?: number
+}
+
+export interface AdminUserStrategySummary {
+  id: string
+  name: string
+  description: string
+  source: 'ai' | 'custom'
+  rules: string
+  updated_at: string
+}
+
+export interface AdminUsersPayload {
+  users: AdminUserSummary[]
+  summary: {
+    total_accounts: number
+    regular_users: number
+    active_users_today: number
+    ai_requests_today: number
+    profiles_ready: number
+  }
+}
+
+export interface HermesChatEvent {
+  type: 'meta' | 'delta' | 'tool' | 'error' | 'done'
+  session_id?: string
+  content?: string
+  message?: string
+  name?: string
+  status?: string
+  usage?: Record<string, unknown>
+  runtime?: Record<string, unknown>
+}
+
+
+
+import type {
+  AbnormalIntradayPayload,
+  AbnormalIntradayRow,
+  AbnormalOverview,
+  AbnormalRow,
+  AbnormalStatus,
+  AbnormalWindowInfo,
+  AuctionBenchmarkItem,
+  AuctionBenchmarkPayload,
+  AuthConfig,
+  AutoScreening,
+  CapabilityCandidate,
+  CapabilityMatrix,
+  CapabilityRoute,
+  ExternalReadonlySources,
+  MarginTradingQueryResponse,
+  CompositeChildInfo,
+  CustomSignalAIGenerateResult,
+  CustomSignalFieldGroup,
+  CustomSourceConfig,
+  DataSourceItem,
+  DataSourceLoadError,
+  DataSourceTestResult,
+  DataSourcesResponse,
+  DatasetConfig,
+  DimensionIntradayPoint,
+  DimensionIntradayResult,
+  DimensionMembersResult,
+  DragonTigerHotMoney,
+  DragonTigerPayload,
+  DragonTigerStockItem,
+  ExtDataDetectUrlRequest,
+  ExtDataDetectUrlResult,
+  FactorBatchItem,
+  FactorBatchResult,
+  IntradaySignalKey,
+  MainlineFilter,
+  MainlineLeader,
+  MainlineMemberStat,
+  MainlineResult,
+  MainlineRow,
+  MiningAvailability,
+  MiningAutoStartPayload,
+  MiningAutoStartResponse,
+  MiningBudgetProfile,
+  MiningCandidateGate,
+  MiningCandidateRow,
+  MiningEvent,
+  MiningFactorRow,
+  MiningFoldRow,
+  MiningRegimeRow,
+  MiningRequestSummary,
+  MiningRequestV1,
+  MiningResult,
+  MiningResultSummary,
+  MiningRun,
+  MiningRunProgress,
+  MiningRunStatus,
+  MiningScheduleConfig,
+  MiningTelemetry,
+  MinuteKlineSession,
+  PhaseSegment,
+  PhaseSegments,
+  PluginDataSourceItem,
+  PluginKeyResult,
+  PriceLimitInfo,
+  ProviderField,
+  ResearchCandidate,
+  ResearchCandidateCreate,
+  ResearchCandidateKind,
+  ResearchCandidateStatus,
+  ScoringDirection,
+  ScreenerCachedResult,
+  ScreenerCachedSummary,
+  ScreenerResultSummary,
+  SectorKind,
+  SectorMonitorTarget,
+  StrategyBuildResult,
+  StrategyBuildStreamEvent,
+  StrategyCodeSaveResult,
+  StrategyLoadError,
+  StrategyNotifyEvent,
+  VDBasicFilter,
+  WatchlistGroup,
+  WatchlistGroupColor,
+} from './api-v02'
+export type {
+  AbnormalIntradayPayload,
+  AbnormalIntradayRow,
+  AbnormalOverview,
+  AbnormalRow,
+  AbnormalStatus,
+  AbnormalWindowInfo,
+  AuctionBenchmarkItem,
+  AuctionBenchmarkPayload,
+  AuthConfig,
+  AutoScreening,
+  CapabilityCandidate,
+  CapabilityMatrix,
+  CapabilityRoute,
+  ExternalReadonlySources,
+  MarginTradingQueryResponse,
+  CompositeChildInfo,
+  CustomSignalAIGenerateResult,
+  CustomSignalFieldGroup,
+  CustomSourceConfig,
+  DataSourceItem,
+  DataSourceLoadError,
+  DataSourceTestResult,
+  DataSourcesResponse,
+  DatasetConfig,
+  DimensionIntradayPoint,
+  DimensionIntradayResult,
+  DimensionMembersResult,
+  DragonTigerHotMoney,
+  DragonTigerPayload,
+  DragonTigerStockItem,
+  ExtDataDetectUrlRequest,
+  ExtDataDetectUrlResult,
+  FactorBatchItem,
+  FactorBatchResult,
+  IntradaySignalKey,
+  MainlineFilter,
+  MainlineLeader,
+  MainlineMemberStat,
+  MainlineResult,
+  MainlineRow,
+  MarketPhase,
+  MiningAvailability,
+  MiningAutoStartPayload,
+  MiningAutoStartResponse,
+  MiningBudgetProfile,
+  MiningCandidateGate,
+  MiningCandidateRow,
+  MiningEvent,
+  MiningFactorRow,
+  MiningFoldRow,
+  MiningRegimeRow,
+  MiningRequestSummary,
+  MiningRequestV1,
+  MiningResult,
+  MiningResultSummary,
+  MiningRun,
+  MiningRunProgress,
+  MiningRunStatus,
+  MiningScheduleConfig,
+  MiningTelemetry,
+  MinuteKlineSession,
+  MonitorExtFieldItem,
+  PhaseSegment,
+  PhaseSegments,
+  PluginDataSourceItem,
+  PluginKeyResult,
+  PriceLimitInfo,
+  ProviderField,
+  ResearchCandidate,
+  ResearchCandidateCreate,
+  ResearchCandidateKind,
+  ResearchCandidateStatus,
+  ScoringDirection,
+  ScreenerCachedResult,
+  ScreenerCachedSummary,
+  ScreenerResultSummary,
+  SectorKind,
+  SectorMonitorTarget,
+  StrategyBuildResult,
+  StrategyBuildStreamEvent,
+  StrategyCodeSaveResult,
+  StrategyLoadError,
+  StrategyNotifyEvent,
+  VDBasicFilter,
+  WatchlistGroup,
+  WatchlistGroupColor,
+}
+export { MARKET_PHASE_LABELS } from './api-v02'
+
 export const api = {
-  health: () => request<{ status: string; version: string; mode: string }>('/health'),
+  health: () => request<{
+    status: string
+    version: string
+    mode: string
+    release_channel?: string
+    build_sha?: string
+  }>('/health'),
+
+  newsMarket: () => request<MarketNewsResponse>('/api/news/market'),
+  newsRefreshMarket: (source: MarketSourceId | 'all' = 'all') =>
+    request<MarketNewsResponse>('/api/news/market/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ source }),
+      timeoutMs: 60_000,
+    }),
+  newsPolicy: (opts?: { department?: string; keyword?: string; page?: number; pageSize?: number }) => {
+    const query = new URLSearchParams()
+    if (opts?.department) query.set('department', opts.department)
+    if (opts?.keyword) query.set('keyword', opts.keyword)
+    if (opts?.page) query.set('page', String(opts.page))
+    if (opts?.pageSize) query.set('page_size', String(opts.pageSize))
+    const suffix = query.toString()
+    return request<PolicyNewsResponse>(`/api/news/policy${suffix ? `?${suffix}` : ''}`)
+  },
+  newsRefreshPolicy: (department = '') =>
+    request<PolicyNewsResponse>('/api/news/policy/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ department }),
+      timeoutMs: 180_000,
+    }),
+  newsDepartments: () => request<DepartmentCatalog>('/api/news/policy/departments'),
+  newsRefreshDepartments: () =>
+    request<DepartmentCatalog>('/api/news/policy/departments/refresh', { method: 'POST', timeoutMs: 60_000 }),
+  newsKeyDepartments: () => request<KeyDepartments>('/api/news/policy/key-departments'),
+  newsSaveKeyDepartments: (departments: string[]) =>
+    request<KeyDepartments>('/api/news/policy/key-departments', {
+      method: 'POST',
+      body: JSON.stringify({ departments }),
+    }),
+
+  // ===== Per-account Hermes Agent =====
+  hermesAgentStatus: () =>
+    request<HermesAgentStatus>('/api/hermes-agent/status'),
+
+  hermesStartGateway: () =>
+    request<{ ok: boolean; started: boolean; already_running: boolean; pid?: number | null; base_url?: string; message?: string }>(
+      '/api/hermes-agent/gateway/start',
+      { method: 'POST' },
+    ),
+
+  hermesCreateSession: (title = '') =>
+    request<{ session: HermesSession }>('/api/hermes-agent/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ title }),
+    }),
+
+  hermesSessions: () =>
+    request<{ sessions: HermesSession[] }>('/api/hermes-agent/sessions'),
+
+  // ===== Administrator-only account insight =====
+  adminUsers: () =>
+    request<AdminUsersPayload>('/api/admin/users'),
+
+  adminUserStrategies: (userId: string) =>
+    request<{ user: AuthUser; strategies: AdminUserStrategySummary[] }>(
+      `/api/admin/users/${encodeURIComponent(userId)}/strategies`,
+    ),
+
+  adminUserSessions: (userId: string) =>
+    request<{ user: AuthUser; sessions: HermesSession[]; has_more: boolean }>(
+      `/api/admin/users/${encodeURIComponent(userId)}/conversations`,
+    ),
+
+  adminUserMessages: (userId: string, sessionId: string) =>
+    request<{ user: AuthUser; session_id: string; messages: HermesMessage[] }>(
+      `/api/admin/users/${encodeURIComponent(userId)}/conversations/${encodeURIComponent(sessionId)}/messages`,
+    ),
+
+  hermesRenameSession: (sessionId: string, title: string) =>
+    request<{ session: HermesSession }>(
+      `/api/hermes-agent/sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ title }),
+      },
+    ),
+
+  hermesDeleteSession: (sessionId: string) =>
+    request<{ object: string; id: string; deleted: boolean }>(
+      `/api/hermes-agent/sessions/${encodeURIComponent(sessionId)}`,
+      { method: 'DELETE' },
+    ),
+
+  hermesSessionMessages: (sessionId: string) =>
+    request<{ session_id: string; messages: HermesMessage[] }>(
+      `/api/hermes-agent/sessions/${encodeURIComponent(sessionId)}/messages`,
+    ),
+
+  async *hermesChatStream(sessionId: string, message: string): AsyncGenerator<HermesChatEvent> {
+    const res = await fetch(
+      `/api/hermes-agent/sessions/${encodeURIComponent(sessionId)}/chat`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      },
+    )
+    if (!res.ok) {
+      const errorMessage = extractErrorMessage(await res.text(), `${res.status} ${res.statusText}`)
+      toast(errorMessage, 'error')
+      throw new Error(errorMessage)
+    }
+    if (!res.body) throw new Error('Hermes 响应无 body')
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        const value = line.trim()
+        if (!value) continue
+        try { yield JSON.parse(value) as HermesChatEvent } catch { /* ignore */ }
+      }
+    }
+    if (buffer.trim()) {
+      try { yield JSON.parse(buffer.trim()) as HermesChatEvent } catch { /* ignore */ }
+    }
+  },
 
   // ===== Auth (访问认证) =====
   authStatus: () =>
-    request<{ configured: boolean; authenticated: boolean }>('/api/auth/status'),
+    request<AuthStatus>('/api/auth/status'),
   authSetup: (password: string) =>
     request<{ ok: boolean }>('/api/auth/setup', {
       method: 'POST',
       body: JSON.stringify({ password }),
     }),
-  authLogin: (password: string) =>
-    request<{ ok: boolean }>('/api/auth/login', {
+  authLogin: (password: string, username?: string) =>
+    request<{ ok: boolean; authenticated: boolean; user: AuthUser | null }>('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ username: username?.trim() || undefined, password }),
+    }),
+  authRegister: (username: string, password: string, inviteCode = '') =>
+    request<{ ok: boolean; user: AuthUser }>('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ username: username.trim(), password, invite_code: inviteCode }),
     }),
   authLogout: () =>
     request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
@@ -1079,6 +2219,58 @@ export const api = {
   xaiLogout: () =>
     request<{ ok: boolean; ai_xai?: SettingsState['ai_xai'] }>('/api/settings/ai/xai/session', { method: 'DELETE' }),
 
+  selectAiSubscription: (ai: { provider: string; model?: string }) =>
+    request<{
+      ok: boolean
+      ai_provider?: string
+      ai_model?: string
+      ai_configured?: boolean
+      ai_access?: SettingsState['ai_access']
+      ai_subscriptions?: AiSubscriptionSource[]
+      ai_xai?: SettingsState['ai_xai']
+    }>('/api/settings/ai/subscription', {
+      method: 'POST',
+      body: JSON.stringify(ai),
+    }),
+
+  saveAiSubscriptionSource: (ai: {
+    provider: string
+    base_url?: string
+    api_key?: string | null
+    clear_api_key?: boolean
+  }) =>
+    request<{
+      ok: boolean
+      provider?: string
+      base_url?: string
+      has_api_key?: boolean
+      api_key_masked?: string
+      ai_subscriptions?: AiSubscriptionSource[]
+      ai_access?: SettingsState['ai_access']
+    }>('/api/settings/ai/subscription/source', {
+      method: 'POST',
+      body: JSON.stringify(ai),
+    }),
+
+  testAiSubscription: (ai: {
+    provider: string
+    model?: string
+    base_url?: string
+    api_key?: string
+  }) =>
+    request<{
+      ok: boolean
+      provider?: string
+      label?: string
+      model?: string
+      base_url?: string
+      response?: string
+      error?: string
+    }>('/api/settings/ai/subscription/test', {
+      method: 'POST',
+      body: JSON.stringify(ai),
+    }),
+
   preferences: () => request<Preferences>('/api/settings/preferences'),
   updateMinuteSync: (enabled: boolean, days: number) =>
     request<Preferences>('/api/settings/preferences/minute-sync', {
@@ -1119,7 +2311,7 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ realtime_quotes_enabled: enabled }),
     }),
-  updateRealtimeQuoteScope: (cfg: Partial<Pick<Preferences, 'realtime_pull_stock' | 'realtime_pull_etf' | 'realtime_pull_index' | 'realtime_index_mode' | 'realtime_index_symbols'>>) =>
+  updateRealtimeQuoteScope: (cfg: Partial<Pick<Preferences, 'realtime_pull_stock' | 'realtime_pull_etf'>>) =>
     request<Partial<Preferences>>('/api/settings/preferences/realtime-quote-scope', {
       method: 'PUT',
       body: JSON.stringify(cfg),
@@ -1162,14 +2354,16 @@ export const api = {
     sse_refresh_pages?: Record<string, boolean>
     strategy_monitor_enabled?: boolean
     strategy_monitor_ids?: string[]
-    sidebar_index_symbols?: string[]
     screener_auto_run?: boolean
+    monitor_ext_fields?: {
+      concept?: MonitorExtFieldItem | null
+      industry?: MonitorExtFieldItem | null
+    }
   }) =>
     request<{
       sse_refresh_pages: Record<string, boolean>
       strategy_monitor_enabled: boolean
       strategy_monitor_ids: string[]
-      sidebar_index_symbols: string[]
       screener_auto_run: boolean
     }>('/api/settings/preferences/realtime-monitor', {
       method: 'PUT',
@@ -1184,6 +2378,31 @@ export const api = {
     request<{ feishu_webhook_url: string; feishu_webhook_secret: string }>('/api/settings/preferences/feishu-webhook', {
       method: 'PUT',
       body: JSON.stringify({ url, secret }),
+    }),
+  updateCustomWebhook: (url: string, secret?: string) =>
+    request<{ custom_webhook_url: string; custom_webhook_secret_set: boolean }>('/api/settings/preferences/custom-webhook', {
+      method: 'PUT',
+      body: JSON.stringify({ url, ...(secret !== undefined ? { secret } : {}) }),
+    }),
+  updateEmailSmtp: (config: EmailSmtpConfig, password?: string) =>
+    request<{ email_smtp_config: EmailSmtpConfig; email_smtp_password_set: boolean }>('/api/settings/preferences/email-smtp', {
+      method: 'PUT',
+      body: JSON.stringify({ ...config, ...(password !== undefined ? { password } : {}) }),
+    }),
+  sendTestWebhook: (channel: 'feishu' | 'wecom' | 'custom' | 'email') =>
+    request<{ ok: boolean; detail: string }>('/api/settings/preferences/webhook-test', {
+      method: 'POST',
+      body: JSON.stringify({ channel }),
+    }),
+  updateMinuteBatchCompress: (enabled: boolean) =>
+    request<Pick<Preferences, 'minute_batch_compress'>>('/api/settings/preferences/minute-batch-compress', {
+      method: 'PUT',
+      body: JSON.stringify({ minute_batch_compress: enabled }),
+    }),
+  updateDailyBatchCompress: (enabled: boolean) =>
+    request<Pick<Preferences, 'daily_batch_compress'>>('/api/settings/preferences/daily-batch-compress', {
+      method: 'PUT',
+      body: JSON.stringify({ daily_batch_compress: enabled }),
     }),
   updateWebhookDefault: (enabled: boolean) =>
     request<{ webhook_enabled_default: boolean }>('/api/settings/preferences/webhook-enabled-default', {
@@ -1200,10 +2419,10 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ enabled, hour, minute }),
     }),
-  updateReviewPush: (channels: string[]) =>
-    request<{ review_push_channels: string[] }>('/api/settings/preferences/review-push', {
+  updateReviewPush: (channels: string[], mode?: 'auto' | 'manual') =>
+    request<{ review_push_channels: string[]; review_push_mode: 'auto' | 'manual' }>('/api/settings/preferences/review-push', {
       method: 'PUT',
-      body: JSON.stringify({ channels }),
+      body: JSON.stringify({ channels, mode: mode ?? null }),
     }),
   updateDepthPollingInterval: (interval: number) =>
     request<{ depth_polling_interval: number }>('/api/settings/preferences/depth-polling-interval', {
@@ -1269,7 +2488,12 @@ export const api = {
     }),
 
   capabilities: () => request<CapabilitiesResponse>('/api/capabilities'),
-  version: () => request<{ version: string }>('/api/data/version'),
+  version: async () => {
+    const result = await request<{ version: string }>('/health')
+    return {
+      version: result.version.startsWith('v') ? result.version : `v${result.version}`,
+    }
+  },
 
   // ===== 运行日志 =====
   runtimeLogsStatus: () =>
@@ -1322,20 +2546,31 @@ export const api = {
       stock_info?: { name?: string; total_shares?: number; float_shares?: number; ext?: Record<string, unknown> }
       rows: KlineRow[]
       source?: string
+      quote_overlay?: {
+        applied: boolean
+        row_count: number
+        latest_date: string | null
+        latest_source: string | null
+        latest_fetched_at: string | null
+      }
     }>(
       (dateRange
         ? `/api/kline/daily?symbol=${encodeURIComponent(symbol)}&start_date=${dateRange.start}&end_date=${dateRange.end}`
         : `/api/kline/daily?symbol=${encodeURIComponent(symbol)}&days=${days}`)
       + (extColumns ? `&ext_columns=${encodeURIComponent(extColumns)}` : ''),
     ),
+  klineDailyLatest: (symbol: string) =>
+    request<KlineDailyLatestResponse>(
+      `/api/kline/daily/latest?symbol=${encodeURIComponent(symbol)}`,
+    ),
   klineDailyBatch: (symbols: string[], days = 12) =>
     request<{ data: Record<string, KlineRow[]> }>('/api/kline/daily-batch', {
       method: 'POST',
       body: JSON.stringify({ symbols, days }),
     }),
-  instrumentSearch: (q: string, limit = 20) =>
-    request<{ results: { symbol: string; name: string; code: string }[] }>(
-      `/api/kline/instruments/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+  instrumentSearch: (q: string, limit = 20, assetTypes?: string) =>
+    request<{ results: { symbol: string; name: string; code: string; asset_type?: string }[] }>(
+      `/api/kline/instruments/search?q=${encodeURIComponent(q)}&limit=${limit}${assetTypes ? `&asset_types=${encodeURIComponent(assetTypes)}` : ''}`,
     ),
 
   /** 批量查股票名称 (传入 symbol 列表, 返回 {symbol: name}) */
@@ -1344,7 +2579,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(symbols),
     }),
-  klineMinute: (symbol: string, date?: string) =>
+  klineMinute: (symbol: string, date?: string, live?: boolean) =>
     request<{
       symbol: string
       name?: string
@@ -1352,8 +2587,13 @@ export const api = {
       date: string | null
       rows: MinuteKlineRow[]
       source?: 'local' | 'live' | 'none'
+      provider?: string
+      persisted?: boolean
+      quality?: Record<string, unknown>
+      prev_close?: number | null
+      asset_type?: 'stock' | 'etf' | 'index'
     }>(
-      `/api/kline/minute?symbol=${encodeURIComponent(symbol)}${date ? `&date=${date}` : ''}`,
+      `/api/kline/minute?symbol=${encodeURIComponent(symbol)}${date ? `&date=${date}` : ''}${live ? '&live=1' : ''}`,
     ),
   indexList: () => request<{ results: IndexInstrument[]; count: number }>('/api/index/list'),
   indexSearch: (q: string, limit = 20) =>
@@ -1376,7 +2616,6 @@ export const api = {
     request<{
       symbol: string
       name?: string
-      index_info?: IndexInstrument
       date: string | null
       rows: MinuteKlineRow[]
       source?: string
@@ -1413,15 +2652,20 @@ export const api = {
     }),
 
   watchlistList: () => request<{ symbols: WatchlistEntry[] }>('/api/watchlist'),
-  watchlistAdd: (symbol: string, note = '') =>
+  watchlistAdd: (symbol: string, note = '', groupId?: string | null) =>
     request<{ symbols: WatchlistEntry[] }>('/api/watchlist', {
       method: 'POST',
-      body: JSON.stringify({ symbol, note }),
+      body: JSON.stringify({ symbol, note, group_id: groupId ?? null }),
     }),
-  watchlistBatchAdd: (symbols: string[], note = '') =>
+  watchlistBatchAdd: (symbols: string[], note = '', groupId?: string | null, groupIds?: string[]) =>
     request<{ symbols: WatchlistEntry[]; added: number }>('/api/watchlist/batch', {
       method: 'POST',
-      body: JSON.stringify({ symbols, note }),
+      body: JSON.stringify({
+        symbols,
+        note,
+        group_id: groupId ?? null,
+        group_ids: groupIds?.length ? groupIds : null,
+      }),
     }),
   watchlistRemove: (symbol: string) =>
     request<{ symbols: WatchlistEntry[] }>(
@@ -1437,17 +2681,28 @@ export const api = {
     request<{ removed: number }>('/api/watchlist', { method: 'DELETE' }),
   watchlistQuotes: () => request<{ quotes: Quote[] }>('/api/watchlist/quotes'),
   watchlistEnriched: (extColumns?: string) =>
-    request<{ rows: any[]; as_of: string | null; elapsed_ms: number }>(
+    request<{
+      rows: any[]
+      as_of: string | null
+      realtime_as_of?: string | null
+      realtime_count?: number
+      elapsed_ms: number
+    }>(
       extColumns
         ? `/api/watchlist/enriched?ext_columns=${encodeURIComponent(extColumns)}`
         : '/api/watchlist/enriched',
     ),
 
-  screenerStrategies: () => request<{ presets: ScreenerStrategy[] }>('/api/screener/strategies'),
-  screenerRunPreset: (strategy_id: string, pool?: string[], asOf?: string, extColumns?: string) =>
+  screenerStrategies: (_assetType?: 'stock' | 'etf' | 'index', _timeframe: '1d' | '1m' | 'all' = 'all') =>
+    request<{ presets: ScreenerStrategy[]; owner_user_id?: string; load_errors?: StrategyLoadError[] }>('/api/screener/strategies'),
+  screenerStrategiesForOwner: (ownerUserId: string) =>
+    request<{ presets: ScreenerStrategy[]; owner_user_id?: string }>(
+      `/api/screener/strategies?owner_user_id=${encodeURIComponent(ownerUserId)}`,
+    ),
+  screenerRunPreset: (strategy_id: string, pool?: string[], asOf?: string, extColumns?: string, ownerUserId?: string, _assetType?: string) =>
     request<ScreenerResult>('/api/screener/run_preset', {
       method: 'POST',
-      body: JSON.stringify({ strategy_id, pool, as_of: asOf ?? null, ext_columns: extColumns || null }),
+      body: JSON.stringify({ strategy_id, owner_user_id: ownerUserId ?? null, pool, as_of: asOf ?? null, ext_columns: extColumns || null }),
     }),
   screenerRunCustom: (conditions: string[], orderBy?: string, limit = 30, pool?: string[], extColumns?: string) =>
     request<ScreenerResult>('/api/screener/run', {
@@ -1455,8 +2710,19 @@ export const api = {
       body: JSON.stringify({ conditions, order_by: orderBy, limit, pool, ext_columns: extColumns || null }),
     }),
   screenerRunAll: (asOf?: string, strategyIds?: string[], extColumns?: string) =>
-    request<{ as_of: string | null; results: Record<string, { total: number; as_of: string; rows: any[] }> }>(
-      '/api/screener/run_all', { method: 'POST', body: JSON.stringify({ as_of: asOf ?? null, strategy_ids: strategyIds ?? null, ext_columns: extColumns || null }) },
+    request<{
+      as_of: string | null
+      results: Record<string, { total: number; as_of: string; rows: any[]; computed_at?: number | null }>
+      pending?: string[]
+      complete?: boolean
+      error?: string | null
+      started_at?: number | null
+    }>(
+      '/api/screener/run_all', {
+        method: 'POST',
+        timeoutMs: COMPUTE_REQUEST_TIMEOUT_MS,
+        body: JSON.stringify({ as_of: asOf ?? null, strategy_ids: strategyIds ?? null, ext_columns: extColumns || null }),
+      },
     ),
   screenerCached: (extColumns?: string) =>
     request<{ as_of: string | null; results: Record<string, { total: number; as_of: string; rows: any[] }>; today_ever_matched: Record<string, string[]> | null; today_ever_rows: Record<string, Record<string, any>> | null; updated_at: number | null }>(
@@ -1465,13 +2731,165 @@ export const api = {
         : '/api/screener/cached',
     ),
   marketSnapshot: () =>
-    request<{ as_of: string | null; rows: MarketSnapshotRow[] }>('/api/screener/market-snapshot'),
+    request<MarketSnapshotResponse>('/api/screener/market-snapshot'),
   overviewMarket: (asOf?: string) => request<OverviewMarket>(`/api/overview/market${asOf ? `?as_of=${asOf}` : ''}`),
+  marketPulse: (tradeDate?: string | null) =>
+    request<MarketPulseResponse>(
+      `/api/market-pulse${tradeDate ? `?trade_date=${encodeURIComponent(tradeDate)}` : ''}`,
+    ),
+  syncMarketPulse: (tradeDate?: string | null) =>
+    request<MarketPulseSyncResult>('/api/market-pulse/sync', {
+      method: 'POST',
+      body: JSON.stringify({ trade_date: tradeDate || null }),
+    }),
+  hithinkLimitPool: (tradeDate?: string | null) =>
+    request<HithinkLocalQueryResponse>(
+      '/api/hithink/limit-pool' + (tradeDate ? '?trade_date=' + encodeURIComponent(tradeDate) : ''),
+    ),
+  hithinkDragonTiger: (tradeDate?: string | null) =>
+    request<HithinkLocalQueryResponse>(
+      '/api/hithink/dragon-tiger' + (tradeDate ? '?trade_date=' + encodeURIComponent(tradeDate) : ''),
+    ),
+  hithinkAuctionSnapshot: (tradeDate?: string | null) =>
+    request<HithinkLocalQueryResponse>(
+      '/api/hithink/auction-snapshot' + (tradeDate ? '?trade_date=' + encodeURIComponent(tradeDate) : ''),
+    ),
+  hithinkValuationSnapshot: (asOf?: string | null) =>
+    request<HithinkLocalQueryResponse>(
+      '/api/hithink/valuation-snapshot' + (asOf ? '?as_of=' + encodeURIComponent(asOf) : ''),
+    ),
+  syncHithinkSpecialData: (tradeDate?: string | null, include?: HithinkSyncTarget[]) =>
+    request<HithinkSyncResult>('/api/hithink/sync', {
+      method: 'POST',
+      body: JSON.stringify({ trade_date: tradeDate || null, include: include ?? null }),
+    }),
 
-  // 概念涨幅轮动矩阵: 每列(日期)各自把所有概念按当天涨幅从高到低排序
-  rpsRotation: (days: number) =>
-    request<RpsRotationData>(`/api/rps/rotation?days=${days}`),
 
+  // 概念/行业涨幅轮动矩阵: 每列(日期)各自把所有成员按当天涨幅从高到低排序
+  rpsRotation: (days: number, kind: 'concept' | 'industry' = 'concept', level?: number) => {
+    const params = new URLSearchParams({ days: String(days), kind })
+    if (kind === 'industry' && level) params.set('level', String(level))
+    return request<RpsRotationData>(`/api/rps/rotation?${params.toString()}`)
+  },
+
+  /**
+   * AI 板块轮动分析 — 流式调用(NDJSON,与财务/个股/复盘同协议)。
+   * meta 里带 days / summary,供前端先渲染主线摘要。
+   */
+  async *rotationAnalyzeStream(
+    days: number,
+    focus = '',
+    kind: 'concept' | 'industry' = 'concept',
+    level?: number,
+  ): AsyncGenerator<{
+    type: 'meta' | 'delta' | 'error' | 'done'
+    days?: number
+    summary?: string
+    content?: string
+    message?: string
+  }> {
+    const res = await fetch('/api/rps/rotation-analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days, focus, kind, level: kind === 'industry' ? level : undefined }),
+    })
+    if (!res.ok) {
+      const msg = extractErrorMessage(await res.text(), `${res.status} ${res.statusText}`)
+      toast(msg, 'error')
+      throw new Error(msg)
+    }
+    if (!res.body) throw new Error('响应无 body')
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split("\n")
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        const s = line.trim()
+        if (!s) continue
+        try { yield JSON.parse(s) } catch { /* ignore */ }
+      }
+    }
+    if (buf.trim()) {
+      try { yield JSON.parse(buf.trim()) } catch { /* ignore */ }
+    }
+  },
+
+
+  updatePipelineRegimeEnabled: (enabled: boolean) =>
+    request<{ pipeline_regime_enabled: boolean }>('/api/settings/preferences/pipeline-regime-enabled', {
+      method: 'POST',
+      body: JSON.stringify({ pipeline_regime_enabled: enabled }),
+    }),
+  updateRegimeBatchParams: (params: { batch_days?: number; warmup_days?: number }) =>
+    request<{ regime_batch_days: number; regime_warmup_days: number }>('/api/settings/preferences/regime-batch-params', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+  repairDaily: (startDate: string) =>
+    request<{ ok: boolean; repaired?: number; message?: string }>('/api/data/repair-daily', {
+      method: 'POST',
+      body: JSON.stringify({ start_date: startDate }),
+    }),
+  watchlistOcrStatus: () =>
+    request<{ provider: string; available: boolean }>('/api/watchlist/ocr-status'),
+  watchlistImportImage: (file: File, signal?: AbortSignal, quiet = false) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return request<WatchlistImportResult>('/api/watchlist/import-image', {
+      method: 'POST',
+      body: fd,
+      signal,
+      quiet,
+    })
+  },
+  watchlistImportCodes: (text: string, signal?: AbortSignal) =>
+    request<WatchlistImportResult>('/api/watchlist/import-codes', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+      signal,
+    }),
+
+  watchlistImportCsv: (file: File, signal?: AbortSignal, quiet = false) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return request<WatchlistImportResult>('/api/watchlist/import-csv', {
+      method: 'POST',
+      body: fd,
+      signal,
+      quiet,
+    })
+  },
+  regimeHistory: (start?: string, end?: string, limit?: number) => {
+    const params = new URLSearchParams()
+    if (start) params.set('start', start)
+    if (end) params.set('end', end)
+    if (limit) params.set('limit', String(limit))
+    const qs = params.toString()
+    return request<RegimeHistory>(`/api/regime/history${qs ? `?${qs}` : ''}`)
+  },
+  regimeLatest: () => request<{ row: RegimeRow | null }>('/api/regime/latest'),
+  regimeStates: (days = 60) => request<RegimeStates>(`/api/regime/states?days=${days}`),
+  dimensionMembers: async (_configId: string, _opts?: { field?: string; value?: string; date?: string | null; limit?: number }) => ({ members: [] as any[], rows: [] as any[], total: 0, label: '', date: null as string | null }),
+  regimeCoverage: () => request<RegimeCoverage>('/api/regime/coverage'),
+  regimeRecompute: (start?: string, end?: string) => {
+    const params = new URLSearchParams()
+    if (start) params.set('start', start)
+    if (end) params.set('end', end)
+    const qs = params.toString()
+    // 补算需扫 enriched 全市场数据, 大区间耗时超过默认超时, 放宽到 5 分钟
+    return request<{ ok: boolean; computed: number; phase_days?: number; mainline_rows?: number }>(`/api/regime/recompute${qs ? `?${qs}` : ''}`, { method: 'POST', timeoutMs: 300_000 })
+  },
+  strategySaveComposite: (payload: Record<string, unknown>) =>
+    request<{ ok: boolean; id?: string; strategy_id?: string }>('/api/strategies/composite/save', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   limitLadder: (asOf?: string, extColumns?: string, direction?: 'up' | 'down') => {
     const params = new URLSearchParams()
     if (asOf) params.set('as_of', asOf)
@@ -1497,11 +2915,85 @@ export const api = {
   }) =>
     request<BacktestResult>('/api/backtest/run', {
       method: 'POST',
+      timeoutMs: COMPUTE_REQUEST_TIMEOUT_MS,
       body: JSON.stringify(payload),
     }),
 
   factorColumns: () =>
     request<{ columns: FactorColumn[] }>('/api/backtest/factor/columns'),
+
+  factorLibrary: (assetType?: 'stock' | 'etf') =>
+    request<{ factors: FactorLibraryItem[] }>(
+      `/api/factors${assetType ? `?asset_type=${assetType}` : ''}`,
+    ),
+
+  factorValidate: (formula: string) =>
+    request<FactorValidateResponse>('/api/factors/validate', {
+      method: 'POST',
+      body: JSON.stringify({ formula }),
+    }),
+
+  factorTrial: (payload: { formula: string; asset_type?: 'stock' | 'etf'; days?: number }) =>
+    request<FactorTrialResponse>('/api/factors/trial', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  factorCustomCreate: (payload: {
+    id?: string
+    label: string
+    group?: string
+    formula: string
+    description?: string
+    direction?: 'high' | 'low' | 'none'
+  }) =>
+    request<{ ok: boolean; id: string; version: number }>('/api/factors/custom', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  factorCustomUpdate: (factorId: string, payload: {
+    label: string
+    group?: string
+    formula: string
+    description?: string
+    direction?: 'high' | 'low' | 'none'
+  }) =>
+    request<{ ok: boolean; id: string; version: number; status: string }>(
+      `/api/factors/custom/${encodeURIComponent(factorId)}/update`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+
+  factorCompositeCreate: (payload: {
+    id?: string
+    label: string
+    group?: string
+    members: Record<string, number>
+    description?: string
+    direction?: 'high' | 'low' | 'none'
+  }) =>
+    request<{ ok: boolean; id: string; version: number }>('/api/factors/composite', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  factorDelete: (factorId: string, force = false) =>
+    request<{ ok: boolean; id: string; removed_references?: string[] }>(
+      `/api/factors/custom/${encodeURIComponent(factorId)}${force ? '?force=true' : ''}`,
+      { method: 'DELETE', quiet: true },
+    ),
+
+  factorSetStatus: (factorId: string, status: 'draft' | 'active' | 'watch' | 'retired') =>
+    request<{ ok: boolean; id: string; status: string }>(
+      `/api/factors/custom/${encodeURIComponent(factorId)}/status`,
+      { method: 'POST', body: JSON.stringify({ status }) },
+    ),
+
+  factorSetGroup: (factorId: string, group: string) =>
+    request<{ ok: boolean; id: string; group: string }>(
+      `/api/factors/custom/${encodeURIComponent(factorId)}/group`,
+      { method: 'POST', body: JSON.stringify({ group }) },
+    ),
 
   factorRun: (payload: {
     factor_name: string
@@ -1516,11 +3008,13 @@ export const api = {
   }) =>
     request<FactorBacktestResult>('/api/backtest/factor/run', {
       method: 'POST',
+      timeoutMs: COMPUTE_REQUEST_TIMEOUT_MS,
       body: JSON.stringify(payload),
     }),
 
   strategyBacktestRun: (payload: {
     strategy_id: string
+    strategy_owner_user_id?: string | null
     symbols?: string[] | null
     start?: string | null
     end?: string | null
@@ -1540,18 +3034,53 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  strategyBacktestHistory: (limit = 30) =>
+    request<{ runs: StrategyBacktestHistoryItem[] }>(
+      `/api/backtest/strategy/history?limit=${Math.max(1, Math.min(100, limit))}`,
+    ),
+
+  strategyBacktestHistoryGet: (runId: string) =>
+    request<StrategyBacktestResult & { saved_at: string; strategy_owner_user_id: string }>(
+      `/api/backtest/strategy/history/${encodeURIComponent(runId)}`,
+    ),
+
+  strategyBacktestHistoryDelete: (runId: string) =>
+    request<{ ok: boolean }>(
+      `/api/backtest/strategy/history/${encodeURIComponent(runId)}`,
+      { method: 'DELETE' },
+    ),
+
+  portfolioSnapshot: () => request<PortfolioSnapshot>('/api/portfolio'),
+
+  portfolioSaveHolding: (holding: { symbol: string; quantity: number; avg_cost: number; note?: string }) =>
+    request<{ ok: boolean; holding: PortfolioHolding }>('/api/portfolio/holdings', {
+      method: 'POST',
+      body: JSON.stringify(holding),
+    }),
+
+  portfolioDeleteHolding: (symbol: string) =>
+    request<{ ok: boolean }>(`/api/portfolio/holdings/${encodeURIComponent(symbol)}`, {
+      method: 'DELETE',
+    }),
+
   pipelineRun: () => request<{ job_id: string; reused: boolean }>(
     '/api/pipeline/run', { method: 'POST' },
   ),
   pipelineJob: (id: string) => request<PipelineJob>(`/api/pipeline/jobs/${id}`),
+  /** 手动停止一个 running/pending 的同步任务 (协作式: 当前分块完成后线程自行退出) */
+  pipelineJobCancel: (id: string) =>
+    request<{ cancelled: string }>(`/api/pipeline/jobs/${id}/cancel`, { method: 'POST' }),
   pipelineJobs: (limit = 20) =>
     request<{ active_id: string | null; jobs: PipelineJobSummary[] }>(
       `/api/pipeline/jobs?limit=${limit}`,
     ),
 
+  dataReadiness: () => request<DataReadiness>('/api/overview/data-readiness'),
   dataStatus: () => request<DataStatus>('/api/data/status'),
   dataClear: () => request<{ deleted_files: number }>('/api/data/clear', { method: 'POST' }),
   enrichedSchema: (table: string) => request<EnrichedField[]>(`/api/data/schema/${table}`),
+  dataControlSummary: () => request<DataControlSummary>('/api/data/control-summary'),
+  dataSourceProvenance: () => request<SourceProvenanceResponse>('/api/data/source-provenance'),
   dataCatalog: () => request<CatalogResponse>('/api/data/catalog'),
   dataCatalogDataset: (datasetId: string) =>
     request<DatasetCatalogEntry>(`/api/data/catalog/${encodeURIComponent(datasetId)}`),
@@ -1600,9 +3129,9 @@ export const api = {
 
 
   // ===== 筹码分布（本地日K近似） =====
-  stockChips: (symbol: string, days = 120, bins = 80) =>
+  stockChips: (symbol: string, days = 120, bins = 80, asOf?: string) =>
     request<ChipDistributionResponse>(
-      `/api/free/chips/${encodeURIComponent(symbol)}?days=${days}&bins=${bins}`,
+      `/api/free/chips/${encodeURIComponent(symbol)}?days=${days}&bins=${bins}${asOf ? `&as_of=${encodeURIComponent(asOf)}` : ''}`,
     ),
 
   // ===== 主力资金流（行业/概念板块） =====
@@ -1625,6 +3154,10 @@ export const api = {
     ),
 
   /** 行业 Top 流入/流出日线历史回补（东财 dataapi 排名 + flowlens daykline） */
+  fundFlowBoardsWindow: (days = 63, top = 8) =>
+    request<FundFlowWindowResponse>(`/api/free/fund-flow/boards/window?days=${days}&top=${top}`),
+  fundFlowConceptsWindow: (days = 63, top = 8) =>
+    request<FundFlowWindowResponse>(`/api/free/fund-flow/concepts/window?days=${days}&top=${top}`),
   fundFlowBoardsHistoryRefresh: (topN = 20, limit = 60) =>
     request<FundFlowHistoryRefreshResponse>(
       `/api/free/fund-flow/boards/history/refresh?top_n=${topN}&limit=${limit}`,
@@ -1731,10 +3264,25 @@ export const api = {
     url: string; method?: string; headers?: Record<string, string>; body?: string;
     response_path?: string; field_map?: Record<string, string>;
     schedule_minutes?: number; enabled?: boolean;
+    date_param?: string | null;
+    auth?: ExtPullAuth;
   }) =>
     request<{ status: string; pull: PullConfig }>(
       `/api/ext-data/${id}/pull`,
       { method: 'PUT', body: JSON.stringify(body) },
+    ),
+
+  /** 查询拉取接口 API Key 状态 (脱敏, 不返回明文) */
+  extDataApiKey: (id: string) =>
+    request<{ key_set: boolean; masked_key: string }>(
+      `/api/ext-data/${encodeURIComponent(id)}/api-key`,
+    ),
+
+  /** 设置 (或空串清除) 拉取接口的 API Key */
+  extDataApiKeySet: (id: string, key: string) =>
+    request<{ status: string; key_set: boolean; masked_key: string }>(
+      `/api/ext-data/${encodeURIComponent(id)}/api-key`,
+      { method: 'PUT', body: JSON.stringify({ key }) },
     ),
 
   extDataPullTest: (id: string) =>
@@ -1746,6 +3294,13 @@ export const api = {
   extDataPullRun: (id: string) =>
     request<{ status: string; rows: number; date: string }>(
       `/api/ext-data/${id}/pull/run`,
+      { method: 'POST' },
+    ),
+
+  /** 历史回补: 按本地交易日逐日拉取写入 timeseries 分区 (需 pull.date_param) */
+  extDataBackfill: (id: string, start: string, end: string) =>
+    request<ExtDataBackfillResult>(
+      `/api/ext-data/${encodeURIComponent(id)}/backfill?start=${start}&end=${end}`,
       { method: 'POST' },
     ),
 
@@ -1770,6 +3325,32 @@ export const api = {
       `/api/ext-data/${id}/fix-symbol`,
       { method: 'POST' },
     ),
+
+  // ===== 股票 F10 =====
+  externalReadonlySources: () =>
+    request<ExternalReadonlySources>('/api/data/external-readonly-sources'),
+
+  getMarginTrading: (params: {
+    symbol: string
+    source?: 'local' | 'offline_quantdb'
+    limit?: number
+    start_date?: string
+    end_date?: string
+  }) => {
+    const qs = new URLSearchParams()
+    qs.set('symbol', params.symbol)
+    if (params.source) qs.set('source', params.source)
+    qs.set('limit', String(params.limit ?? 20))
+    if (params.start_date) qs.set('start_date', params.start_date)
+    if (params.end_date) qs.set('end_date', params.end_date)
+    return request<MarginTradingQueryResponse>(`/api/f10/margin-trading?${qs}`, { quiet: true })
+  },
+
+  syncMarginTrading: (symbols: string[], rowsPerSymbol = 250) =>
+    request<MarginTradingSyncResponse>('/api/f10/margin-trading/sync', {
+      method: 'POST',
+      body: JSON.stringify({ symbols, rows_per_symbol: rowsPerSymbol }),
+    }),
 
   // ===== Financials =====
   financialStatus: () =>
@@ -1846,9 +3427,7 @@ export const api = {
       body: JSON.stringify({ symbol, focus: focus ?? '' }),
     })
     if (!res.ok) {
-      let detail = ''
-      try { const j = JSON.parse(await res.text()); detail = j.detail ?? j.message ?? '' } catch { /* ignore */ }
-      const msg = detail || `${res.status} ${res.statusText}`
+      const msg = extractErrorMessage(await res.text(), `${res.status} ${res.statusText}`)
       toast(msg, 'error')
       throw new Error(msg)
     }
@@ -1884,6 +3463,25 @@ export const api = {
   stockAnalysisLevels: (symbol: string, days = 120) =>
     request<StockLevels>(`/api/stock-analysis/levels?symbol=${encodeURIComponent(symbol)}&days=${days}`),
 
+
+  pageAiReportsList: () =>
+    request<{ reports: AiPageReport[] }>('/api/page-ai/reports'),
+
+  pageAiReportGet: (reportId: string) =>
+    request<{ report: AiPageReport }>(`/api/page-ai/reports/${encodeURIComponent(reportId)}`),
+
+  pageAiReportSave: (r: {
+    title: string
+    route?: string
+    as_of?: string | null
+    focus?: string
+    summary?: string
+    content: string
+    session_id?: string
+  }) =>
+    request<{ ok: boolean; report: AiPageReport }>('/api/page-ai/reports', {
+      method: 'POST', body: JSON.stringify(r),
+    }),
   stockAnalysisReportsList: () =>
     request<{ reports: AiStockReport[] }>('/api/stock-analysis/reports'),
 
@@ -1918,9 +3516,7 @@ export const api = {
       body: JSON.stringify({ symbol, focus: focus ?? '' }),
     })
     if (!res.ok) {
-      let detail = ''
-      try { const j = JSON.parse(await res.text()); detail = j.detail ?? j.message ?? '' } catch { /* ignore */ }
-      const msg = detail || `${res.status} ${res.statusText}`
+      const msg = extractErrorMessage(await res.text(), `${res.status} ${res.statusText}`)
       toast(msg, 'error')
       throw new Error(msg)
     }
@@ -1953,6 +3549,7 @@ export const api = {
   reviewReportSave: (r: {
     as_of: string; focus?: string; content: string
     summary?: string; emotion_score?: number | null; emotion_label?: string
+    push?: boolean
   }) =>
     request<{ ok: boolean; report: AiReviewReport }>('/api/market-recap/reports', {
       method: 'POST', body: JSON.stringify(r),
@@ -1980,9 +3577,7 @@ export const api = {
       body: JSON.stringify({ as_of: asOf ?? null, focus: focus ?? '' }),
     })
     if (!res.ok) {
-      let detail = ''
-      try { const j = JSON.parse(await res.text()); detail = j.detail ?? j.message ?? '' } catch { /* ignore */ }
-      const msg = detail || `${res.status} ${res.statusText}`
+      const msg = extractErrorMessage(await res.text(), `${res.status} ${res.statusText}`)
       toast(msg, 'error')
       throw new Error(msg)
     }
@@ -2009,16 +3604,27 @@ export const api = {
   },
 
   // ===== Strategy Engine =====
-  strategyList: () =>
-    request<{ strategies: StrategyDetail[] }>('/api/strategies'),
+  strategyList: (ownerUserId?: string) =>
+    request<{ strategies: StrategyDetail[]; owner_user_id?: string }>(
+      `/api/strategies${ownerUserId ? `?owner_user_id=${encodeURIComponent(ownerUserId)}` : ''}`,
+    ),
 
-  strategyGet: (id: string) =>
-    request<StrategyDetail>(`/api/strategies/${id}`),
+  strategyGet: (id: string, ownerUserId?: string) =>
+    request<StrategyDetail>(
+      `/api/strategies/${encodeURIComponent(id)}${ownerUserId ? `?owner_user_id=${encodeURIComponent(ownerUserId)}` : ''}`,
+    ),
 
-  strategyRun: (strategyId: string, params?: Record<string, any>, asOf?: string, pool?: string[]) =>
+  /** 发布 research_only 的 AI 草稿。本阶段只接线到已落入的后端路由, ACL 适配仍待下一阶段。 */
+  strategyPublish: (strategyId: string) =>
+    request<{ ok: boolean; strategy_id: string }>(
+      `/api/strategies/${encodeURIComponent(strategyId)}/publish`,
+      { method: 'POST' },
+    ),
+
+  strategyRun: (strategyId: string, params?: Record<string, any>, asOf?: string, pool?: string[], ownerUserId?: string) =>
     request<ScreenerResult>('/api/strategies/run', {
       method: 'POST',
-      body: JSON.stringify({ strategy_id: strategyId, params, as_of: asOf ?? null, pool }),
+      body: JSON.stringify({ strategy_id: strategyId, owner_user_id: ownerUserId ?? null, params, as_of: asOf ?? null, pool }),
     }),
 
   strategyRunAll: (asOf?: string) =>
@@ -2038,7 +3644,7 @@ export const api = {
 
   /** 删除自定义策略（内置策略不可删除） */
   strategyDelete: (strategyId: string) =>
-    request<{ ok: boolean }>(`/api/strategies/${strategyId}`, { method: 'DELETE' }),
+    request<{ ok: boolean }>(`/api/strategies/user/${encodeURIComponent(strategyId)}`, { method: 'DELETE' }),
 
   strategyReload: () =>
     request<{ ok: boolean; count: number }>('/api/strategies/reload', { method: 'POST' }),
@@ -2075,17 +3681,30 @@ export const api = {
   monitorRuleDelete: (id: string) =>
     request<{ ok: boolean }>(`/api/monitor-rules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
+  lotsList: () =>
+    request<{ lots: Lot[] }>('/api/lots'),
+
+  lotSave: (lot: Lot) =>
+    request<{ ok: boolean; lot: Lot }>('/api/lots', {
+      method: 'POST',
+      body: JSON.stringify(lot),
+    }),
+
+  lotDelete: (id: string) =>
+    request<{ ok: boolean }>(`/api/lots/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
   /** 生成演示监控规则 (Dev 页用) */
   monitorRuleSeed: () =>
     request<{ ok: boolean; generated: number }>('/api/monitor-rules/seed', { method: 'POST' }),
 
   // ===== Alerts (触发记录) =====
-  alertsList: (params?: { days?: number; limit?: number; source?: string; type?: string }) => {
+  alertsList: (params?: { days?: number; limit?: number; source?: string; type?: string; extColumns?: string }) => {
     const qs = new URLSearchParams()
     if (params?.days) qs.set('days', String(params.days))
     if (params?.limit) qs.set('limit', String(params.limit))
     if (params?.source) qs.set('source', params.source)
     if (params?.type) qs.set('type', params.type)
+    if (params?.extColumns) qs.set('ext_columns', params.extColumns)
     const s = qs.toString()
     return request<{ alerts: AlertEvent[]; total: number }>(`/api/alerts${s ? `?${s}` : ''}`)
   },
@@ -2102,7 +3721,7 @@ export const api = {
 
   /** 检查 AI 配置状态 */
   strategyAiStatus: () =>
-    request<{ configured: boolean; has_key: boolean; has_model: boolean; provider?: string }>('/api/strategies/ai/status'),
+    request<{ configured: boolean; has_key: boolean; has_model: boolean; provider?: string; access_state?: string; message?: string }>('/api/strategies/ai/status'),
 
   /** 测试 AI 连通性 */
   strategyAiTest: () =>
@@ -2112,8 +3731,10 @@ export const api = {
     ),
 
   /** 获取策略源文件内容 */
-  strategyGetSource: (id: string) =>
-    request<{ code: string; source: string }>(`/api/strategies/${id}/source`),
+  strategyGetSource: (id: string, ownerUserId?: string) =>
+    request<{ code: string; source: string }>(
+      `/api/strategies/${encodeURIComponent(id)}/source${ownerUserId ? `?owner_user_id=${encodeURIComponent(ownerUserId)}` : ''}`,
+    ),
   strategyBuild: (step: number, payload: Record<string, any>) =>
     request<{ code: string; meta: Record<string, any>; valid: boolean; error: string | null }>(
       '/api/strategies/build',
@@ -2122,10 +3743,457 @@ export const api = {
 
   /** 保存 AI 生成的策略文件 */
   strategySaveCode: (strategyId: string, code: string) =>
-    request<{ ok: boolean; path: string }>('/api/strategies/ai/save', {
+    request<{ ok: boolean; path: string; strategy?: Record<string, any> }>('/api/strategies/ai/save', {
       method: 'POST',
       body: JSON.stringify({ strategy_id: strategyId, code }),
     }),
+
+
+  // ===== Upstream v0.2.2 API extras =====
+
+  dataSources: () => request<DataSourcesResponse>('/api/settings/data-sources'),
+
+  capabilityMatrix: () => request<CapabilityMatrix>('/api/settings/capability-matrix'),
+
+  dataSource: (name: string) => request<CustomSourceConfig>(`/api/settings/data-sources/${encodeURIComponent(name)}`),
+
+  saveDataSource: (config: CustomSourceConfig) =>
+    request<DataSourcesResponse>('/api/settings/data-sources', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    }),
+
+  deleteDataSource: (name: string) =>
+    request<DataSourcesResponse>(`/api/settings/data-sources/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+
+  reloadDataSources: () => request<DataSourcesResponse>('/api/settings/data-sources/reload', { method: 'POST' }),
+
+  installPlugin: (name: string) => {
+    // npm install 可能耗时较长, 用 6 分钟超时
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 360_000)
+    return request<DataSourcesResponse & { install_ok: boolean; install_message: string }>(
+      `/api/settings/plugins/${encodeURIComponent(name)}/install`,
+      { method: 'POST', signal: controller.signal },
+    ).finally(() => clearTimeout(timer))
+  },
+
+  uninstallPlugin: (name: string) =>
+    request<DataSourcesResponse & { uninstall_ok: boolean; uninstall_message: string }>(
+      `/api/settings/plugins/${encodeURIComponent(name)}/install`,
+      { method: 'DELETE' },
+    ),
+
+  savePluginKey: (plugin: string, apiKey: string) => {
+    // 先探后存: 后端会用候选 Key 实探一次, 探测超时 10s + 余量
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 30_000)
+    return request<PluginKeyResult>('/api/settings/plugin-key', {
+      method: 'POST',
+      body: JSON.stringify({ plugin, api_key: apiKey }),
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timer))
+  },
+
+  clearPluginKey: (plugin: string) =>
+    request<PluginKeyResult>(`/api/settings/plugin-key/${encodeURIComponent(plugin)}`, { method: 'DELETE' }),
+
+  testDataSource: (
+    provider: string,
+    dataset: string,
+    symbols?: string[],
+    config?: CustomSourceConfig,
+  ) =>
+    request<DataSourceTestResult>('/api/settings/data-sources/test', {
+      method: 'POST',
+      body: JSON.stringify({ provider, dataset, symbols, config }),
+    }),
+
+  updateDataProviders: (cfg: Partial<Pick<Preferences, ProviderField>>) =>
+    request<Pick<Preferences, ProviderField>>(
+      '/api/settings/preferences/data-providers',
+      { method: 'PUT', body: JSON.stringify(cfg) },
+    ),
+
+  updateDataSourceJobTimeouts: (dataSourceJobTimeoutS: number, dataSourceLongJobTimeoutS: number) =>
+    request<Pick<Preferences, 'data_source_job_timeout_s' | 'data_source_long_job_timeout_s'>>(
+      '/api/settings/preferences/data-source-job-timeouts',
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          data_source_job_timeout_s: dataSourceJobTimeoutS,
+          data_source_long_job_timeout_s: dataSourceLongJobTimeoutS,
+        }),
+      },
+    ),
+
+  minuteRefreshStatus: () =>
+    request<{
+      available: boolean
+      healthy?: boolean
+      enabled?: boolean
+      running?: boolean
+      interval_seconds?: number
+      capability_ok?: boolean
+      custom_provider_active?: boolean
+      in_trading_hours?: boolean
+      gate_reason?: string | null
+      rounds?: number
+      last_round_at?: number | null
+      last_round_ms?: number | null
+      last_rows?: number
+      last_symbols?: number
+      last_requests?: number
+      next_round_at?: number | null
+      last_error?: string | null
+    }>('/api/settings/minute-refresh/status'),
+
+  updateWatchlistGroupsInNav: (enabled: boolean) =>
+    request<{ watchlist_groups_in_nav: boolean }>('/api/settings/preferences/watchlist-groups-in-nav', {
+      method: 'PUT',
+      body: JSON.stringify({ watchlist_groups_in_nav: enabled }),
+    }),
+
+  updateWecomWebhook: (url: string) =>
+    request<{ wecom_webhook_url: string }>('/api/settings/preferences/wecom-webhook', {
+      method: 'PUT',
+      body: JSON.stringify({ url }),
+    }),
+
+  updateWecomBot: (botId: string, secret: string, enabled: boolean = true) =>
+    request<{
+      wecom_bot_id: string
+      wecom_bot_secret: string
+      wecom_bot_enabled: boolean
+      wecom_bot_status: WecomBotStatus
+    }>('/api/settings/preferences/wecom-bot', {
+      method: 'PUT',
+      body: JSON.stringify({ bot_id: botId, secret, enabled }),
+    }),
+
+  toggleWecomBot: (enabled: boolean) =>
+    request<{ wecom_bot_enabled: boolean; wecom_bot_status: WecomBotStatus }>('/api/settings/preferences/wecom-bot-toggle', {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    }),
+
+  updateWebhookDefaultChannels: (channels: string[]) =>
+    request<{ webhook_default_channels: string[] }>('/api/settings/preferences/webhook-default-channels', {
+      method: 'PUT',
+      body: JSON.stringify({ channels }),
+    }),
+
+  klineMinuteBatch: (symbols: string[], date?: string, preferLocal?: boolean, since?: string) =>
+    request<{ data: Record<string, MinuteKlineRow[]>; full_minute_local?: boolean; incremental?: boolean }>('/api/kline/minute-batch', {
+      method: 'POST',
+      body: JSON.stringify({
+        symbols,
+        date,
+        ...(preferLocal ? { prefer_local: true } : {}),
+        ...(since ? { since } : {}),
+      }),
+    }),
+
+  klineMinuteRange: (symbol: string, days = 10) =>
+    request<{
+      symbol: string
+      name?: string
+      asset_type: 'stock' | 'etf' | 'index'
+      requested_days: number
+      sessions: MinuteKlineSession[]
+      source: 'local' | 'none'
+    }>(
+      `/api/kline/minute-range?symbol=${encodeURIComponent(symbol)}&days=${days}`,
+    ),
+
+  syncMinuteSingle: (symbol: string, days?: number) =>
+    request<{ status: string; symbol: string; rows: number }>('/api/kline/sync_minute_single', {
+      method: 'POST',
+      body: JSON.stringify({ symbol, ...(days != null ? { days } : {}) }),
+    }),
+
+  clearMinute: () =>
+    request<{ status: string; removed: number }>('/api/kline/clear_minute', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true }),
+    }),
+
+  watchlistGroups: () =>
+    request<{ groups: WatchlistGroup[] }>('/api/watchlist/groups'),
+
+  watchlistGroupCreate: (name: string, color: WatchlistGroupColor) =>
+    request<{ groups: WatchlistGroup[]; group: WatchlistGroup }>('/api/watchlist/groups', {
+      method: 'POST',
+      body: JSON.stringify({ name, color }),
+    }),
+
+  watchlistGroupRename: (groupId: string, name: string, color: WatchlistGroupColor) =>
+    request<{ groups: WatchlistGroup[] }>(
+      `/api/watchlist/groups/${encodeURIComponent(groupId)}`,
+      { method: 'PUT', body: JSON.stringify({ name, color }) },
+    ),
+
+  watchlistGroupReorder: (orderedIds: string[]) =>
+    request<{ groups: WatchlistGroup[] }>('/api/watchlist/groups/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ ordered_ids: orderedIds }),
+    }),
+
+  watchlistGroupDelete: (groupId: string) =>
+    request<{ groups: WatchlistGroup[]; symbols: WatchlistEntry[] }>(
+      `/api/watchlist/groups/${encodeURIComponent(groupId)}`,
+      { method: 'DELETE' },
+    ),
+
+  watchlistGroupClear: (groupId: string) =>
+    request<{ symbols: WatchlistEntry[] }>(
+      `/api/watchlist/groups/${encodeURIComponent(groupId)}/clear`,
+      { method: 'POST' },
+    ),
+
+  watchlistSetGroup: (symbol: string, groupId: string | null) =>
+    request<{ symbols: WatchlistEntry[] }>(
+      `/api/watchlist/${encodeURIComponent(symbol)}/group`,
+      { method: 'PUT', body: JSON.stringify({ group_id: groupId }) },
+    ),
+
+  watchlistGroupAddMember: (groupId: string, symbol: string) =>
+    request<{ symbols: WatchlistEntry[] }>(
+      `/api/watchlist/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(symbol)}`,
+      { method: 'POST' },
+    ),
+
+  watchlistGroupRemoveMember: (groupId: string, symbol: string) =>
+    request<{ symbols: WatchlistEntry[] }>(
+      `/api/watchlist/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(symbol)}`,
+      { method: 'DELETE' },
+    ),
+
+  screenerCachedSummary: () =>
+    request<ScreenerCachedSummary>('/api/screener/cached-summary'),
+
+  screenerCachedResult: (strategyId: string, extColumns?: string) =>
+    request<ScreenerCachedResult>(
+      extColumns
+        ? `/api/screener/cached-result/${encodeURIComponent(strategyId)}?ext_columns=${encodeURIComponent(extColumns)}`
+        : `/api/screener/cached-result/${encodeURIComponent(strategyId)}`,
+    ),
+
+  regimePhases: (start?: string, end?: string) => {
+    const params = new URLSearchParams()
+    if (start) params.set('start', start)
+    if (end) params.set('end', end)
+    const qs = params.toString()
+    return request<PhaseSegments>(`/api/regime/phases${qs ? `?${qs}` : ''}`)
+  },
+
+  regimeMainline: (start?: string, end?: string, top = 10, kind: 'concept' | 'industry' = 'concept') => {
+    const params = new URLSearchParams({ top: String(top), kind })
+    if (start) params.set('start', start)
+    if (end) params.set('end', end)
+    return request<MainlineResult>(`/api/regime/mainline?${params.toString()}`)
+  },
+
+  regimeMainlineRecompute: () =>
+    request<{ ok: boolean; rows: number }>('/api/regime/mainline/recompute', { method: 'POST' }),
+
+  mainlineFilterUpdate: (payload: { min_members?: number; max_members?: number; blacklist?: string[]; exclude_st?: boolean }) =>
+    request<MainlineFilter>('/api/settings/preferences/mainline-filter', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  factorBatch: (payload: {
+    factor_names: string[]
+    symbols?: string[] | null
+    start?: string | null
+    end?: string | null
+    n_groups?: number
+    rebalance?: 'daily' | 'weekly' | 'monthly'
+    weight?: 'equal' | 'factor_weight'
+    fees_pct?: number
+    slippage_bps?: number
+    asset_type?: 'stock' | 'etf' | 'index'
+  }) =>
+    request<FactorBatchResult>('/api/backtest/factor/batch', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  miningRuns: () =>
+    request<{ items: MiningRun[] }>('/api/backtest/mining/runs'),
+
+  miningAvailability: (params: {
+    assetType: 'stock' | 'etf'
+    budgetProfile: MiningBudgetProfile
+    start?: string
+    end?: string
+  }) => {
+    const query = new URLSearchParams({
+      asset_type: params.assetType,
+      budget_profile: params.budgetProfile,
+    })
+    if (params.start) query.set('start', params.start)
+    if (params.end) query.set('end', params.end)
+    return request<MiningAvailability>(`/api/backtest/mining/availability?${query}`)
+  },
+
+  miningRun: (runId: string) =>
+    request<MiningRun>(`/api/backtest/mining/runs/${encodeURIComponent(runId)}`),
+
+  miningStart: (payload: MiningRequestV1) =>
+    request<MiningRun>('/api/backtest/mining/runs', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  miningAutoStart: (payload: MiningAutoStartPayload) =>
+    request<MiningAutoStartResponse>('/api/backtest/mining/auto', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  miningResult: (runId: string) =>
+    request<MiningResult>(`/api/backtest/mining/runs/${encodeURIComponent(runId)}/result`),
+
+  miningCancel: (runId: string) =>
+    request<MiningRun>(`/api/backtest/mining/runs/${encodeURIComponent(runId)}/cancel`, {
+      method: 'POST',
+    }),
+
+  miningPromote: (runId: string, signature: string) =>
+    request<ResearchCandidate>(
+      `/api/backtest/mining/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(signature)}/promote`,
+      { method: 'POST' },
+    ),
+
+  miningPublish: (runId: string, signature: string) =>
+    request<{ ok: boolean; strategy_id: string }>(
+      `/api/backtest/mining/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(signature)}/publish`,
+      { method: 'POST' },
+    ),
+
+  miningConfig: () =>
+    request<MiningScheduleConfig>('/api/backtest/mining/config'),
+
+  updateMiningConfig: (payload: Partial<MiningScheduleConfig>) =>
+    request<MiningScheduleConfig>('/api/backtest/mining/config', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  researchCandidates: () =>
+    request<{ items: ResearchCandidate[] }>('/api/backtest/candidates'),
+
+  researchCandidateCreate: (payload: ResearchCandidateCreate) =>
+    request<ResearchCandidate>('/api/backtest/candidates', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  researchCandidateUpdate: (
+    id: string,
+    payload: { name?: string; status?: ResearchCandidateStatus },
+  ) =>
+    request<ResearchCandidate>(`/api/backtest/candidates/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  researchCandidateDelete: (id: string) =>
+    request<{ ok: boolean }>(`/api/backtest/candidates/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+
+  refreshCache: () => request<{ ok: boolean }>('/api/data/refresh-cache', { method: 'POST' }),
+
+  dimensionIntraday: (id: string, opts: { field: string; value: string; date?: string }) => {
+    const qs = new URLSearchParams({ field: opts.field, value: opts.value })
+    if (opts.date) qs.set('date', opts.date)
+    return request<DimensionIntradayResult>(`/api/ext-data/${encodeURIComponent(id)}/dimension-intraday?${qs.toString()}`)
+  },
+
+  extDataDetectUrl: (body: ExtDataDetectUrlRequest) =>
+    request<ExtDataDetectUrlResult>('/api/ext-data/detect-url', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  dragonTiger: (date?: string) =>
+    request<DragonTigerPayload>(
+      `/api/market-recap/dragon-tiger${date ? `?date=${encodeURIComponent(date)}` : ''}`,
+    ),
+
+  auctionBenchmark: (date?: string) =>
+    request<AuctionBenchmarkPayload>(
+      `/api/market-recap/auction-benchmark${date ? `?date=${encodeURIComponent(date)}` : ''}`,
+    ),
+
+  strategyPatchConfig: (strategyId: string, overrides: Record<string, any>) =>
+    request<{ ok: boolean }>('/api/strategies/config', {
+      method: 'PATCH',
+      body: JSON.stringify({ strategy_id: strategyId, overrides }),
+    }),
+
+  customSignalsAiGenerate: (description: string) =>
+    request<CustomSignalAIGenerateResult>('/api/custom-signals/ai/generate', {
+      method: 'POST',
+      body: JSON.stringify({ description }),
+    }),
+
+  abnormalOverview: (minCloseness = 0.5, limit = 200) =>
+    request<AbnormalOverview>(
+      `/api/abnormal/overview?min_closeness=${minCloseness}&limit=${limit}`,
+    ),
+
+  abnormalIntraday: (limit = 500) =>
+    request<AbnormalIntradayPayload>(`/api/abnormal/intraday?limit=${limit}`),
+
+  monitorRuleTestLadder: () =>
+    request<{
+      ok: boolean
+      as_of: string
+      sealed_count: number
+      triggered: Array<{
+        rule_id: string; rule_name: string; symbol: string; name?: string
+        type: string; message: string; severity: string
+        sealed_value: number; sealed_metric: string
+        current_sealed_vol?: number; current_sealed_amount?: number
+      }>
+      not_triggered: Array<{
+        rule_id: string; rule_name: string; symbol: string
+        metric: string; threshold: number; current_value: number | null
+        current_sealed_vol?: number; current_sealed_amount?: number | null
+        reason: string
+      }>
+    }>('/api/monitor-rules/test-ladder', { method: 'POST' }),
+
+  monitorRuleTriggerLadder: () =>
+    request<{
+      ok: boolean
+      triggered: number
+      events: Array<{ symbol: string; name: string; message: string }>
+    }>('/api/monitor-rules/trigger-ladder', { method: 'POST' }),
+
+  strategyValidateCode: (payload: { code: string; strategy_id?: string; name?: string; description?: string }) =>
+    request<StrategyBuildResult>('/api/strategies/code/validate', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  strategySaveCodeV2: (payload: {
+    strategy_id: string
+    code: string
+    target_source: 'ai' | 'custom'
+    mode: 'create' | 'update'
+    name?: string
+    description?: string
+  }) =>
+    request<StrategyCodeSaveResult>('/api/strategies/code/save', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
 }
 
 // ===== Pipeline =====
@@ -2177,6 +4245,11 @@ interface TableStats {
   trading_days: number
 }
 
+export interface DataReadiness {
+  daily: Pick<TableStats, 'earliest_date' | 'latest_date' | 'trading_days'> | null
+  enriched: Pick<TableStats, 'earliest_date' | 'latest_date' | 'trading_days'> | null
+}
+
 interface InstrumentsStats {
   rows: number
   symbols_covered: number
@@ -2187,6 +4260,7 @@ interface InstrumentsStats {
 export interface DataStatus {
   daily: TableStats | null
   enriched: TableStats | null
+  quote_snapshot?: Pick<TableStats, 'earliest_date' | 'latest_date' | 'trading_days'> | null
   index_daily: TableStats | null
   index_enriched: TableStats | null
   index_instruments: InstrumentsStats | null
@@ -2257,6 +4331,7 @@ export interface ChipBinItem {
 
 export interface ChipDistribution {
   symbol: string
+  as_of?: string | null
   days: number
   bins: number
   current: number
@@ -2289,6 +4364,9 @@ export interface FundFlowItem {
   kind?: string | null
   source?: string | null
   unit_amount?: string | null
+  days?: number | null
+  window_days?: number | null
+  coverage_pct?: number | null
 }
 
 export interface FundFlowListResponse {
@@ -2298,6 +4376,36 @@ export interface FundFlowListResponse {
   cached?: boolean
   rows?: number
   source?: string
+}
+
+export interface FundFlowWindowResponse {
+  ok: boolean
+  kind: 'board' | 'concept'
+  window_days: number
+  requested_days?: number
+  window_complete?: boolean
+  window_label: string
+  trading_days: number
+  start?: string | null
+  end?: string | null
+  prior_start?: string | null
+  prior_end?: string | null
+  snapshot_count: number
+  covered_count: number
+  full_count?: number
+  missing_count: number
+  coverage_pct: number
+  items: FundFlowItem[]
+  missing: Array<{ code?: string | null; name?: string | null; days?: number | null }>
+  prior_available: boolean
+  prior_note?: string | null
+  window_note?: string | null
+  source?: string
+  data_as_of?: string | null
+  freshness_status?: 'fresh' | 'stale' | 'unknown'
+  freshness_note?: string | null
+  expected_trading_day?: string | null
+  calendar_covers?: boolean
 }
 
 export interface FundFlowHistoryPoint {
@@ -2372,6 +4480,13 @@ export interface ExtDataField {
   label: string
 }
 
+/** 拉取接口鉴权方式; Key 本体存 secrets_store, 不出现在配置里 */
+export interface ExtPullAuth {
+  type: 'none' | 'bearer' | 'header' | 'query'
+  header?: string
+  param?: string
+}
+
 export interface PullConfig {
   url: string
   method: string
@@ -2386,6 +4501,20 @@ export interface PullConfig {
   last_message?: string | null
   last_rows?: number | null
   next_run?: string | null
+  time_window_start?: string | null
+  time_window_end?: string | null
+  date_param?: string | null
+  auth?: ExtPullAuth | null
+}
+
+export interface ExtDataBackfillResult {
+  status: string
+  total_days: number
+  fetched: number
+  skipped_existing: number
+  empty: number
+  failed: { date: string; reason: string }[]
+  rows_written: number
 }
 
 export interface ExtDataConfig {

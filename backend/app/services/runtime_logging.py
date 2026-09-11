@@ -321,6 +321,7 @@ def emit_event(
         _buffer.appendleft(event)
         if _jsonl_path is not None:
             try:
+                _rotate_jsonl_locked(_jsonl_path)
                 with _jsonl_path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
             except Exception:
@@ -337,6 +338,22 @@ def emit_event(
                 _log_to(_runtime_logger, lvl, line)
 
     return event
+
+
+def _rotate_jsonl_locked(path: Path) -> None:
+    """按 app.log 同款 20MB x 5 策略滚动 runtime.jsonl, 调用方须持有 _lock。"""
+    try:
+        if path.stat().st_size < _MAX_FILE_BYTES:
+            return
+    except OSError:
+        return
+    with contextlib.suppress(OSError):
+        path.with_name(f"{path.name}.{_BACKUP_COUNT}").unlink(missing_ok=True)
+        for index in range(_BACKUP_COUNT - 1, 0, -1):
+            src = path.with_name(f"{path.name}.{index}")
+            if src.exists():
+                src.replace(path.with_name(f"{path.name}.{index + 1}"))
+        path.replace(path.with_name(f"{path.name}.1"))
 
 
 def _log_to(logger: logging.Logger, level: str, line: str) -> None:

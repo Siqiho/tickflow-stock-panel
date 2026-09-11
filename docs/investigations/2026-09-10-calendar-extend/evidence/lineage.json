@@ -1,0 +1,10 @@
+{
+  "source": "szse_month_list",
+  "unit_version": "trading_calendar_v1",
+  "date": "2026-09-10",
+  "dataset_id": "trading_calendar",
+  "row_count": 2007,
+  "artifact_path": "reference/trading_calendar/calendar.parquet",
+  "run_id": "wp2-official",
+  "fetched_at": "2026-09-10T14:32:59.949963+08:00"
+}

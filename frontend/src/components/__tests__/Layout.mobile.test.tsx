@@ -17,15 +17,23 @@ const mockState = vi.hoisted(() => ({
     ai_configured: true,
     has_ai_key: true,
     ai_model: 'test-model',
-  },
+    is_admin: true,
+  } as {
+    mode: string
+    ai_configured: boolean
+    has_ai_key: boolean
+    ai_model: string
+    is_admin: boolean
+  } | undefined,
   preferences: {
     realtime_quotes_enabled: true,
     indices_nav_pinned: true,
     sidebar_index_symbols: ['000001.SH'],
     realtime_watchlist_symbols: [] as string[],
-    nav_order: [],
-    nav_hidden: [],
+    nav_order: [] as string[],
+    nav_hidden: [] as string[],
   },
+  unread: 0,
   quoteStatus: { running: true, is_trading_hours: true },
 }))
 
@@ -35,12 +43,16 @@ vi.mock('@/components/AlertToast', () => ({ AlertToastContainer: () => null }))
 vi.mock('@/components/financials/AiAnalysisHost', () => ({ AiAnalysisHost: () => null }))
 vi.mock('@/components/financials/AiReportBubble', () => ({ AiReportBubble: () => null }))
 vi.mock('@/components/stock-analysis/StockAnalysisHost', () => ({ StockAnalysisHost: () => null }))
+vi.mock('@/components/HermesPageAgentHost', () => ({ HermesPageAgentHost: () => <div data-testid="hermes-page-agent-host" /> }))
 vi.mock('@/components/stock-analysis/StockAnalysisBubble', () => ({ StockAnalysisBubble: () => null }))
 vi.mock('@/lib/monitorBadge', () => ({
   setCurrentTotal: vi.fn(),
-  useUnreadAlerts: () => 0,
+  useUnreadAlerts: () => mockState.unread,
 }))
-vi.mock('@/lib/runtimeLogger', () => ({ useRuntimeRouteLogger: vi.fn() }))
+vi.mock('@/lib/runtimeLogger', () => ({
+  useRuntimeRouteLogger: vi.fn(),
+  setRuntimeLogUploadEnabled: vi.fn(),
+}))
 vi.mock('@/lib/theme', () => ({
   useThemeSync: vi.fn(),
   useTheme: () => ({
@@ -78,26 +90,44 @@ beforeEach(() => {
   mockState.capabilities.label = 'Pro'
   mockState.preferences.realtime_quotes_enabled = true
   mockState.preferences.realtime_watchlist_symbols = []
+  mockState.preferences.nav_order = []
+  mockState.preferences.nav_hidden = []
+  mockState.unread = 0
+  mockState.settings = {
+    mode: 'tickflow',
+    ai_configured: true,
+    has_ai_key: true,
+    ai_model: 'test-model',
+    is_admin: true,
+  }
 })
 
 afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function renderLayout() {
+function renderLayout(initial = '/data') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   return render(
     <MemoryRouter
-      initialEntries={['/data']}
+      initialEntries={[initial]}
       future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
     >
       <QueryClientProvider client={client}>
         <Routes>
           <Route element={<Layout />}>
             <Route path="/data" element={<div>数据内容</div>} />
+            <Route path="/news" element={<div>资讯内容</div>} />
+            <Route path="/" element={<div>看板内容</div>} />
+            <Route path="/ai" element={<div>AI 内容</div>} />
+            <Route path="/ai/hermes" element={<div>Hermes 内容</div>} />
             <Route path="/watchlist" element={<div>自选内容</div>} />
+            <Route path="/screener" element={<div>策略内容</div>} />
+            <Route path="/lots" element={<div>持仓内容</div>} />
+            <Route path="/monitor" element={<div>监控内容</div>} />
+            <Route path="/trading" element={<div>交易内容</div>} />
           </Route>
         </Routes>
       </QueryClientProvider>
@@ -106,6 +136,22 @@ function renderLayout() {
 }
 
 describe('Layout mobile navigation', () => {
+  it('places the menu first, version in the middle, and brand on the right', () => {
+    renderLayout()
+
+    const header = screen.getByTestId('mobile-header')
+    const menu = screen.getByRole('button', { name: '打开导航' })
+    const version = screen.getByTestId('mobile-version')
+    const brand = screen.getByTestId('mobile-brand')
+
+    expect(header.children[0]).toBe(menu)
+    expect(header.children[1]).toBe(version)
+    expect(header.children[2]).toBe(brand)
+    expect(version).toHaveTextContent('v0.1.68')
+    expect(brand).toHaveTextContent('onetrading')
+    expect(screen.getByTestId('hermes-page-agent-host')).toBeInTheDocument()
+  })
+
   it('releases the content column below md and keeps every route reachable in a modal menu', () => {
     renderLayout()
 
@@ -122,41 +168,51 @@ describe('Layout mobile navigation', () => {
     const dialog = screen.getByRole('dialog', { name: '移动导航' })
     for (const label of [
       '看板',
+      'AI',
       '自选',
-      '策略',
-      '回测',
+      '量化',
       '个股分析 Beta',
       '连板梯队',
       '概念分析',
       '行业分析',
       '财务分析',
-      '监控中心',
+      '交易',
+      '市场环境',
       '复盘 Beta',
       '指数',
-      '交易',
+      '用户管理',
       '数据',
+      '资讯',
     ]) {
       expect(within(dialog).getByRole('link', { name: label })).toBeInTheDocument()
     }
+    expect(within(dialog).queryByRole('link', { name: '策略' })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('link', { name: '回测' })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('link', { name: '监控中心' })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('link', { name: '持仓提醒' })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('link', { name: '信号库' })).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('link', { name: '量化' })).toHaveAttribute('href', '/quant')
+    expect(within(dialog).getByRole('link', { name: '交易' })).toHaveAttribute('href', '/trade')
+    const userManagementLink = within(dialog).getByRole('link', { name: '用户管理' })
+    const dataLink = within(dialog).getByRole('link', { name: '数据' })
+    const newsLink = within(dialog).getByRole('link', { name: '资讯' })
+    expect(userManagementLink.nextElementSibling).toBe(dataLink)
+    expect(dataLink.nextElementSibling).toBe(newsLink)
+    expect(newsLink).toHaveAttribute('href', '/news')
+    expect(within(dialog).getByRole('link', { name: 'AI' })).toHaveAttribute('href', '/ai')
 
     fireEvent.click(within(dialog).getByRole('link', { name: '数据' }))
     expect(screen.queryByRole('dialog', { name: '移动导航' })).not.toBeInTheDocument()
   })
 
-  it('preserves tier, AI, realtime, index, settings, and theme controls on mobile', async () => {
+  it('keeps configuration in Settings and preserves realtime, index, and theme controls', async () => {
     renderLayout()
 
     fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
     const dialog = screen.getByRole('dialog', { name: '移动导航' })
 
-    expect(within(dialog).getByRole('link', { name: /TickFlow/ })).toHaveAttribute(
-      'href',
-      '/settings?tab=account',
-    )
-    expect(within(dialog).getByRole('link', { name: /AI 配置/ })).toHaveAttribute(
-      'href',
-      '/settings?tab=ai',
-    )
+    expect(within(dialog).queryByRole('link', { name: /TickFlow/ })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('link', { name: /AI 配置/ })).not.toBeInTheDocument()
     expect(within(dialog).getByText('实时行情 · 全市场')).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: '实时监控设置' })).toBeInTheDocument()
     const quoteSwitch = within(dialog).getByRole('switch', { name: '实时行情开关' })
@@ -168,6 +224,20 @@ describe('Layout mobile navigation', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: '切换到暗色模式' }))
     expect(mockState.toggleTheme).toHaveBeenCalledTimes(1)
     expect(within(dialog).getByRole('link', { name: /设置/ })).toHaveAttribute('href', '/settings')
+  })
+
+  it('pins user management immediately before Data despite an older saved order', () => {
+    mockState.preferences.nav_order = ['/admin/users', '/data', '/ai', '/watchlist']
+    renderLayout()
+
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    const dialog = screen.getByRole('dialog', { name: '移动导航' })
+    const navigation = within(dialog).getByRole('navigation', { name: '移动端主导航' })
+    const links = within(navigation).getAllByRole('link')
+
+    expect(links.at(-3)).toHaveTextContent('用户管理')
+    expect(links.at(-2)).toHaveTextContent('数据')
+    expect(links.at(-1)).toHaveTextContent('资讯')
   })
 
   it('makes the background inert and traps focus inside the modal dialog', () => {
@@ -248,5 +318,122 @@ describe('Layout mobile navigation', () => {
     await waitFor(() => expect(screen.getByText('自选内容')).toBeInTheDocument())
     expect(screen.queryByRole('dialog', { name: '移动导航' })).not.toBeInTheDocument()
     expect(mockState.toggleQuotes).not.toHaveBeenCalled()
+  })
+
+  it('keeps shared data visible while hiding administrator navigation from an ordinary user', () => {
+    mockState.settings = {
+      mode: 'tickflow',
+      ai_configured: true,
+      has_ai_key: true,
+      ai_model: 'test-model',
+      is_admin: false,
+    }
+    renderLayout()
+
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    const dialog = screen.getByRole('dialog', { name: '移动导航' })
+
+    expect(within(dialog).queryByRole('link', { name: '用户管理' })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('link', { name: '监控中心' })).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('link', { name: '交易' })).toHaveAttribute('href', '/trade')
+    expect(within(dialog).getByRole('link', { name: '数据' })).toHaveAttribute('href', '/data')
+    expect(within(dialog).getByRole('link', { name: '自选' })).toBeInTheDocument()
+  })
+
+  it('keeps the trade group when only the old /trading item was hidden', () => {
+    mockState.preferences.nav_hidden = ['/trading']
+    renderLayout()
+
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    const dialog = screen.getByRole('dialog', { name: '移动导航' })
+    expect(within(dialog).getByRole('link', { name: '交易' })).toBeInTheDocument()
+  })
+
+  it('hides the trade group when the new group id or every member is hidden', () => {
+    mockState.preferences.nav_hidden = ['/trade']
+    renderLayout()
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    expect(within(screen.getByRole('dialog', { name: '移动导航' })).queryByRole('link', { name: '交易' })).not.toBeInTheDocument()
+  })
+
+  it('hides the trade group when every legacy member was hidden', () => {
+    mockState.preferences.nav_hidden = ['/monitor', '/lots', '/signals', '/abnormal', '/trading']
+    renderLayout()
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    expect(within(screen.getByRole('dialog', { name: '移动导航' })).queryByRole('link', { name: '交易' })).not.toBeInTheDocument()
+  })
+
+  it('respects monitor_badge_enabled on the trade entry', () => {
+    mockState.unread = 4
+    localStorage.setItem('monitor_badge_enabled', '0')
+    renderLayout('/lots')
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    expect(within(screen.getByRole('dialog', { name: '移动导航' })).getByRole('link', { name: '交易' })).not.toHaveTextContent('4')
+    localStorage.removeItem('monitor_badge_enabled')
+  })
+
+  it('shows the monitor badge on 交易 except on the real monitor page', () => {
+    mockState.unread = 4
+    renderLayout('/lots')
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    expect(within(screen.getByRole('dialog', { name: '移动导航' })).getByRole('link', { name: /交易/ })).toHaveTextContent('4')
+
+    fireEvent.click(within(screen.getByRole('dialog', { name: '移动导航' })).getByRole('button', { name: '关闭导航' }))
+  })
+
+  it('hides the monitor badge only while the monitor page is open', () => {
+    mockState.unread = 4
+    renderLayout('/monitor')
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    expect(within(screen.getByRole('dialog', { name: '移动导航' })).getByRole('link', { name: '交易' })).not.toHaveTextContent('4')
+  })
+
+  it('sets aria-current on desktop and mobile group entries while leaving leaf matching to NavLink', () => {
+    const { unmount } = renderLayout('/screener')
+    const desktop = screen.getByTestId('desktop-sidebar')
+    expect(within(desktop).getByRole('link', { name: '量化' })).toHaveAttribute('aria-current', 'page')
+    expect(within(desktop).getByRole('link', { name: '交易' })).not.toHaveAttribute('aria-current')
+    expect(within(desktop).getByRole('link', { name: '看板' })).not.toHaveAttribute('aria-current')
+    expect(within(desktop).getByRole('link', { name: 'AI' })).not.toHaveAttribute('aria-current')
+
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    const dialog = screen.getByRole('dialog', { name: '移动导航' })
+    expect(within(dialog).getByRole('link', { name: '量化' })).toHaveAttribute('aria-current', 'page')
+    expect(within(dialog).getByRole('link', { name: '交易' })).not.toHaveAttribute('aria-current')
+    expect(within(dialog).getByRole('link', { name: '看板' })).not.toHaveAttribute('aria-current')
+    unmount()
+
+    renderLayout('/lots')
+    expect(within(screen.getByTestId('desktop-sidebar')).getByRole('link', { name: '交易' })).toHaveAttribute('aria-current', 'page')
+    expect(within(screen.getByTestId('desktop-sidebar')).getByRole('link', { name: '量化' })).not.toHaveAttribute('aria-current')
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    expect(within(screen.getByRole('dialog', { name: '移动导航' })).getByRole('link', { name: '交易' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('keeps root exact and nested AI prefix aria-current on desktop and mobile', () => {
+    const { unmount } = renderLayout('/')
+    const desktopHome = screen.getByTestId('desktop-sidebar')
+    expect(within(desktopHome).getByRole('link', { name: '看板' })).toHaveAttribute('aria-current', 'page')
+    expect(within(desktopHome).getByRole('link', { name: '量化' })).not.toHaveAttribute('aria-current')
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    expect(within(screen.getByRole('dialog', { name: '移动导航' })).getByRole('link', { name: '看板' })).toHaveAttribute('aria-current', 'page')
+    unmount()
+
+    renderLayout('/ai/hermes')
+    const desktopAi = screen.getByTestId('desktop-sidebar')
+    expect(within(desktopAi).getByRole('link', { name: 'AI' })).toHaveAttribute('aria-current', 'page')
+    expect(within(desktopAi).getByRole('link', { name: '看板' })).not.toHaveAttribute('aria-current')
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    expect(within(screen.getByRole('dialog', { name: '移动导航' })).getByRole('link', { name: 'AI' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('does not reveal admin navigation while settings are still loading', () => {
+    mockState.settings = undefined
+    renderLayout()
+    fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
+    const dialog = screen.getByRole('dialog', { name: '移动导航' })
+    expect(within(dialog).queryByRole('link', { name: '用户管理' })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('link', { name: '监控中心' })).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('link', { name: '交易' })).toBeInTheDocument()
   })
 })

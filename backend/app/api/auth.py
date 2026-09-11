@@ -1,4 +1,4 @@
-"""访问认证 API。
+"""Multi-user authentication API.
 
 端点:
   GET  /api/auth/status        — 是否已设密码、当前会话是否有效
@@ -13,16 +13,19 @@
   - login 限流: 同一来源 IP 连续失败 5 次, 锁 5 分钟(内存计数)。
   - 会话 token 通过 HttpOnly cookie 下发, 前端无需手动管理。
 """
+
 from __future__ import annotations
 
 import logging
 import time
 from collections import defaultdict
+from ipaddress import ip_address
 from threading import Lock
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.services import auth
 
 logger = logging.getLogger(__name__)
@@ -30,7 +33,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 COOKIE_NAME = "tf_session"
-_COOKIE_MAX_AGE = 30 * 24 * 3600  # 与 SESSION_TTL 一致
 
 # 限流: { ip: (fail_count, lock_until_ts) }
 _fail_counter: dict[str, tuple[int, float]] = defaultdict(lambda: (0, 0.0))
@@ -63,18 +65,62 @@ def _is_local_network(host: str | None) -> bool:
     return False
 
 
-def _client_ip(request: Request) -> str:
-    """取真实客户端 IP(信任反代 X-Forwarded-For)。"""
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
+def _peer_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
+
+
+def _trusted_proxy_ips() -> set[str]:
+    trusted: set[str] = set()
+    for item in (settings.auth_trusted_proxy_ips or "").split(","):
+        candidate = item.strip()
+        if not candidate:
+            continue
+        try:
+            trusted.add(str(ip_address(candidate)))
+        except ValueError:
+            logger.warning("ignoring invalid trusted proxy IP: %s", candidate)
+    return trusted
+
+
+def _normalized_ip(value: str) -> str | None:
+    try:
+        return str(ip_address(value.strip()))
+    except ValueError:
+        return None
+
+
+def _client_ip(request: Request) -> str:
+    """Resolve the nearest untrusted client hop from a trusted proxy chain.
+
+    A caller can pre-populate the left side of ``X-Forwarded-For``.  Walking
+    from the direct peer towards the client prevents that caller-controlled
+    prefix from becoming the rate-limit or registration identity.
+    """
+    raw_peer = _peer_ip(request)
+    peer = _normalized_ip(raw_peer)
+    trusted = _trusted_proxy_ips()
+    if peer is None or peer not in trusted:
+        return peer or raw_peer
+
+    xff = request.headers.get("x-forwarded-for")
+    if not xff:
+        return peer
+
+    for item in reversed(xff.split(",")):
+        candidate = _normalized_ip(item)
+        if candidate is not None and candidate not in trusted:
+            return candidate
+
+    # A forwarded request with no valid untrusted hop is incomplete or
+    # malformed.  Fail closed instead of treating the trusted proxy itself as
+    # a local client (which would weaken the first-admin setup guard).
+    return "unknown"
 
 
 def _check_login_rate_limit(ip: str) -> None:
     """登录失败限流检查, 触发则抛 429。"""
     with _fail_lock:
-        count, until = _fail_counter.get(ip, (0, 0.0))
+        _count, until = _fail_counter.get(ip, (0, 0.0))
         now = time.time()
         if until > now:
             wait = int(until - now)
@@ -105,26 +151,40 @@ def _clear_login_fails(ip: str) -> None:
 # 端点
 # ================================================================
 
+
 class PasswordIn(BaseModel):
-    password: str = Field(min_length=6, max_length=128)
+    password: str = Field(min_length=auth.MIN_PASSWORD_LENGTH, max_length=128)
 
 
 class LoginIn(BaseModel):
+    username: str | None = Field(default=None, max_length=32)
     password: str = Field(min_length=1, max_length=128)
+
+
+class RegisterIn(BaseModel):
+    username: str = Field(min_length=3, max_length=32)
+    password: str = Field(min_length=auth.MIN_PASSWORD_LENGTH, max_length=128)
+    invite_code: str = Field(default="", max_length=128)
 
 
 class ChangePasswordIn(BaseModel):
     old_password: str = Field(min_length=1, max_length=128)
-    new_password: str = Field(min_length=6, max_length=128)
+    new_password: str = Field(min_length=auth.MIN_PASSWORD_LENGTH, max_length=128)
 
 
 @router.get("/status")
 def auth_status(request: Request) -> dict:
-    """认证状态: 是否已设密码 + 当前请求是否已登录。"""
+    """Return identity, registration policy, and the caller's AI quota."""
     token = request.cookies.get(COOKIE_NAME)
+    user = auth.authenticate_session(token or "")
     return {
         "configured": auth.is_configured(),
-        "authenticated": bool(token and auth.is_valid_session(token)),
+        "authenticated": user is not None,
+        "multi_user": True,
+        "registration_enabled": settings.public_registration_enabled,
+        "invite_required": bool(settings.public_registration_invite_code),
+        "user": auth.public_user(user),
+        "ai_quota": auth.quota_status(user) if user else None,
     }
 
 
@@ -135,6 +195,13 @@ def setup_password(req: PasswordIn, request: Request) -> dict:
     若已设置过密码, 返回 409(改密码走 /change-password)。
     """
     # 关键: 限制只有服务器主人(本机/内网)能设密码
+    peer_ip = _peer_ip(request)
+    if request.headers.get("x-forwarded-for") and peer_ip not in _trusted_proxy_ips():
+        logger.warning("setup rejected from untrusted forwarded peer: %s", peer_ip)
+        raise HTTPException(
+            status_code=403,
+            detail="首次设置密码不接受未受信任代理转发的来源地址",
+        )
     client_ip = _client_ip(request)
     if not _is_local_network(client_ip):
         logger.warning("setup rejected from non-local ip: %s", client_ip)
@@ -153,14 +220,18 @@ def setup_password(req: PasswordIn, request: Request) -> dict:
 
 @router.post("/login")
 def login(req: LoginIn, request: Request, response: Response) -> dict:
-    """登录: 密码 → 会话 token(写 HttpOnly cookie)。含失败限流。"""
+    """Authenticate one account and issue an HttpOnly session cookie."""
     ip = _client_ip(request)
     _check_login_rate_limit(ip)
 
     if not auth.is_configured():
         raise HTTPException(status_code=409, detail="尚未设置访问密码")
 
-    token = auth.verify_and_create_session(req.password)
+    token = (
+        auth.verify_and_create_session(req.password, req.username)
+        if req.username
+        else auth.verify_and_create_session(req.password)
+    )
     if not token:
         _record_login_fail(ip)
         raise HTTPException(status_code=401, detail="密码错误")
@@ -170,13 +241,46 @@ def login(req: LoginIn, request: Request, response: Response) -> dict:
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
-        max_age=_COOKIE_MAX_AGE,
+        max_age=max(1, settings.user_session_ttl_days) * 24 * 3600,
         httponly=True,
         samesite="lax",
         path="/",
-        secure=False,  # 自托管可能无 HTTPS, 不强制 secure(建议反代加 HTTPS)
+        secure=settings.cookie_secure,
     )
-    return {"ok": True, "authenticated": True}
+    user = auth.authenticate_session(token)
+    return {
+        "ok": True,
+        "authenticated": True,
+        "user": auth.public_user(user),
+    }
+
+
+@router.post("/register")
+def register(req: RegisterIn, request: Request, response: Response) -> dict:
+    """Create a public user when the deployment registration gate is enabled."""
+    ip = _client_ip(request)
+    _check_login_rate_limit(ip)
+    try:
+        user, token = auth.register_user(req.username, req.password, req.invite_code, ip)
+    except PermissionError as exc:
+        status_code = 429 if "上限" in str(exc) else 403
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    except ValueError as exc:
+        _record_login_fail(ip)
+        raise HTTPException(
+            status_code=409 if "已存在" in str(exc) else 400, detail=str(exc)
+        ) from exc
+    _clear_login_fails(ip)
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        max_age=max(1, settings.user_session_ttl_days) * 24 * 3600,
+        httponly=True,
+        samesite="lax",
+        path="/",
+        secure=settings.cookie_secure,
+    )
+    return {"ok": True, "authenticated": True, "user": auth.public_user(user)}
 
 
 @router.post("/logout")
@@ -192,22 +296,20 @@ def logout(request: Request, response: Response) -> dict:
 @router.post("/change-password")
 def change_password(req: ChangePasswordIn, request: Request) -> dict:
     """修改密码: 需验证旧密码, 成功后所有会话失效(含当前, 需重新登录)。"""
-    token = request.cookies.get(COOKIE_NAME)
-    if not (token and auth.is_valid_session(token)):
+    token = request.cookies.get(COOKIE_NAME) or ""
+    user = auth.authenticate_session(token)
+    if not user:
         raise HTTPException(status_code=401, detail="请先登录")
 
     if not auth.is_configured():
         raise HTTPException(status_code=409, detail="尚未设置访问密码")
 
-    # 验证旧密码
-    new_token = auth.verify_and_create_session(req.old_password)
-    if not new_token:
+    try:
+        auth.change_password(user["id"], req.old_password, req.new_password)
+    except PermissionError as exc:
         ip = _client_ip(request)
         _record_login_fail(ip)
-        raise HTTPException(status_code=401, detail="旧密码错误")
-    # 临时 token 用完即弃
-    auth.revoke_session(new_token)
-
-    # 改密码(set_password 会清空所有会话)
-    auth.set_password(req.new_password)
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "message": "密码已修改, 请重新登录"}

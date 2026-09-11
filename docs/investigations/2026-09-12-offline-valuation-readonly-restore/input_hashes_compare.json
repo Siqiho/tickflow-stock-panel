@@ -1,0 +1,12 @@
+{
+  "changed": [],
+  "changed_paths": [],
+  "env_contents_exposed": false,
+  "env_unchanged": {
+    "mtime_ns": true,
+    "sha256": true,
+    "size": true
+  },
+  "file_count": 26,
+  "unchanged": true
+}

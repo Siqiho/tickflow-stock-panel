@@ -4,9 +4,10 @@ import {
   Save, Loader2, Check, Wifi, WifiOff, Eye, EyeOff, Shield,
   Shuffle, Plug, Zap, Settings2, ExternalLink, Trash2,
   Terminal, Copy, LogIn, LogOut,
+  Cloud, ShieldCheck,
 } from 'lucide-react'
 import { useSettings } from '@/lib/useSharedQueries'
-import { api, type SettingsState } from '@/lib/api'
+import { api, type AiSubscriptionSource, type SettingsState } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { cn } from '@/lib/cn'
 
@@ -58,6 +59,22 @@ const PRESETS: Preset[] = [
     description: '使用 SuperGrok 订阅登录 xAI，或粘贴 xAI API Key。默认模型 Grok 4.5。',
   },
   {
+    label: '86game',
+    url: 'https://api.86gamestore.com/v1',
+    model: 'gpt-5.6-sol',
+    website: 'https://api.86gamestore.com/',
+    websiteLabel: 'api.86gamestore.com',
+    description: '86gamestore OpenAI 兼容接口。当前目录含 gpt-5.6-sol / terra / gpt-5.5 等。',
+  },
+  {
+    label: 'Subrouter',
+    url: 'https://subrouter.ai/v1',
+    model: 'gpt-5.6-sol',
+    website: 'https://subrouter.ai/',
+    websiteLabel: 'subrouter.ai',
+    description: 'SubRouter OpenAI 兼容接口。当前账户可见模型以 gpt-5.6-sol 为主。',
+  },
+  {
     label: 'DeepSeek',
     url: 'https://api.deepseek.com',
     model: 'deepseek-chat',
@@ -101,6 +118,59 @@ const PRESETS: Preset[] = [
   },
 ]
 
+function cloudSubscriptionSources(s?: SettingsState): AiSubscriptionSource[] {
+  if (s?.ai_subscriptions?.length) return s.ai_subscriptions
+  const access = s?.ai_access
+  const active = access?.provider || XAI_PROVIDER
+  return [
+    {
+      provider: XAI_PROVIDER,
+      label: 'Grok',
+      website: 'https://accounts.x.ai/',
+      website_label: 'accounts.x.ai',
+      description: '现有 SuperGrok / xAI 订阅。可用 OAuth 或服务器 API Key。',
+      base_url: XAI_API_BASE,
+      default_model: XAI_DEFAULT_MODEL,
+      models: ['grok-4.5', 'grok-4.5-latest', 'grok-4.20', 'grok-code-fast'],
+      ready: !!access?.allowed && active === XAI_PROVIDER,
+      active: active === XAI_PROVIDER,
+      model: active === XAI_PROVIDER ? (access?.model || XAI_DEFAULT_MODEL) : XAI_DEFAULT_MODEL,
+      credential_source: access?.credential_source ?? null,
+      message: active === XAI_PROVIDER ? (access?.message || '云端 Grok 服务尚未完成配置') : '云端 Grok 服务尚未完成配置',
+    },
+    {
+      provider: '86gamestore',
+      label: '86game',
+      website: 'https://api.86gamestore.com/',
+      website_label: 'api.86gamestore.com',
+      description: '86gamestore OpenAI 兼容订阅，默认 gpt-5.6-sol。',
+      base_url: 'https://api.86gamestore.com/v1',
+      default_model: 'gpt-5.6-sol',
+      models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'codex-auto-review'],
+      ready: false,
+      active: active === '86gamestore',
+      model: 'gpt-5.6-sol',
+      credential_source: null,
+      message: '云端 86game 尚未配置服务器 Key',
+    },
+    {
+      provider: 'subrouter',
+      label: 'Subrouter',
+      website: 'https://subrouter.ai/',
+      website_label: 'subrouter.ai',
+      description: 'SubRouter 订阅。当前账户可见模型以 gpt-5.6-sol 为主。',
+      base_url: 'https://subrouter.ai/v1',
+      default_model: 'gpt-5.6-sol',
+      models: ['gpt-5.6-sol'],
+      ready: false,
+      active: active === 'subrouter',
+      model: 'gpt-5.6-sol',
+      credential_source: null,
+      message: '云端 Subrouter 尚未配置服务器 Key',
+    },
+  ]
+}
+
 export function SettingsAIPanel() {
   const qc = useQueryClient()
   const settings = useSettings()
@@ -133,6 +203,8 @@ export function SettingsAIPanel() {
     interval: number
   } | null>(null)
   const [copiedCode, setCopiedCode] = useState(false)
+  const [cloudSource, setCloudSource] = useState(XAI_PROVIDER)
+  const [cloudModel, setCloudModel] = useState(XAI_DEFAULT_MODEL)
   const pollAbortRef = useRef(false)
 
   const isCodexProvider = provider === CODEX_PROVIDER
@@ -140,6 +212,7 @@ export function SettingsAIPanel() {
   const savedCodexProvider = s?.ai_provider === CODEX_PROVIDER
   const savedXaiProvider = s?.ai_provider === XAI_PROVIDER
   const xaiOauth = !!(s?.ai_xai?.has_oauth)
+  const isAndroidApp = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('one-trading-android/')
   const configured = s?.ai_configured ?? (
     savedCodexProvider
       ? !!(s?.ai_codex_command ?? CODEX_COMMAND)
@@ -176,6 +249,10 @@ export function SettingsAIPanel() {
     const ua = s.ai_user_agent ?? ''
     setCustomUa(!!ua)
     setUserAgent(ua)
+    if (s.ai_access?.mode === 'cloud_subscription') {
+      setCloudSource(s.ai_access.provider || XAI_PROVIDER)
+      setCloudModel(s.ai_access.model || XAI_DEFAULT_MODEL)
+    }
   }, [s])
 
   useEffect(() => () => { pollAbortRef.current = true }, [])
@@ -205,6 +282,24 @@ export function SettingsAIPanel() {
       setApiKey('')
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
+      qc.invalidateQueries({ queryKey: QK.settings })
+    },
+  })
+
+  const selectSubscription = useMutation({
+    mutationFn: (payload: { provider: string; model?: string }) => api.selectAiSubscription(payload),
+    onSuccess: (result) => {
+      qc.setQueryData(QK.settings, (prev: SettingsState | undefined) => prev ? {
+        ...prev,
+        ai_provider: result.ai_provider ?? prev.ai_provider,
+        ai_model: result.ai_model ?? prev.ai_model,
+        ai_configured: result.ai_configured ?? prev.ai_configured,
+        ai_access: result.ai_access ?? prev.ai_access,
+        ai_subscriptions: result.ai_subscriptions ?? prev.ai_subscriptions,
+        ai_xai: result.ai_xai ?? prev.ai_xai,
+      } : prev)
+      if (result.ai_provider) setCloudSource(result.ai_provider)
+      if (result.ai_model) setCloudModel(result.ai_model)
       qc.invalidateQueries({ queryKey: QK.settings })
     },
   })
@@ -372,6 +467,203 @@ export function SettingsAIPanel() {
     }
     return `${s?.ai_model} · ${s?.ai_api_key_masked}`
   })()
+
+  if (s?.ai_access?.mode === 'cloud_subscription') {
+    const access = s.ai_access
+    const sources = cloudSubscriptionSources(s)
+    const selectedSource = sources.find(item => item.provider === cloudSource) ?? sources[0]
+    const sourceModels = selectedSource?.models ?? []
+    const sourceCustomModel = !!cloudModel && !sourceModels.includes(cloudModel)
+    return (
+      <div className="max-w-2xl space-y-5">
+        <Card icon={Cloud} title="云端 AI 订阅" right={access.allowed && (
+          <button onClick={handleTest} disabled={testing}
+            className="inline-flex items-center gap-1.5 rounded-btn bg-elevated px-2.5 py-1 text-xs text-secondary transition-colors hover:text-foreground disabled:opacity-50">
+            {testing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
+            {testing ? '测试中' : '测试'}
+          </button>
+        )}>
+          <div className="flex items-start gap-3">
+            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${access.allowed ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300' : 'bg-amber-500/10 text-amber-600 dark:text-amber-300'}`}>
+              {access.allowed ? <ShieldCheck className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-foreground">{access.message}</div>
+              <div className="mt-1 text-xs leading-5 text-muted">
+                {access.allowed
+                  ? `${access.plan || 'AI'} 订阅已生效 · ${access.model || 'Grok'} · ${access.credential_source === 'server_oauth' ? '服务器 OAuth' : '服务器 API Key'}。四项 AI 能力统一使用云端模型。`
+                  : access.state === 'subscription_required'
+                    ? '当前实例尚未获得 AI 订阅权限。开通后无需在 APK 内填写任何模型密钥。'
+                    : isAndroidApp
+                      ? '订阅权限已识别，等待服务器管理员完成 Grok 登录。'
+                      : '订阅权限已识别，请在下方完成服务器 Grok 登录。'}
+              </div>
+            </div>
+          </div>
+          {testResult && (
+            <div className={`mt-3 rounded-btn border px-3 py-2 text-xs ${testResult.ok ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'border-danger/30 bg-danger/10 text-danger'}`}>
+              {testResult.msg}
+            </div>
+          )}
+        </Card>
+
+        <Card icon={Zap} title="订阅源">
+          <div className="flex flex-wrap gap-2">
+            {sources.map(source => (
+              <button
+                key={source.provider}
+                type="button"
+                onClick={() => {
+                  setCloudSource(source.provider)
+                  setCloudModel(source.active ? (access.model || source.model) : source.default_model)
+                }}
+                className={cn(
+                  'inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-medium border transition-colors',
+                  selectedSource?.provider === source.provider
+                    ? 'border-accent/40 bg-accent/10 text-accent'
+                    : 'border-border bg-elevated/60 text-secondary hover:text-foreground hover:border-border',
+                )}
+              >
+                {source.label}
+                {source.active && <span className="text-[10px] text-emerald-600 dark:text-emerald-300">当前</span>}
+              </button>
+            ))}
+          </div>
+          {selectedSource && (
+            <div className="mt-3 space-y-3">
+              <div className="text-[11px] leading-relaxed text-muted">
+                {selectedSource.description}
+                {' · '}
+                <a href={selectedSource.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-accent hover:underline">
+                  {selectedSource.website_label}
+                  <ExternalLink className="h-2.5 w-2.5" />
+                </a>
+              </div>
+              <div className={`rounded-btn border px-3 py-2 text-xs ${selectedSource.ready ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300'}`}>
+                {selectedSource.message}
+              </div>
+              <Field label="模型" hint={selectedSource.active ? '当前驱动模型' : '启用后四项 AI 与 Hermes 都走这个源'}>
+                <select
+                  value={sourceCustomModel ? '__custom__' : cloudModel}
+                  onChange={e => {
+                    const value = e.target.value
+                    if (value === '__custom__') {
+                      if (sourceModels.includes(cloudModel)) setCloudModel('')
+                    } else {
+                      setCloudModel(value)
+                    }
+                  }}
+                  className={INPUT_CLS}
+                >
+                  {sourceModels.map(item => (
+                    <option key={item} value={item}>{item}</option>
+                  ))}
+                  <option value="__custom__">自定义…</option>
+                </select>
+                {sourceCustomModel && (
+                  <input
+                    type="text"
+                    value={cloudModel}
+                    onChange={e => setCloudModel(e.target.value)}
+                    placeholder={selectedSource.default_model}
+                    className={INPUT_CLS + ' mt-2'}
+                  />
+                )}
+              </Field>
+              {!isAndroidApp && (
+                <button
+                  type="button"
+                  onClick={() => selectSubscription.mutate({ provider: selectedSource.provider, model: cloudModel || selectedSource.default_model })}
+                  disabled={selectSubscription.isPending || !selectedSource.ready || !cloudModel.trim() || (selectedSource.active && cloudModel === access.model)}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-foreground px-4 text-sm font-semibold text-base transition-opacity hover:opacity-90 disabled:opacity-40"
+                >
+                  {selectSubscription.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                  {selectedSource.active ? '更新当前模型' : `启用 ${selectedSource.label}`}
+                </button>
+              )}
+              {selectSubscription.isError && (
+                <div className="rounded-btn border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+                  {selectSubscription.error instanceof Error ? selectSubscription.error.message : '切换订阅失败'}
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {!isAndroidApp && (
+          <Card icon={LogIn} title="服务器 Grok 登录">
+            <div className="space-y-3">
+              <p className="text-xs leading-5 text-secondary">
+                第一版使用服务器统一 OAuth 会话。你只需在这里完成一次设备码授权，access/refresh token
+                会持久化到私人 Zeabur 数据卷，APK 随后直接复用服务器的 Grok 能力。
+              </p>
+
+              {xaiOauth && !xaiLoggingIn && (
+                <div className="flex items-center justify-between gap-3 rounded-btn border border-emerald-500/25 bg-emerald-500/10 px-3 py-2">
+                  <div className="text-xs text-emerald-800 dark:text-emerald-300">
+                    服务器 OAuth 已登录
+                    {s?.ai_xai?.expires_at ? <span className="ml-1 text-muted">· access token 约 {new Date(s.ai_xai.expires_at * 1000).toLocaleString()} 前有效</span> : null}
+                  </div>
+                  <button type="button" onClick={logoutXai}
+                    className="inline-flex h-7 items-center gap-1 rounded-btn border border-border bg-surface px-2.5 text-[11px] text-secondary hover:text-foreground">
+                    <LogOut className="h-3 w-3" />退出登录
+                  </button>
+                </div>
+              )}
+
+              {xaiDevice && (
+                <div className="space-y-2 rounded-btn border border-border bg-elevated/50 p-3">
+                  <div className="text-[11px] text-muted">在 xAI 授权页确认登录；需要时输入下方代码：</div>
+                  <div className="flex items-center gap-2">
+                    <code className="flex h-10 flex-1 items-center rounded-lg bg-base px-3 font-mono text-lg font-semibold tracking-[0.25em] text-foreground ring-1 ring-border/40">
+                      {xaiDevice.user_code}
+                    </code>
+                    <button type="button" onClick={copyUserCode}
+                      className="inline-flex h-10 items-center gap-1 rounded-lg border border-border bg-surface px-3 text-xs text-secondary hover:text-foreground">
+                      {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                      {copiedCode ? '已复制' : '复制'}
+                    </button>
+                  </div>
+                  <a href={xaiDevice.verification_uri_complete || xaiDevice.verification_uri} target="_blank" rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-accent hover:underline">
+                    打开 xAI 授权页<ExternalLink className="h-3 w-3" />
+                  </a>
+                  <div className="inline-flex items-center gap-1.5 text-[11px] text-muted">
+                    <Loader2 className="h-3 w-3 animate-spin" />等待授权完成…
+                  </div>
+                </div>
+              )}
+
+              {xaiLoginError && <div className="rounded-btn border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">{xaiLoginError}</div>}
+
+              {!xaiLoggingIn ? (
+                <button type="button" onClick={startXaiLogin}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-foreground px-4 text-sm font-semibold text-base transition-opacity hover:opacity-90">
+                  <LogIn className="h-3.5 w-3.5" />{xaiOauth ? '重新登录服务器 Grok' : '登录服务器 Grok'}
+                </button>
+              ) : (
+                <button type="button" onClick={cancelXaiLogin}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border bg-elevated px-4 text-sm text-secondary hover:text-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />取消等待
+                </button>
+              )}
+
+              <p className="text-[11px] leading-5 text-amber-700 dark:text-amber-300">
+                第一版实验性路径：仅用于当前私人单用户实例；后续多用户订阅会改为正式的账号与额度隔离。
+              </p>
+            </div>
+          </Card>
+        )}
+
+        <Card icon={Shield} title="安全边界">
+          <div className="space-y-2 text-xs leading-5 text-secondary">
+            <p>OAuth token 仅保存在 one-trading 私人云服务端，不会下发到 APK 或 WebView。</p>
+            <p>APK 端不能切换供应商、粘贴 API Key 或发起服务器 OAuth 登录。</p>
+          </div>
+        </Card>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-5 max-w-2xl">

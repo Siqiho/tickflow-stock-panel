@@ -1,0 +1,27 @@
+as_of=2026-09-11T22:56+08:00
+NOTE: do not run ./dev.sh; it kills ports and manages Hermes.
+NOTE: backend below is the verification wrapper, not daily-run uvicorn.
+
+backend_cwd=/Users/simon/Trading/one-trading/backend
+backend_cmd=/Users/simon/Trading/one-trading/backend/.venv/bin/python -B /Users/simon/Trading/one-trading/docs/cursor-handoffs/restore-pre-cursor-20260911/verify-start-wrapper.py
+backend_pid=5762
+backend_ppid=1
+backend_started=2026-09-11 22:55:02
+backend_listen=127.0.0.1:3018
+DATA_DIR_default=/Users/simon/Trading/one-trading/data
+DATA_DIR_process_override=none
+
+frontend_cwd=/Users/simon/Trading/one-trading/frontend
+frontend_cmd=/Users/simon/Trading/one-trading/frontend/node_modules/vite/bin/vite.js --host 127.0.0.1 --port 3011 --strictPort
+frontend_pid=5690
+frontend_ppid=1
+frontend_started=2026-09-11 22:54:44
+frontend_listen=127.0.0.1:3011
+frontend_config=frontend/vite.config.ts
+isolated_vite_config=no
+
+hermes_pid=973 DO_NOT_TOUCH
+version=v0.1.68
+HEAD=31216dda527cd4ec177b9cbf6fd1c524dbadbe82
+venv=/Users/simon/Trading/one-trading/backend/.venv
+polars=1.40.1

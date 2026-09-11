@@ -1,4 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence } from 'framer-motion'
 import {
@@ -6,6 +7,7 @@ import {
   Crown,
   Layers3,
   RefreshCw,
+  Repeat,
   Search,
   Settings2,
   TrendingDown,
@@ -13,21 +15,35 @@ import {
 } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
+import { SourceTraceButton } from '@/components/SourceTraceButton'
+import { IndustryTreemap } from '@/components/IndustryTreemap'
 import { SectorFundFlowPanel, useTopFundFlowName } from '@/components/SectorFundFlowPanel'
-import { AnalysisConfigDialog, DimensionHeatmap, PresetFetchState, type AnalysisFieldConfig } from '@/components/analysis-shared'
-import { StockPreviewDialog } from '@/components/StockPreviewDialog'
+import { AnalysisConfigDialog, PresetFetchState, type AnalysisFieldConfig } from '@/components/analysis-shared'
+import { StockPreviewDialog, toNavItems, type NavItem } from '@/components/StockPreviewDialog'
+import { RpsRotationDialog } from "@/components/RpsRotationDialog"
 import { api, type MarketSnapshotRow } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { storage } from '@/lib/storage'
 import { fmtBigNum, fmtPct, priceColorClass } from '@/lib/format'
 import { cn } from '@/lib/cn'
-import { resolveDimension, type DimensionGroup, type StockRow } from '@/lib/analysis-adapter'
+import {
+  isUsableDimensionField,
+  normalizeMarketSnapshotPctRows,
+  resolveDimension,
+  resolveDimensionConfigId,
+  type DimensionGroup,
+  type StockRow,
+} from '@/lib/analysis-adapter'
+import { SOURCE_TRACE } from '@/lib/sourceTraceSubjects'
+import { clearPageContext, setPageContext } from '@/lib/pageContext'
+import { buildIndustryAnalysisPageContext } from '@/lib/pageContextSnapshots'
+import { PageContextModule } from '@/components/PageContextModule'
 
-const KEYWORDS = ['industry', '行业', 'sector', '申万', '中信']
 const CANDIDATE_FIELDS = ['industry', '行业', 'sector', '申万', '中信', '行业名称', 'industry_name', 'sector_name']
 const PAGE_LIMIT = 12000
 const MAX_RENDERED_INDUSTRIES = 120
 const MAX_RENDERED_STOCKS = 160
+const PRESET_INDUSTRY_ID = 'ext_hy_ths'
 
 type SortMode = 'heat' | 'avgPct' | 'leader' | 'amount' | 'down'
 type IndustryLevel = 1 | 2 | 3
@@ -53,6 +69,8 @@ interface IndustryStat {
   upCount: number
   downCount: number
   flatCount: number
+  quoteCount: number
+  coverageRate: number
   upRate: number
   strongCount: number
   weakCount: number
@@ -73,20 +91,6 @@ function saveConfig(c: AnalysisFieldConfig) {
   storage.industryAnalysisConfig.set(c)
 }
 
-// ===== 自动选取最佳数据源 =====
-
-function pickBestConfig(
-  configs: { id: string; label: string; description?: string; fields: { name: string; label: string }[] }[],
-): string {
-  let best = '', bestScore = 0
-  for (const c of configs) {
-    const haystack = [c.id, c.label, c.description ?? '', ...c.fields.flatMap(f => [f.name, f.label])].join(' ').toLowerCase()
-    const score = KEYWORDS.reduce((n, k) => n + (haystack.includes(k) ? 1 : 0), 0)
-    if (score > bestScore) { bestScore = score; best = c.id }
-  }
-  return best
-}
-
 // ===== 工具函数 =====
 
 function symbolKeys(symbol: unknown): string[] {
@@ -98,7 +102,7 @@ function symbolKeys(symbol: unknown): string[] {
 
 function buildMarketMap(rows: MarketSnapshotRow[]) {
   const map = new Map<string, MarketSnapshotRow>()
-  for (const r of rows) {
+  for (const r of normalizeMarketSnapshotPctRows(rows)) {
     for (const key of symbolKeys(r.symbol)) map.set(key, r)
   }
   return map
@@ -188,15 +192,18 @@ function calcIndustryStat(group: DimensionGroup, marketMap: Map<string, MarketSn
   const totalAmount = stocks.reduce((sum, s) => sum + (num(s.amount) ?? 0), 0)
   const upCount = pctValues.filter(v => v > 0).length
   const downCount = pctValues.filter(v => v < 0).length
-  const flatCount = Math.max(0, stocks.length - upCount - downCount)
+  const flatCount = pctValues.filter(v => v === 0).length
+  const quoteCount = pctValues.length
+  const coverageRate = stocks.length ? quoteCount / stocks.length : 0
   const strongCount = pctValues.filter(v => v >= 0.05).length
   const weakCount = pctValues.filter(v => v <= -0.05).length
-  const leader = stocks.length ? [...stocks].sort((a, b) => b.leaderScore - a.leaderScore)[0] : null
+  const pricedStocks = stocks.filter(stock => num(stock.change_pct) != null)
+  const leader = pricedStocks.length ? [...pricedStocks].sort((a, b) => b.leaderScore - a.leaderScore)[0] : null
   const avgPct = avg(pctValues)
   const medianPct = median(pctValues)
   const upRate = pctValues.length ? upCount / pctValues.length : 0
   const amountScore = clamp01(Math.log1p(totalAmount) / Math.log1p(80_000_000_000))
-  const strongScore = stocks.length ? clamp01(strongCount / Math.max(1, stocks.length * 0.18)) : 0
+  const strongScore = quoteCount ? clamp01(strongCount / Math.max(1, quoteCount * 0.18)) : 0
   const leaderPart = clamp01((leader?.leaderScore ?? 0) / 100)
   const avgPart = clamp01(((avgPct ?? 0) + 0.02) / 0.09)
   const upPart = clamp01((upRate - 0.35) / 0.55)
@@ -213,6 +220,8 @@ function calcIndustryStat(group: DimensionGroup, marketMap: Map<string, MarketSn
     upCount,
     downCount,
     flatCount,
+    quoteCount,
+    coverageRate,
     upRate,
     strongCount,
     weakCount,
@@ -268,23 +277,44 @@ function groupByIndustryLevel(groups: DimensionGroup[], level: IndustryLevel): D
 // ===== 主页面 =====
 
 export function IndustryAnalysis() {
+  const [searchParams] = useSearchParams()
+  const requestedFocus = (searchParams.get('focus') ?? '').trim()
   const [fieldConfig, setFieldConfig] = useState<AnalysisFieldConfig>(loadConfig)
   const [showConfig, setShowConfig] = useState(false)
+  const [showRps, setShowRps] = useState(false)
   const [search, setSearch] = useState('')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [sortMode, setSortMode] = useState<SortMode>('heat')
   const [previewSymbol, setPreviewSymbol] = useState<string | null>(null)
   const [previewName, setPreviewName] = useState<string>('')
+  const [previewNavList, setPreviewNavList] = useState<NavItem[]>([])
+  const handleStockClick = useCallback((symbol: string, name?: string, navList?: NavItem[]) => {
+    setPreviewSymbol(symbol)
+    setPreviewName(name ?? '')
+    setPreviewNavList(navList ?? [])
+  }, [])
   const topFlow = useTopFundFlowName('board')
 
   const configsQuery = useQuery({ queryKey: QK.extData, queryFn: api.extDataList })
   const availableConfigs = configsQuery.data?.items ?? []
-  // 用户配置的 configId 可能已失效 (扩展数据被删除), 此时回退到自动选择,
-  // 避免用失效 ID 请求接口报错; 用户仍可点配置按钮重新选择。
-  const preferredConfigId = fieldConfig.configId || pickBestConfig(availableConfigs)
-  const preferredConfig = availableConfigs.find(c => c.id === preferredConfigId)
-  const activeConfigId = preferredConfig ? preferredConfigId : pickBestConfig(availableConfigs)
+  // 旧版可能把资金流表及其金额字段保存成行业维度。只有字段层真实包含
+  // 行业分类的配置才继续生效，否则回退到内置股票→行业 membership 表。
+  const activeConfigId = resolveDimensionConfigId(
+    availableConfigs,
+    fieldConfig.configId,
+    CANDIDATE_FIELDS,
+    [PRESET_INDUSTRY_ID],
+  )
   const activeConfig = availableConfigs.find(c => c.id === activeConfigId)
+  const requestedDimensionField = activeConfig?.fields.find(field => field.name === fieldConfig.dimensionField)
+  const effectiveDimensionField = requestedDimensionField && isUsableDimensionField(requestedDimensionField)
+    ? requestedDimensionField.name
+    : undefined
+  const effectiveFieldConfig: AnalysisFieldConfig = {
+    ...fieldConfig,
+    configId: activeConfigId || undefined,
+    dimensionField: effectiveDimensionField,
+  }
 
   const rowsQuery = useQuery({
     queryKey: QK.extDataRows(activeConfigId, undefined, PAGE_LIMIT),
@@ -293,7 +323,6 @@ export function IndustryAnalysis() {
   })
 
   // 内置行业预设 (ext_hy_ths) 手动获取数据
-  const PRESET_INDUSTRY_ID = 'ext_hy_ths'
   const queryClient = useQueryClient()
   const fetchMutation = useMutation({
     mutationFn: () => api.extDataPresetFetch(PRESET_INDUSTRY_ID),
@@ -315,8 +344,8 @@ export function IndustryAnalysis() {
 
   const marketMap = useMemo(() => buildMarketMap(marketQuery.data?.rows ?? []), [marketQuery.data?.rows])
   const resolved = useMemo(
-    () => resolveDimension(rowsQuery.data, activeConfig, fieldConfig.dimensionField ? [fieldConfig.dimensionField, ...CANDIDATE_FIELDS] : CANDIDATE_FIELDS),
-    [rowsQuery.data, activeConfig, fieldConfig.dimensionField],
+    () => resolveDimension(rowsQuery.data, activeConfig, effectiveDimensionField ? [effectiveDimensionField, ...CANDIDATE_FIELDS] : CANDIDATE_FIELDS),
+    [rowsQuery.data, activeConfig, effectiveDimensionField],
   )
 
   const industryLevel = fieldConfig.hierarchyLevel ?? 2
@@ -327,6 +356,14 @@ export function IndustryAnalysis() {
       .map(g => calcIndustryStat(g, marketMap))
       .filter(s => s.count > 0)
   }, [groups, marketMap])
+
+  useEffect(() => {
+    if (!requestedFocus || stats.length === 0) return
+    const match = stats.find(item => item.key === requestedFocus)
+      ?? stats.find(item => item.key.includes(requestedFocus) || requestedFocus.includes(item.key))
+    setSearch(requestedFocus)
+    setSelectedKey(match?.key ?? null)
+  }, [requestedFocus, stats])
 
   const filteredStats = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -353,24 +390,56 @@ export function IndustryAnalysis() {
     return set.size
   }, [stats])
 
-  // 热力图用的 quoteMap（兼容 DimensionHeatmap 组件接口）
-  const heatmapQuoteMap = useMemo(() => {
-    const map = new Map<string, { symbol: string; pct?: number; change_pct?: number; name?: string; [k: string]: unknown }>()
-    for (const [k, v] of marketMap) {
-      map.set(k, {
-        ...v,
-        change_pct: v.change_pct ?? undefined,
-        name: v.name ?? undefined,
-      })
-    }
-    return map
-  }, [marketMap])
-
   const handleSaveConfig = (c: AnalysisFieldConfig) => {
     setFieldConfig(c)
     saveConfig(c)
     setSelectedKey(null)
   }
+
+  useEffect(() => {
+    const asOf = marketQuery.data?.as_of ?? rowsQuery.data?.date ?? null
+    setPageContext(buildIndustryAnalysisPageContext({
+      asOf,
+      search,
+      sortMode,
+      levelLabel: `${industryLevel}级行业`,
+      totalGroups: stats.length,
+      totalSymbols,
+      breadth: industryBreadth,
+      leading: leading.slice(0, 8).map(item => ({
+        key: item.key,
+        avgPct: item.avgPct,
+        count: item.count,
+        leaderName: item.leader?.name ?? item.leader?.symbol ?? null,
+      })),
+      falling: falling.slice(0, 5).map(item => ({
+        key: item.key,
+        avgPct: item.avgPct,
+        count: item.count,
+      })),
+      selectedFocusId: selected ? 'focus' : (groups.length > 0 ? 'treemap' : 'matrix'),
+      hasTreemap: groups.length > 0,
+      topFlowName: topFlow.name,
+      selected: selected ? {
+        key: selected.key,
+        count: selected.count,
+        avgPct: selected.avgPct,
+        heatScore: selected.heatScore,
+        totalAmount: selected.totalAmount,
+        upCount: selected.upCount,
+        downCount: selected.downCount,
+        stocks: selected.stocks.map(stock => ({
+          symbol: stock.symbol,
+          name: stock.name,
+          change_pct: stock.change_pct,
+          leaderScore: stock.leaderScore,
+        })),
+      } : null,
+      empty: !configsQuery.isLoading && (stats.length === 0 || !activeConfig),
+      hint: !activeConfig ? '暂无行业数据' : resolved.hint,
+    }))
+    return () => clearPageContext('/industry-analysis')
+  }, [activeConfig, configsQuery.isLoading, industryBreadth, industryLevel, falling, leading, marketQuery.data?.as_of, resolved.hint, rowsQuery.data?.date, search, selected, sortMode, stats.length, totalSymbols])
 
   if (configsQuery.isLoading) {
     return <div className="flex h-full items-center justify-center"><RefreshCw className="h-5 w-5 animate-spin text-muted" /></div>
@@ -398,7 +467,7 @@ export function IndustryAnalysis() {
           />
         </div>
         <AnimatePresence>
-          {showConfig && <AnalysisConfigDialog currentConfig={fieldConfig} onSave={handleSaveConfig} onClose={() => setShowConfig(false)} showHierarchyLevel />}
+          {showConfig && <AnalysisConfigDialog currentConfig={effectiveFieldConfig} onSave={handleSaveConfig} onClose={() => setShowConfig(false)} showHierarchyLevel />}
         </AnimatePresence>
       </>
     )
@@ -413,6 +482,13 @@ export function IndustryAnalysis() {
         subtitle={`${industryLevelLabel} · ${marketQuery.data?.as_of ?? rowsQuery.data?.date ?? '最新'} · ${stats.length} 个行业 · ${totalSymbols} 只标的`}
         right={
           <div className="flex items-center gap-1">
+            <button
+              onClick={() => setShowRps(true)}
+              className="inline-flex items-center gap-1 rounded-btn border border-amber-400/40 bg-amber-400/15 px-2.5 py-1.5 text-[11px] text-amber-400 font-medium transition-colors hover:bg-amber-400/25 hover:border-amber-400/60"
+              title="行业涨幅轮动矩阵"
+            >
+              <Repeat className="h-3.5 w-3.5" />涨幅RPS轮动分析
+            </button>
             <button
               onClick={() => { rowsQuery.refetch(); marketQuery.refetch() }}
               disabled={rowsQuery.isFetching || marketQuery.isFetching}
@@ -430,6 +506,24 @@ export function IndustryAnalysis() {
 
       <div className="min-h-full bg-[radial-gradient(circle_at_12%_0%,rgba(245,158,11,0.12),transparent_28%),radial-gradient(circle_at_85%_8%,rgba(244,63,94,0.08),transparent_28%)] px-6 py-5">
         <div className="mx-auto max-w-[1440px] space-y-5">
+          {/* 行业 → 个股矩形树图：作为行业分析的首要市场入口 */}
+          {groups.length > 0 && (
+            <PageContextModule id="treemap">
+            <IndustryTreemap
+              groups={groups}
+              quoteMap={marketMap}
+              selectedKey={selected?.key ?? null}
+              onSelect={setSelectedKey}
+              onStockClick={handleStockClick}
+              asOf={marketQuery.data?.as_of}
+              source={marketQuery.data?.source}
+              fetchedAt={marketQuery.data?.fetched_at}
+              coverage={marketQuery.data?.coverage}
+              qualityStatus={marketQuery.data?.quality_status}
+            />
+            </PageContextModule>
+          )}
+
           <HeroPanel
             leading={leading[0]}
             falling={falling[0]}
@@ -437,31 +531,26 @@ export function IndustryAnalysis() {
             industryBreadth={industryBreadth}
             topFlowName={topFlow.name}
             topFlowNet={topFlow.mainNet}
+            selectedKey={selected?.key ?? null}
+            onSelect={setSelectedKey}
           />
 
+          <PageContextModule id="fund-flow">
           <SectorFundFlowPanel kind="board" top={8} />
+          </PageContextModule>
 
           <MarketPulse
             leading={leading}
             falling={falling}
             selectedKey={selected?.key ?? null}
             onSelect={setSelectedKey}
-            onStockClick={(sym, name) => { setPreviewSymbol(sym); setPreviewName(name ?? '') }}
+            activeSymbol={previewSymbol}
+            onStockClick={handleStockClick}
           />
-
-          {/* 热力图 */}
-          {groups.length > 0 && (
-            <DimensionHeatmap
-              groups={groups}
-              quoteMap={heatmapQuoteMap}
-              selectedKey={selectedKey}
-              onSelect={k => setSelectedKey(k)}
-              colorScheme="amber"
-            />
-          )}
 
           {stats.length > 0 ? (
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[18rem_1fr]">
+              <PageContextModule id="matrix">
               <IndustryRail
                 stats={filteredStats.slice(0, MAX_RENDERED_INDUSTRIES)}
                 selectedKey={selected?.key ?? null}
@@ -471,7 +560,10 @@ export function IndustryAnalysis() {
                 onSort={setSortMode}
                 onSelect={setSelectedKey}
               />
-              <IndustryFocus stat={selected} onStockClick={(sym, name) => { setPreviewSymbol(sym); setPreviewName(name ?? '') }} />
+              </PageContextModule>
+              <PageContextModule id="focus">
+              <IndustryFocus stat={selected} activeSymbol={previewSymbol} onStockClick={(sym, name) => { setPreviewSymbol(sym); setPreviewName(name ?? '') }} />
+              </PageContextModule>
             </div>
           ) : rowsQuery.isLoading ? (
             <div className="rounded-2xl border border-border bg-surface px-6 py-16 text-center text-sm text-muted">正在计算行业强度...</div>
@@ -490,16 +582,22 @@ export function IndustryAnalysis() {
       </div>
 
       <AnimatePresence>
-        {showConfig && <AnalysisConfigDialog currentConfig={fieldConfig} onSave={handleSaveConfig} onClose={() => setShowConfig(false)} showHierarchyLevel />}
+        {showConfig && <AnalysisConfigDialog currentConfig={effectiveFieldConfig} onSave={handleSaveConfig} onClose={() => setShowConfig(false)} showHierarchyLevel />}
       </AnimatePresence>
 
       {previewSymbol && (
         <StockPreviewDialog
           symbol={previewSymbol}
           name={previewName}
-          onClose={() => { setPreviewSymbol(null); setPreviewName('') }}
+          onClose={() => { setPreviewSymbol(null); setPreviewName(''); setPreviewNavList([]) }}
+          navList={previewNavList}
+          onNavigate={(sym, n) => { setPreviewSymbol(sym); setPreviewName(n ?? '') }}
         />
       )}
+
+      <AnimatePresence>
+        {showRps && <RpsRotationDialog kind="industry" onClose={() => setShowRps(false)} />}
+      </AnimatePresence>
     </>
   )
 }
@@ -513,6 +611,8 @@ function HeroPanel({
   industryBreadth,
   topFlowName,
   topFlowNet,
+  selectedKey,
+  onSelect,
 }: {
   leading?: IndustryStat
   falling?: IndustryStat
@@ -520,11 +620,18 @@ function HeroPanel({
   industryBreadth: { up: number; down: number; flat: number }
   topFlowName?: string | null
   topFlowNet?: number | null
+  selectedKey?: string | null
+  onSelect?: (key: string) => void
 }) {
   return (
     <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-      <HeroMetric icon={TrendingUp} label="最强行业" value={leading?.key ?? '—'} hint={leading?.avgPct != null ? <span className={priceColorClass(leading.avgPct)}>{fmtPct(leading.avgPct)}</span> : '等待行情'} tone="up" />
-      <HeroMetric icon={TrendingDown} label="最大风险" value={falling?.key ?? '—'} hint={falling?.avgPct != null ? <span className={priceColorClass(falling.avgPct)}>{fmtPct(falling.avgPct)}</span> : '等待行情'} tone="down" />
+      <PageContextModule id="hero-strongest">
+      <HeroMetric icon={TrendingUp} label="最强行业" value={leading?.key ?? '—'} hint={leading?.avgPct != null ? <span className={priceColorClass(leading.avgPct)}>{fmtPct(leading.avgPct)}</span> : '等待行情'} tone="up" active={!!leading && selectedKey === leading.key} onClick={leading ? () => onSelect?.(leading.key) : undefined} />
+      </PageContextModule>
+      <PageContextModule id="hero-risk">
+      <HeroMetric icon={TrendingDown} label="最大风险" value={falling?.key ?? '—'} hint={falling?.avgPct != null ? <span className={priceColorClass(falling.avgPct)}>{fmtPct(falling.avgPct)}</span> : '等待行情'} tone="down" active={!!falling && selectedKey === falling.key} onClick={falling ? () => onSelect?.(falling.key) : undefined} />
+      </PageContextModule>
+      <PageContextModule id="hero-breadth">
       <HeroMetric
         icon={Activity}
         label="涨跌行业"
@@ -532,6 +639,8 @@ function HeroPanel({
         hint={<><span className="text-bull">上涨</span><span className="mx-1 text-muted">/</span><span className="text-bear">下跌</span>{industryBreadth.flat ? <span className="text-muted"> · 平 {industryBreadth.flat}</span> : null}</>}
         tone="blue"
       />
+      </PageContextModule>
+      <PageContextModule id="hero-inflow">
       <HeroMetric
         icon={Activity}
         label="主力净流入"
@@ -539,17 +648,22 @@ function HeroPanel({
         hint={topFlowNet != null ? <span className="text-bull">{fmtBigNum(topFlowNet)}</span> : (activeIndustry ? `成交额 ${fmtBigNum(activeIndustry.totalAmount)}` : '点击下方刷新资金流')}
         tone="blue"
       />
+      </PageContextModule>
+      <PageContextModule id="hero-leader">
       <HeroMetric icon={Crown} label="龙头算法" value="6 因子" hint="强势 + 承接 + 容量" tone="gold" />
+      </PageContextModule>
     </div>
   )
 }
 
-function HeroMetric({ icon: Icon, label, value, hint, tone }: {
+function HeroMetric({ icon: Icon, label, value, hint, tone, active, onClick }: {
   icon: typeof TrendingUp
   label: string
   value: ReactNode
   hint: ReactNode
   tone: 'up' | 'down' | 'gold' | 'blue'
+  active?: boolean
+  onClick?: () => void
 }) {
   const toneClass = {
     up: 'text-bull bg-bull/10',
@@ -563,16 +677,25 @@ function HeroMetric({ icon: Icon, label, value, hint, tone }: {
     gold: 'text-amber-700 dark:text-amber-300',
     blue: 'text-foreground',
   }[tone]
-  return (
-    <div className="rounded-xl border border-border bg-surface px-3 py-2">
+  const body = (
+    <>
       <div className="flex items-center justify-between text-[11px] text-muted">
         <span>{label}</span>
         <span className={cn('rounded-md p-1', toneClass)}><Icon className="h-3.5 w-3.5" /></span>
       </div>
       <div className={cn('mt-1 truncate text-sm font-semibold', valueClass)}>{value}</div>
       <div className="mt-0.5 truncate text-[11px] text-muted">{hint}</div>
-    </div>
+    </>
   )
+  const className = cn(
+    'block h-full w-full rounded-xl border bg-surface px-3 py-2 text-left',
+    onClick && 'transition-colors hover:border-accent/40',
+    active ? 'border-accent/50 ring-1 ring-accent/20' : 'border-border',
+  )
+  if (onClick) {
+    return <button type="button" onClick={onClick} className={className}>{body}</button>
+  }
+  return <div className={className}>{body}</div>
 }
 
 // ===== MarketPulse =====
@@ -583,17 +706,23 @@ function MarketPulse({
   selectedKey,
   onSelect,
   onStockClick,
+  activeSymbol,
 }: {
   leading: IndustryStat[]
   falling: IndustryStat[]
   selectedKey: string | null
   onSelect: (key: string) => void
-  onStockClick: (symbol: string, name?: string) => void
+  onStockClick: (symbol: string, name?: string, navList?: NavItem[]) => void
+  activeSymbol: string | null
 }) {
   return (
     <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-      <PulseList title="领涨主线" items={leading} mode="up" selectedKey={selectedKey} onSelect={onSelect} onStockClick={onStockClick} />
-      <PulseList title="领跌方向" items={falling} mode="down" selectedKey={selectedKey} onSelect={onSelect} onStockClick={onStockClick} />
+      <PageContextModule id="pulse-up">
+      <PulseList title="领涨主线" items={leading} mode="up" selectedKey={selectedKey} onSelect={onSelect} onStockClick={onStockClick} activeSymbol={activeSymbol} />
+      </PageContextModule>
+      <PageContextModule id="pulse-down">
+      <PulseList title="领跌方向" items={falling} mode="down" selectedKey={selectedKey} onSelect={onSelect} onStockClick={onStockClick} activeSymbol={activeSymbol} />
+      </PageContextModule>
     </div>
   )
 }
@@ -605,13 +734,15 @@ function PulseList({
   selectedKey,
   onSelect,
   onStockClick,
+  activeSymbol,
 }: {
   title: string
   items: IndustryStat[]
   mode: 'up' | 'down'
   selectedKey: string | null
   onSelect: (key: string) => void
-  onStockClick: (symbol: string, name?: string) => void
+  onStockClick: (symbol: string, name?: string, navList?: NavItem[]) => void
+  activeSymbol: string | null
 }) {
   const toneText = mode === 'up' ? 'text-bull' : 'text-bear'
   const toneBorder = mode === 'up' ? 'border-bull/20' : 'border-bear/20'
@@ -625,12 +756,16 @@ function PulseList({
           {mode === 'up' ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
           {title}
         </div>
-        <span className="rounded-full bg-elevated/60 px-2 py-0.5 text-[10px] text-muted">Top 10</span>
+        <div className="flex items-center gap-1">
+          <SourceTraceButton subjects={SOURCE_TRACE.industryAnalysis} />
+          <span className="rounded-full bg-elevated/60 px-2 py-0.5 text-[10px] text-muted">Top 10</span>
+        </div>
       </div>
       <div className="space-y-1">
         {items.map((item, idx) => {
           const active = selectedKey === item.key
-          const leaders = [...item.stocks].sort((a, b) => b.leaderScore - a.leaderScore).slice(0, 3)
+          const sortedStocks = [...item.stocks].sort((a, b) => b.leaderScore - a.leaderScore)
+          const leaders = sortedStocks.slice(0, 3)
           const upPct = item.count > 0 ? (item.upCount / item.count) * 100 : 0
           const downPct = item.count > 0 ? (item.downCount / item.count) * 100 : 0
           const flatPct = Math.max(0, 100 - upPct - downPct)
@@ -671,7 +806,7 @@ function PulseList({
                   {Array.from({ length: 3 }).map((_, i) => {
                     const stock = leaders[i]
                     return stock ? (
-                      <span key={stock.symbol} title={stock.name || stock.symbol} onClick={e => { e.stopPropagation(); onStockClick(stock.symbol, stock.name || undefined) }} className={cn('flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] cursor-pointer hover:brightness-125', i === 0 ? 'bg-amber-300/10 text-foreground' : 'bg-elevated/60 text-secondary')}>
+                      <span key={stock.symbol} title={stock.name || stock.symbol} onClick={e => { e.stopPropagation(); onStockClick(stock.symbol, stock.name || undefined, toNavItems(sortedStocks.slice(0, MAX_RENDERED_STOCKS))) }} className={cn('flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] cursor-pointer hover:brightness-125', i === 0 ? 'bg-amber-300/10 text-foreground' : 'bg-elevated/60 text-secondary', stock.symbol === activeSymbol && 'ring-1 ring-accent/60')}>
                         <span className="flex min-w-0 items-center gap-1">
                           <span className="min-w-0 truncate font-medium">{stock.name || stock.symbol}</span>
                         </span>
@@ -713,7 +848,10 @@ function IndustryRail({
       <div className="px-1 pb-2.5">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-foreground">行业矩阵</h3>
-          <span className="text-[10px] text-muted">Top {stats.length}</span>
+          <div className="flex items-center gap-1">
+            <SourceTraceButton subjects={SOURCE_TRACE.industryAnalysis} />
+            <span className="text-[10px] text-muted">Top {stats.length}</span>
+          </div>
         </div>
         <div className="mt-2 relative">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
@@ -752,10 +890,11 @@ function IndustryRail({
 
 // ===== IndustryFocus（右侧聚焦面板） =====
 
-function IndustryFocus({ stat, onStockClick }: { stat: IndustryStat | null; onStockClick: (symbol: string, name?: string) => void }) {
+function IndustryFocus({ stat, onStockClick, activeSymbol }: { stat: IndustryStat | null; onStockClick: (symbol: string, name?: string, navList?: NavItem[]) => void; activeSymbol: string | null }) {
   if (!stat) return null
   const stocks = [...stat.stocks].sort((a, b) => b.leaderScore - a.leaderScore).slice(0, MAX_RENDERED_STOCKS)
   const topLeaders = stocks.slice(0, 3)
+  const focusNav: NavItem[] = toNavItems(stocks)
   return (
     <section className="flex max-h-[720px] flex-col overflow-hidden rounded-2xl border border-border bg-surface">
       <div className="shrink-0 border-b border-border px-5 py-4">
@@ -767,6 +906,7 @@ function IndustryFocus({ stat, onStockClick }: { stat: IndustryStat | null; onSt
             </div>
             <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
               <span>{stat.count} 只成分</span>
+              <span>行情 {stat.quoteCount}/{stat.count}</span>
               <span className={priceColorClass(stat.avgPct)}>平均 {stat.avgPct != null ? fmtPct(stat.avgPct) : '—'}</span>
               <span>上涨占比 {(stat.upRate * 100).toFixed(0)}%</span>
               <span>成交额 {fmtBigNum(stat.totalAmount)}</span>
@@ -784,7 +924,7 @@ function IndustryFocus({ stat, onStockClick }: { stat: IndustryStat | null; onSt
       </div>
 
       <div className="grid shrink-0 gap-3 border-b border-border bg-base/25 p-4 lg:grid-cols-[1fr_1.15fr]">
-        <LeaderStage stocks={topLeaders} onStockClick={onStockClick} />
+        <LeaderStage stocks={topLeaders} activeSymbol={activeSymbol} onStockClick={(sym, name) => onStockClick(sym, name, focusNav)} />
         <ScoreExplain stock={topLeaders[0]} />
       </div>
 
@@ -804,7 +944,7 @@ function IndustryFocus({ stat, onStockClick }: { stat: IndustryStat | null; onSt
           </thead>
           <tbody className="divide-y divide-border/70">
             {stocks.map((s, idx) => (
-              <tr key={`${s.symbol}-${idx}`} className="hover:bg-elevated/30 cursor-pointer" onClick={() => onStockClick(s.symbol, s.name || undefined)}>
+              <tr key={`${s.symbol}-${idx}`} className={cn('cursor-pointer', s.symbol === activeSymbol ? 'bg-accent/10 hover:bg-accent/15' : 'hover:bg-elevated/30')} onClick={() => onStockClick(s.symbol, s.name || undefined, focusNav)}>
                 <td className="px-4 py-2 font-mono text-muted">{idx + 1}</td>
                 <td className="px-4 py-2">
                   <div className="font-medium text-foreground">{s.name || '—'}</div>
@@ -835,7 +975,7 @@ function MiniStat({ label, value, cls }: { label: string; value: string; cls: st
   return <div className="rounded-lg border border-border/60 bg-base/35 px-2 py-1.5"><div className="text-[10px] text-muted">{label}</div><div className={cn('mt-0.5 truncate text-sm font-semibold', cls)}>{value}</div></div>
 }
 
-function LeaderStage({ stocks, onStockClick }: { stocks: EnrichedStock[]; onStockClick: (symbol: string, name?: string) => void }) {
+function LeaderStage({ stocks, onStockClick, activeSymbol }: { stocks: EnrichedStock[]; onStockClick: (symbol: string, name?: string) => void; activeSymbol: string | null }) {
   if (!stocks.length) return <div className="rounded-xl border border-border/60 bg-surface p-4 text-sm text-muted">暂无龙头候选</div>
   return (
     <div className="rounded-xl border border-border/60 bg-surface p-3">
@@ -845,7 +985,7 @@ function LeaderStage({ stocks, onStockClick }: { stocks: EnrichedStock[]; onStoc
       </div>
       <div className="grid gap-2 md:grid-cols-3">
         {stocks.map((stock, idx) => (
-          <div key={stock.symbol} onClick={() => onStockClick(stock.symbol, stock.name || undefined)} className={cn('rounded-lg border p-3 cursor-pointer hover:brightness-110 transition-all', idx === 0 ? 'border-amber-400/25 bg-amber-400/[0.06]' : 'border-border/60 bg-base/35')}>
+          <div key={stock.symbol} onClick={() => onStockClick(stock.symbol, stock.name || undefined)} className={cn('rounded-lg border p-3 cursor-pointer hover:brightness-110 transition-all', idx === 0 ? 'border-amber-400/25 bg-amber-400/[0.06]' : 'border-border/60 bg-base/35', stock.symbol === activeSymbol && 'ring-1 ring-accent/60')}>
             <div className="flex items-center justify-between gap-2">
               <span className={cn('text-[10px] font-medium', idx === 0 ? 'text-amber-700 dark:text-amber-300' : 'text-muted')}>{idx === 0 ? '主龙头' : `辅龙 ${idx}`}</span>
               <span className="font-mono text-[11px] text-amber-700 dark:text-amber-300">{stock.leaderScore.toFixed(0)}</span>

@@ -1,0 +1,18 @@
+captured_at: 2026-09-11T13:57-13:59 CST
+TMPDIR=/tmp
+pytest --basetemp=/tmp/ot-dash-accept-pytest
+cwd=/Users/simon/Trading/one-trading/backend
+cmd=.venv/bin/python -m pytest tests/free_sources/test_fund_flow.py tests/free_sources/test_concept_fflow_daily_roll.py tests/free_sources/test_industry_window_freshness.py tests/data_lab/test_calendar_extend.py -q --tb=short
+result: 46 passed in 2.64s
+
+frontend cwd=/Users/simon/Trading/one-trading/frontend
+cmd=pnpm exec vitest run src/components/__tests__/SectorFundFlowPanel.history.test.tsx src/components/__tests__/SectorFundFlowPanel.industry-freshness.test.tsx
+result: 14 passed (11 history + 3 freshness) in 1.65s
+
+cmd=pnpm exec tsc -p tsconfig.json --pretty false
+result: exit 0 (noEmit)
+
+cmd=pnpm exec vite build --outDir /tmp/ot-dash-accept-frontend-dist --emptyOutDir
+result: exit 0, built in 6.59s
+note: project frontend/dist left untouched (mtime 2026-09-10 01:23:13, older than SectorFundFlowPanel.tsx 2026-09-10 15:12:14)
+artifact_dir has no pytest symlink; basetemp stayed in /tmp

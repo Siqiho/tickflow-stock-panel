@@ -1,0 +1,192 @@
+{
+  "as_of": "2026-09-09T15:30:00+08:00",
+  "task": "data-chain current-version optimization review after user clarification",
+  "supersedes_recommendation": {
+    "old_report": "/Users/simon/Trading/下载数据/data_platform_simplification_review_20260909/README.md",
+    "old_endpoint": "independent read-only script as first/final delivery",
+    "new_endpoint": "optional read branch on existing GET /api/f10/margin-trading; keep self-collect",
+    "reused_capacity_and_samples": true,
+    "did_not_rewalk_131k": true,
+    "did_not_reread_21mb_session": true
+  },
+  "model_evidence": {
+    "workspace_requested": "Cursor Grok 4.6 + Extra High",
+    "identity_claim": "Cursor Grok 4.6",
+    "vendor_model_receipt": null,
+    "effort_receipt": null,
+    "status": "未核验"
+  },
+  "git_one_trading": {
+    "checkout": "/Users/simon/Trading/one-trading",
+    "branch": "main",
+    "head": "31216dda527cd4ec177b9cbf6fd1c524dbadbe82",
+    "head_date": "2026-08-12T21:21:33+08:00",
+    "dirty": true,
+    "data_sync_dir": false,
+    "note": "three-step subtraction lives in dirty tree, not HEAD; this review did not edit product/plan/log"
+  },
+  "three_step_still_current_not_new_gain": {
+    "github_reference_only": "backend/app/data_catalog/provenance_registry.py untracked; go-stock roles endpoint_intelligence/field_semantics",
+    "fund_flow_default_no_stockdb_write": {
+      "file": "backend/app/services/free_sources/fund_flow.py",
+      "allow_local_fallback_default": false,
+      "line": 651
+    },
+    "ext_data_split_and_catalog_projection": {
+      "definitions": "backend/app/data_catalog/definitions.py",
+      "scanner": "backend/app/data_catalog/scanner.py",
+      "service": "backend/app/data_catalog/service.py"
+    },
+    "catalog_not_on_query_path": {
+      "repository_has_no_catalog_import": true,
+      "serving_ready_display_only": "backend/app/data_catalog/service.py:432",
+      "catalog_stale_warning_only": "backend/app/data_catalog/provenance.py:209-216"
+    }
+  },
+  "call_chain_citations": {
+    "margin_query_fixed_data_dir": "backend/app/services/free_sources/margin_trading_public.py:329-350",
+    "validate_frame": "backend/app/services/free_sources/margin_trading_public.py:128-159",
+    "api_source_hardcoded_local": "backend/app/api/stock_f10.py:52-56",
+    "api_catalog_refresh_after_sync_only": "backend/app/api/stock_f10.py:93-100",
+    "kline_empty_live_fetch": "backend/app/api/kline.py:236-238",
+    "kline_local_source_enriched": "backend/app/api/kline.py:284-290",
+    "minute_watchlist_persist_and_catalog": "backend/app/api/kline.py:1021-1045",
+    "get_minute_swallows": "backend/app/tickflow/repository.py:1105-1112",
+    "scan_daily_swallows": "backend/app/tickflow/repository.py:1183-1198",
+    "get_daily_parquet": "backend/app/tickflow/repository.py:948-1010",
+    "normalize_daily": "backend/app/services/kline_sync.py:37-76",
+    "persist_historical_minute": "backend/app/services/kline_sync.py:1074-1127",
+    "atomic_write": "backend/app/services/atomic_io.py:69-78",
+    "lineage_requires_unit_version": "backend/app/services/atomic_io.py:96-113",
+    "reference_query_local_only": "backend/app/services/reference_query.py:1-4,128-163",
+    "valuation_api": "backend/app/api/reference_data.py:47-63",
+    "fund_flow_load_swallows_bad_file": "backend/app/services/free_sources/fund_flow.py:1618-1648",
+    "catalog_refresh_after_mutation": "backend/app/data_catalog/service.py:142-151",
+    "frontend_sync_only": "frontend/src/lib/api.ts:3287-3291",
+    "frontend_no_get_wrapper": true,
+    "hermes_existing_get": "backend/app/services/user_console_data.py:312-318",
+    "config_data_dir": "backend/app/config.py:180-198"
+  },
+  "capacity_reused_not_rewalked": {
+    "source": "/Users/simon/Trading/下载数据/data_platform_simplification_review_20260909/evidence.json",
+    "independent_review_passed": "013bcdc7-21f6-4559-b60c-fdd4883116ba",
+    "three_source_parquet_bytes": 81726698819,
+    "three_source_gb_1000": 81.727,
+    "three_source_gib_1024": 76.114,
+    "quantdb_gb_1000": 59.607,
+    "quantdb_ml_gb_1000": 40.869,
+    "quantdb_ml_share": 0.686,
+    "by_date_9_families_gb_1000": 8.623,
+    "by_date_status": "candidate_only_not_proven_deletable",
+    "native_stockdb_exists": false,
+    "trash_read": false
+  },
+  "one_trading_coverage_this_round": {
+    "kline_daily_partitions": 1743,
+    "kline_daily_min": "2019-07-05",
+    "kline_daily_max": "2026-09-08",
+    "margin_part_bytes": 69614,
+    "margin_part_mtime": "2026-08-05T16:24",
+    "qd_margin_300502_bytes": 103439,
+    "qd_margin_300502_mtime": "2026-08-27T18:43"
+  },
+  "script_run": {
+    "command": "/Users/simon/Trading/one-trading/backend/.venv/bin/python -B /Users/simon/Trading/下载数据/data_platform_simplification_review_20260909/check_offline_reads.py",
+    "as_of_run": "2026-09-09T15:27:04",
+    "exit_code": 0,
+    "json_parseable": true,
+    "product_http": false,
+    "import_validator_called": false,
+    "writes": false,
+    "timing_note": "this-run small-scope elapsed; cache-affected; not a large-scale performance proof",
+    "margin_three_symbols": {
+      "seconds": 0.5541,
+      "overlap_dates": [250, 250, 250],
+      "qty_max_abs_all_zero": true,
+      "amount_max_abs": {
+        "300502.SZ": [1229.0, 253.0, 143.0, 344.0],
+        "000636.SZ": [149.0, 89.0, 50.0, 67.0],
+        "600756.SH": [50.0, 50.0, 50.0, 50.0]
+      },
+      "600756_finance_net_max_rel": 0.010101010101010102,
+      "mapping_status": "candidate_mapping_limited_sample; not a market-wide tolerance"
+    },
+    "valuation_000001": {
+      "seconds": 0.0562,
+      "inner_dates": 9,
+      "close_equal_inner": true,
+      "qd_window_pe_nonnull": 17,
+      "ot_pe_nonnull": 0,
+      "pit_not_proven": true
+    },
+    "minute_301526_20260629": {
+      "seconds": 0.0233,
+      "qd_span": ["2026-06-29 09:31:00", "2026-06-29 15:00:00"],
+      "ot_span": ["2026-06-29 09:30:00", "2026-06-29 14:59:00"],
+      "last_close_equal": true,
+      "qd_day_rows": 240,
+      "ot_day_rows": 240,
+      "not_the_same_bar_series": true
+    },
+    "stockdb_daily_300502_20260804": {
+      "seconds": 0.1498,
+      "rows": 1,
+      "ohlc": [409.0, 453.18, 409.0, 448.0],
+      "volume": 69258300.0,
+      "one_trading_volume_lots": 692583.0
+    }
+  },
+  "in_memory_boundary": {
+    "as_of": "2026-09-09T15:28:00+08:00",
+    "wrote_real_files": false,
+    "cases": [
+      {"id": "null_identity", "raised": "TypeError", "msg": "float() argument must be a string or a real number, not 'NoneType'"},
+      {"id": "zero_fill_identity", "raised": "MarginTradingQualityError", "msg": "margin balance mismatch"},
+      {"id": "missing_artifact_empty", "height": 0},
+      {"id": "empty_window_real_local", "height": 0},
+      {"id": "dup_key", "raised": "MarginTradingQualityError", "msg": "duplicate symbol + trade_date"}
+    ]
+  },
+  "six_links": {
+    "source": {"action": "keep_self_collect; offline_is_second_local_inventory_not_third_producer"},
+    "adapter": {"action": "bypass_network_adapter_for_offline; no_new_uber_adapter"},
+    "normalize": {"action": "shared_nearby_map_for_query; do_not_reuse_write_validator"},
+    "safe_write": {"action": "keep_atomic_and_lineage; offline_read_only"},
+    "catalog": {"action": "keep_display; do_not_scan_80gb; stale_must_not_fail_readable_files"},
+    "query": {"action": "add_explicit_source_branch_on_existing_get; default_own_data_dir"}
+  },
+  "adoption_levels": {
+    "margin_quantdb_by_symbol": "small_adapter_for_existing_get",
+    "stockdb_historical_daily": "independently_readable_gapfill_candidate_not_via_kline_empty_path",
+    "valuation_quantdb": "independently_readable_do_not_mix_into_official_table",
+    "minute": "not_suitable_to_mix",
+    "ml_factors": "independently_readable_do_not_build_into_main_chain",
+    "repair_pack": "overlay_candidate_not_third_quote_series",
+    "by_date_union": "forbidden"
+  },
+  "recommended_work_package": {
+    "id": "D-OFFLINE-MARGIN-API",
+    "status": "suggestion_not_started",
+    "files": [
+      "backend/app/services/free_sources/margin_trading_public.py",
+      "backend/app/api/stock_f10.py",
+      "backend/tests/free_sources/test_margin_trading_public.py",
+      "backend/tests/test_stock_f10_api.py"
+    ],
+    "optional_same_get_consumer": "backend/app/services/user_console_data.py",
+    "user_ui_change_required": false,
+    "reason_user_ui_not_required": "existing query entry is GET /api/f10/margin-trading; Data page card is collect-only"
+  },
+  "not_claimed": [
+    "implemented",
+    "accepted/production",
+    "full-market mapping lock",
+    "80gb service stability",
+    "can delete 8.62gb",
+    "script is product delivery",
+    "three-step subtraction is a new gain",
+    "catalog already fails queries when stale"
+  ],
+  "authority_files_updated": false,
+  "product_edited": false
+}

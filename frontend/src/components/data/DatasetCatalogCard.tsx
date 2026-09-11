@@ -1,6 +1,11 @@
-import { ArrowUpRight } from 'lucide-react'
+import { ArrowUpRight, GitBranch } from 'lucide-react'
 import type { DatasetCatalogEntry, QualityStatus } from '@/lib/api'
 import { AvailabilityBadge } from './AvailabilityBadge'
+import {
+  lifecycleText,
+  materializationText,
+  type DatasetControlFacts,
+} from './ControlPlaneSummary'
 import { CoverageBar } from './CoverageBar'
 import { formatCatalogBytes } from './StorageBreakdownCard'
 
@@ -22,9 +27,15 @@ function displayValue(value: string | null): string {
 export function DatasetCatalogCard({
   entry,
   onOpen,
+  control,
+  controlStale = false,
+  onTraceSource,
 }: {
   entry: DatasetCatalogEntry
   onOpen?: (entry: DatasetCatalogEntry) => void
+  control?: DatasetControlFacts
+  controlStale?: boolean
+  onTraceSource?: (subjectId: string) => void
 }) {
   const { descriptor, state } = entry
   const title = catalogDisplayTitle(entry)
@@ -55,6 +66,17 @@ export function DatasetCatalogCard({
         <AvailabilityBadge kind="serving_ready" value={descriptor.availability.serving_ready} />
       </div>
 
+      <div className="mt-3 flex flex-wrap gap-1.5 text-[10px]">
+        {control?.policy ? (
+          <span className="rounded-btn bg-accent/10 px-2 py-1 font-medium text-accent">
+            {lifecycleText(control.policy, controlStale)}
+          </span>
+        ) : null}
+        <span className="rounded-btn bg-elevated px-2 py-1 text-secondary">
+          {materializationText(entry, controlStale)}
+        </span>
+      </div>
+
       <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 border-y border-border py-3 text-[10px]">
         <div><dt className="text-muted">行数</dt><dd className="mt-0.5 font-mono text-xs tabular-nums">{state.row_count.toLocaleString()}</dd></div>
         <div><dt className="text-muted">标的</dt><dd className="mt-0.5 font-mono text-xs tabular-nums">{state.symbol_count.toLocaleString()}</dd></div>
@@ -68,15 +90,26 @@ export function DatasetCatalogCard({
         <CoverageBar coverage={entry.coverage} />
       </div>
 
-      <button
-        type="button"
-        onClick={() => onOpen?.(entry)}
-        className="mt-4 inline-flex items-center justify-center gap-1.5 rounded-btn border border-border bg-elevated/50 px-3 py-2 text-xs font-medium text-secondary outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-        aria-label={`查看 ${title} 详情`}
-      >
-        查看详情
-        <ArrowUpRight aria-hidden="true" className="h-3.5 w-3.5" />
-      </button>
+      <div className={`mt-4 grid gap-2 ${onTraceSource ? 'grid-cols-2' : 'grid-cols-1'}`}>
+        <button
+          type="button"
+          onClick={() => onOpen?.(entry)}
+          className="inline-flex items-center justify-center gap-1.5 rounded-btn border border-border bg-elevated/50 px-3 py-2 text-xs font-medium text-secondary outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          aria-label={`查看 ${title} 详情`}
+        >
+          查看详情
+          <ArrowUpRight aria-hidden="true" className="h-3.5 w-3.5" />
+        </button>
+        {onTraceSource && <button
+          type="button"
+          onClick={() => onTraceSource?.(descriptor.dataset_id)}
+          className="inline-flex items-center justify-center gap-1.5 rounded-btn border border-accent/20 bg-accent/5 px-3 py-2 text-xs font-medium text-accent outline-none transition-colors hover:bg-accent/10 focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          aria-label={`追踪 ${title} 来源`}
+        >
+          追踪来源
+          <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
+        </button>}
+      </div>
     </article>
   )
 }

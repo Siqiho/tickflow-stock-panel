@@ -2,7 +2,8 @@
 
 调度:
   09:10 盘前 — 同步个股维表 instruments (全量覆盖)
-  15:30 盘后 — 日K同步 + 增量除权因子 + enriched 计算 + 刷新视图
+  15:35 盘后 — 日K同步 + 增量除权因子 + enriched 计算 + 刷新视图
+  (默认 15:35: 盘后固定价 15:30 终止 + 供应商日线定稿缓冲, 见 preferences)
 
 盘后同步策略:
   日 K: QuoteService 交易时段已实时落盘 → 有数据时跳过 batch,首次拉 1 年区间
@@ -12,7 +13,10 @@
 from __future__ import annotations
 
 import logging
+import shutil
+import threading
 from collections.abc import Callable
+from datetime import date as Date
 from pathlib import Path
 
 import polars as pl
@@ -20,7 +24,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.config import settings
-from app.indicators.pipeline import run_pipeline
+from app.indicators.pipeline import fill_enriched_coverage_gap, run_pipeline
 from app.services import index_sync, instrument_sync, kline_sync
 from app.services import preferences as _prefs
 from app.services.daily_quality import run_daily_quality_check
@@ -37,20 +41,154 @@ def _noop(stage: str, pct: int, msg: str, **kwargs) -> None:
     pass
 
 
+_INDUSTRY_ROLL_CANCEL = threading.Event()
+_CONCEPT_ROLL_CANCEL = threading.Event()
+
+
+def request_industry_roll_cancel() -> None:
+    """Cooperative stop for H5 rolls attached to this process."""
+    _INDUSTRY_ROLL_CANCEL.set()
+    _CONCEPT_ROLL_CANCEL.set()
+
+
+def request_concept_roll_cancel() -> None:
+    """Cooperative stop for the concept H5 roll attached to this process."""
+    _CONCEPT_ROLL_CANCEL.set()
+
+
+def _run_industry_fund_flow_daily_roll(
+    data_dir: Path,
+    *,
+    cancel_event: threading.Event | None = None,
+    time_limit_s: float | None = None,
+    on_progress: ProgressCb | None = None,
+) -> dict:
+    """Attach industry H5 daily continuation. Never raise into the daily-K path."""
+    try:
+        from app.services.free_sources.fund_flow import roll_industry_daily_from_h5
+
+        return roll_industry_daily_from_h5(
+            data_dir,
+            cancel_event=cancel_event,
+            time_limit_s=time_limit_s,
+            on_progress=on_progress,
+        )
+    except Exception as e:
+        logger.warning("industry fund-flow daily roll failed: %s", e)
+        return {
+            "ok": False,
+            "kind": "board",
+            "status": "error",
+            "error": str(e),
+            "note": "行业日线续更失败，不影响已成功日K",
+        }
+
+
+def _run_concept_fund_flow_daily_roll(
+    data_dir: Path,
+    *,
+    cancel_event: threading.Event | None = None,
+    time_limit_s: float | None = None,
+    on_progress: ProgressCb | None = None,
+) -> dict:
+    """Attach concept H5 daily continuation. Never raise into the daily-K path."""
+    try:
+        from app.services.free_sources.fund_flow import roll_concept_daily_from_h5
+
+        return roll_concept_daily_from_h5(
+            data_dir,
+            cancel_event=cancel_event,
+            time_limit_s=time_limit_s,
+            on_progress=on_progress,
+        )
+    except Exception as e:
+        logger.warning("concept fund-flow daily roll failed: %s", e)
+        return {
+            "ok": False,
+            "kind": "concept",
+            "status": "error",
+            "error": str(e),
+            "note": "概念日线续更失败，不影响已成功日K",
+        }
+
+
 def _invalidate(table: str | None = None) -> None:
     """stage 写完调用,让 /api/data/status 只重算被影响的那张表。"""
     from app.api.data import invalidate_data_cache
     invalidate_data_cache(table)
 
 
-def _resolve_universe(capset: CapabilitySet) -> list[str]:
+def _partition_row_count(part_dir: Path) -> int | None:
+    files = [p for p in part_dir.glob("*.parquet") if p.is_file()]
+    if not files:
+        return None
+    try:
+        return int(pl.scan_parquet(files).select(pl.len()).collect().item())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _prune_partial_enriched_partitions(daily_dir: Path, enriched_dir: Path) -> list[str]:
+    """Delete watchlist-only enriched dates so the next increment rebuilds the full day."""
+    pruned: list[str] = []
+    if not enriched_dir.exists():
+        return pruned
+    for part in sorted(p for p in enriched_dir.glob("date=*") if p.is_dir()):
+        day = part.name.removeprefix("date=")
+        daily_part = daily_dir / f"date={day}"
+        if not daily_part.exists():
+            continue
+        daily_n = _partition_row_count(daily_part)
+        enriched_n = _partition_row_count(part)
+        if daily_n is None or enriched_n is None:
+            continue
+        if enriched_n < daily_n:
+            shutil.rmtree(part)
+            pruned.append(day)
+    return pruned
+
+
+def _prune_stale_price_partitions(daily_dir: Path, enriched_dir: Path) -> list[str]:
+    """Delete enriched dates whose raw_close diverges from official daily close."""
+    pruned: list[str] = []
+    if not enriched_dir.exists():
+        return pruned
+    for part in sorted(p for p in enriched_dir.glob("date=*") if p.is_dir()):
+        day = part.name.removeprefix("date=")
+        daily_part = daily_dir / f"date={day}"
+        if not daily_part.exists():
+            continue
+        try:
+            daily = pl.read_parquet(list(daily_part.glob("*.parquet")))
+            enriched = pl.read_parquet(list(part.glob("*.parquet")))
+        except Exception:  # noqa: BLE001
+            continue
+        if "raw_close" not in enriched.columns or "symbol" not in enriched.columns:
+            continue
+        if "close" not in daily.columns or "symbol" not in daily.columns:
+            continue
+        joined = daily.select(["symbol", "close"]).join(
+            enriched.select(["symbol", "raw_close"]),
+            on="symbol",
+            how="inner",
+        )
+        if joined.is_empty():
+            continue
+        stale = joined.filter((pl.col("close") - pl.col("raw_close")).abs() > 1e-6)
+        if stale.height > 0:
+            shutil.rmtree(part)
+            pruned.append(day)
+    return pruned
+
+
+def resolve_universe(capset: CapabilitySet) -> list[str]:
     """解析标的池。
 
     优先使用 preferences.pipeline_universe_scope：
       ALL / CSI300 / CSI500 / SSE50 / WATCHLIST
     - ALL + 有 batch → TickFlow CN_Equity_A（若可用）
     - ALL + free → instruments + watchlist + demo
-    - CSI* → data/pools 缓存（缺则 public 刷新）
+    - CSI* → data/pools 缓存(缺则 public 刷新) + 用户自选
     """
     from app.services.universe_scope import (
         SCOPE_ALL,
@@ -75,7 +213,9 @@ def _resolve_universe(capset: CapabilitySet) -> list[str]:
         scope,
         data_dir=Path(settings.data_dir),
         default=SCOPE_ALL,
-        include_watchlist=(scope == SCOPE_ALL),
+        # 自选股是用户明确要求持续跟踪的标的, 必须叠加到任何配置范围。
+        # resolve_symbols 会去重, WATCHLIST 范围本身也不会重复追加。
+        include_watchlist=True,
         refresh_pools_if_missing=True,
     )
     if syms:
@@ -90,37 +230,80 @@ def _resolve_universe(capset: CapabilitySet) -> list[str]:
     return sorted(base)
 
 
+def _resolve_universe(capset: CapabilitySet) -> list[str]:
+    """向后兼容旧内部入口; 新调用使用公开的 resolve_universe。"""
+    return resolve_universe(capset)
+
+
 def run_instruments_sync(repo: KlineRepository) -> dict:
     """盘前同步个股维表。"""
-    rows = instrument_sync.sync_instruments(repo.store.data_dir)
-    _refresh_instruments_view(repo)
-    _invalidate("instruments")
-    return {"instruments_rows": rows}
+    outcome = instrument_sync.sync_instruments_result(repo.store.data_dir)
+    if outcome.ok:
+        _refresh_instruments_view(repo)
+        _invalidate("instruments")
+    current_rows = outcome.rows_published if outcome.ok else outcome.prior_rows
+    issue = (
+        None
+        if outcome.ok
+        else {
+            "code": outcome.error_code,
+            "message": outcome.error_message,
+            "failed_exchanges": list(outcome.failed_exchanges),
+        }
+    )
+    return {
+        "instruments_rows": current_rows,
+        "published_rows": outcome.rows_published,
+        "outcome": outcome.outcome,
+        "market_counts": outcome.market_counts,
+        "prior_market_counts": outcome.prior_market_counts,
+        "error_code": outcome.error_code,
+        "error_message": outcome.error_message,
+        "quality": {"ok": outcome.ok, "issues": [issue] if issue else []},
+    }
 
 
 def run_now(
     repo: KlineRepository,
     capset: CapabilitySet,
     on_progress: ProgressCb | None = None,
+    override_start_date: Date | None = None,
+    industry_time_limit_s: float | None = None,
+    concept_time_limit_s: float | None = None,
 ) -> dict:
     """立即执行一次盘后管道,支持进度回调。
 
     跳过的 stage **不 emit**,避免前端把"无 capability"的卡片错误标记为 active/done。
     result 里带 skipped_stages 列表供前端展示。
+
+    override_start_date 仅给日K修复入口使用: 传入后跳过"今天已有数据只刷实时行情"捷径,
+    日K / 除权 / 指数 / ETF 统一从该日期拉到今天。日常盘后调度不传,行为不变。
     """
     emit = on_progress or _noop
     skipped: list[str] = []
 
     # Step 0: 先同步个股维表, 再解析标的池 — 确保标的池基于最新 instruments
     emit("sync_instruments", 2, "同步个股维表…")
-    inst_rows = instrument_sync.sync_instruments(repo.store.data_dir)
-    if inst_rows > 0:
+    instruments_result = instrument_sync.sync_instruments_result(repo.store.data_dir)
+    inst_rows = (
+        instruments_result.rows_published
+        if instruments_result.ok
+        else instruments_result.prior_rows
+    )
+    if instruments_result.ok:
         _refresh_instruments_view(repo)
-    emit("sync_instruments", 8, f"个股维表同步完成,{inst_rows} 只标的")
-    _invalidate("instruments")
+        _invalidate("instruments")
+        emit("sync_instruments", 8, f"个股维表同步完成,{inst_rows} 只标的")
+    else:
+        skipped.append("sync_instruments_kept_prior")
+        emit(
+            "sync_instruments",
+            8,
+            f"个股维表同步降级，保留旧目录 {inst_rows} 只：{instruments_result.error_code}",
+        )
 
     emit("resolve_universe", 9, "解析标的池…")
-    universe = _resolve_universe(capset)
+    universe = resolve_universe(capset)
     try:
         from app.services.universe_scope import SCOPE_LABELS, normalize_scope
         _sc = normalize_scope(_prefs.get_pipeline_universe_scope(), default="ALL")
@@ -149,6 +332,8 @@ def run_now(
     daily_source = None
     public_eod_result = None
     latest_before = latest_daily
+    if override_start_date is not None and override_start_date > today:
+        override_start_date = today
 
     def _daily_partition_dates() -> list[_date]:
         daily_dir = repo.store.data_dir / "kline_daily"
@@ -179,6 +364,29 @@ def run_now(
     if not pull_a_share:
         emit("sync_daily", 45, "已跳过 A 股日K同步(拉取内容未勾选)")
         logger.info("sync_daily: skipped (pipeline_pull_a_share=False)")
+    elif override_start_date is not None:
+        # 日K修复: 用户指定起点后必须走 batch, 不能因今天已有数据而只刷当日实时行情。
+        start_date = override_start_date
+        daily_range_start = start_date
+        emit("sync_daily", 12, f"获取日K [{start_date} ~ {today}] (指定起点)…")
+        logger.info("sync_daily: [%s ~ %s] override_start_date", start_date, today)
+
+        def _daily_chunk_progress(cur: int, tot: int) -> None:
+            emit("sync_daily", 12 + int(33 * cur / tot),
+                 f"日K 批次 {cur}/{tot}", stage_pct=int(100 * cur / tot), skip_log=True)
+        written_daily = kline_sync.sync_and_persist_daily_batch(
+            universe, repo, capset,
+            start_date=_dt.combine(start_date, _dt.min.time()),
+            end_date=batch_end,
+            on_chunk_done=_daily_chunk_progress,
+        )
+        daily_source = "tickflow_batch"
+        new_daily_days = _count_new_daily_days(latest_before)
+        emit("sync_daily", 42, f"日K batch 完成,新增 {new_daily_days} 个交易日分区")
+        logger.info(
+            "sync_daily: [%s ~ %s] override done, rows=%s new_days=%s",
+            start_date, today, written_daily, new_daily_days,
+        )
     elif today_exists and capset.has(Cap.QUOTE_POOL):
         # 付费档:今天有数据(QuoteService 已落盘)→ 实时行情覆写,确保最新。
         # free/none 档无 quote.pool 能力,即便今天已有数据(如从 expert 降级),
@@ -482,6 +690,23 @@ def run_now(
     daily_days = len(list(daily_dir.glob("date=*"))) if daily_dir.exists() else 0
     prev_enriched_days = len(list(enriched_dir.glob("date=*"))) if enriched_exists else 0
 
+    # 部分分区修复 (#223) + 收盘价过期分区修复: 删除被实时合并提前创建、覆盖不全
+    # 或收盘价停留在竞价前快照的 enriched 分区, 让下方计数比较与增量计算把它们
+    # 重新当新日期处理 (值级比对以官方日线为准, 实时源不纠错也能自愈)
+    if enriched_exists:
+        partial_pruned = _prune_partial_enriched_partitions(daily_dir, enriched_dir)
+        stale_pruned = _prune_stale_price_partitions(daily_dir, enriched_dir)
+        pruned_dates = sorted(set(partial_pruned) | set(stale_pruned))
+        if pruned_dates:
+            logger.warning(
+                "compute_enriched: 发现 %d 个异常 enriched 分区 (覆盖不全 %d / 收盘价过期 %d), "
+                "已删除待重算: %s",
+                len(pruned_dates), len(partial_pruned), len(stale_pruned),
+                ", ".join(pruned_dates[:10]),
+            )
+            enriched_exists = enriched_dir.exists() and any(enriched_dir.glob("date=*"))
+            prev_enriched_days = len(list(enriched_dir.glob("date=*"))) if enriched_exists else 0
+
     # 判断新日期方向: 找 daily 和 enriched 的日期集合做比较
     forward_incremental = False
     backward_extension = False
@@ -536,8 +761,12 @@ def run_now(
         written_enriched = run_pipeline(symbols=affected_symbols, on_batch_done=_enriched_batch_progress)
         emit("compute_enriched", 88, f"enriched 完成,{len(affected_symbols)} 只个股")
     else:
-        written_enriched = 0
-        logger.info("compute_enriched: skip (no new daily, no adj_factor changes)")
+        written_enriched = fill_enriched_coverage_gap()
+        if written_enriched:
+            emit("compute_enriched", 88, f"enriched 覆盖缺口补齐 {written_enriched} 行")
+            logger.info("compute_enriched: coverage gap fill %d rows", written_enriched)
+        else:
+            logger.info("compute_enriched: skip (no new daily, no adj_factor changes)")
     _refresh_single_view(repo, "kline_enriched")
     _invalidate("enriched")
 
@@ -568,7 +797,10 @@ def run_now(
                     d.name[5:] for d in index_dir.glob("date=*")
                     if d.is_dir() and d.name.startswith("date=")
                 ) if index_dir.exists() else []
-                index_start = _date.fromisoformat(index_dates[-1]) if index_dates else today - _td(days=365)
+                default_index_start = _date.fromisoformat(index_dates[-1]) if index_dates else today - _td(days=365)
+                index_start = override_start_date if override_start_date is not None else default_index_start
+                if override_start_date is not None and index_start > today:
+                    index_start = today
 
                 def _index_chunk(cur: int, tot: int) -> None:
                     emit("sync_index", 88, f"指数日K批次 {cur}/{tot}",
@@ -627,7 +859,10 @@ def run_now(
                     d.name[5:] for d in etf_dir.glob("date=*")
                     if d.is_dir() and d.name.startswith("date=")
                 ) if etf_dir.exists() else []
-                etf_start = _date.fromisoformat(etf_dates[-1]) if etf_dates else today - _td(days=365)
+                default_etf_start = _date.fromisoformat(etf_dates[-1]) if etf_dates else today - _td(days=365)
+                etf_start = override_start_date if override_start_date is not None else default_etf_start
+                if override_start_date is not None and etf_start > today:
+                    etf_start = today
 
                 def _etf_chunk(cur: int, tot: int) -> None:
                     emit("sync_index", 88, f"ETF 日K批次 {cur}/{tot}",
@@ -744,7 +979,39 @@ def run_now(
         }
         emit("quality", 99, f"质量门禁失败: {e}")
 
+    if not instruments_result.ok:
+        quality_report = dict(quality_report or {})
+        quality_report["ok"] = False
+        quality_report.setdefault("issues", []).append(
+            {
+                "code": instruments_result.error_code,
+                "message": instruments_result.error_message,
+                "failed_exchanges": list(instruments_result.failed_exchanges),
+            }
+        )
+
     quality_ok = bool(quality_report and quality_report.get("ok") is True)
+
+    # Industry then concept continuation after quality is decided and before done.
+    # Failure here must not flip quality_ok or rewrite daily_days.
+    # Mutual exclusion stays on the existing job slot / _run_tracked path.
+    # Industry failure/timeout does not skip concept.
+    _INDUSTRY_ROLL_CANCEL.clear()
+    _CONCEPT_ROLL_CANCEL.clear()
+    emit("industry_fund_flow", 98, "行业资金流日线续更…")
+    industry_fund_flow_daily = _run_industry_fund_flow_daily_roll(
+        repo.store.data_dir,
+        cancel_event=_INDUSTRY_ROLL_CANCEL,
+        time_limit_s=industry_time_limit_s,
+        on_progress=emit,
+    )
+    emit("concept_fund_flow", 99, "概念资金流日线续更…")
+    concept_fund_flow_daily = _run_concept_fund_flow_daily_roll(
+        repo.store.data_dir,
+        cancel_event=_CONCEPT_ROLL_CANCEL,
+        time_limit_s=concept_time_limit_s,
+        on_progress=emit,
+    )
     emit("done", 100, "完成" if quality_ok else "完成，但质量门禁未通过")
     _invalidate(None)  # 兜底:全清
 
@@ -752,6 +1019,7 @@ def run_now(
         "universe_size": len(universe),
         "daily_days": new_daily_days,
         "daily_source": daily_source,
+        "override_start_date": override_start_date.isoformat() if override_start_date else None,
         "public_eod": public_eod_result,
         "adj_factor_symbols": len(affected_symbols),
         "financials": {
@@ -770,8 +1038,11 @@ def run_now(
         "etf_adj_factor_symbols": etf_adj_symbols,
         "minute_rows": written_minute,
         "minute_sync": minute_sync_result,
+        "instruments_sync": instruments_result.as_dict(),
         "skipped_stages": skipped,
         "quality": quality_report,
+        "industry_fund_flow_daily": industry_fund_flow_daily,
+        "concept_fund_flow_daily": concept_fund_flow_daily,
     }
 
 
@@ -836,7 +1107,7 @@ def _refresh_single_view(repo: KlineRepository, name: str) -> None:
 
 def _resolve_minute_symbols(capset: CapabilitySet) -> list[str]:
     """分钟 K 同步标的 — 与日K共用同一标的池。"""
-    return _resolve_universe(capset)
+    return resolve_universe(capset)
 
 
 def _refresh_instruments_view(repo: KlineRepository) -> None:
@@ -855,23 +1126,36 @@ def _run_tracked(fn, job_label: str) -> None:
     """调度触发时包装 JobStore 跟踪，确保同步历史有记录。"""
     from app.services.pipeline_jobs import job_store
 
+    from app.services.pipeline_jobs import is_cancelled, release_run_slot, try_acquire_run_slot
+
     operation = "instruments" if job_label == "instruments_sync" else "daily_pipeline"
-    job_id = job_store.create(
+    created = job_store.create(
         mirror={"dataset_id": "daily_pipeline", "operation": operation}
     )
-    job_store.start(job_id)
+    job_id = str(created)
+    if not created.is_new:
+        logger.info("scheduled %s reused active job %s", job_label, job_id)
+        return
+    if is_cancelled(job_id):
+        return
+    if not try_acquire_run_slot(job_id):
+        job_store.fail(job_id, "已有数据任务在运行(或上一次任务卡死未结束),请稍后再试")
+        return
 
     def progress(stage: str, pct: int, msg: str, stage_pct: int | None = None,
                  skip_log: bool = False) -> None:
         job_store.progress(job_id, stage, pct, msg, stage_pct=stage_pct, skip_log=skip_log)
 
     try:
+        job_store.start(job_id)
         result = fn(on_progress=progress)
         job_store.complete(job_id, result)
         logger.info("scheduled %s completed: job_id=%s", job_label, job_id)
     except Exception:
         logger.exception("scheduled %s failed: job_id=%s", job_label, job_id)
         job_store.fail(job_id, f"scheduled {job_label} failed")
+    finally:
+        release_run_slot(job_id)
 
 
 # ================================================================
@@ -931,9 +1215,12 @@ async def _run_scheduled_review(repo) -> None:
             quote_service.push_review_event(json.dumps(
                 {"type": "done", "archived": True}, ensure_ascii=False))
 
-        # 推送到飞书(可选): 运行时读取配置, 用户改设置下次触发即生效。
+        # 推送门控: review_push_mode=manual 时定时复盘只归档不推送,
+        # 由用户对当日报告显式确认后才推; auto 时保持既有自动推送行为。
         # 失败静默降级, 不影响已归档的报告。
-        _maybe_push_review(content, meta)
+        from app.services import preferences as _prefs
+        if _prefs.get_review_push_mode() == "auto":
+            _maybe_push_review(content, meta)
     except Exception as e:
         logger.exception("scheduled review failed: %s", e)
         # 兜底: 异常时通知前端停止「生成中」状态, 避免页面卡在 streaming
@@ -1014,11 +1301,12 @@ def _maybe_push_review(content: str, meta: dict) -> None:
     """复盘报告归档后, 按 review_push_channels 选定的外部工具逐个推送完整报告。
 
     定时生成与手动生成共用本函数 (手动归档端点 POST /api/market-recap/reports 也会调用)。
-    channels 为空则不推送; 'feishu' 复用监控中心的全局飞书 Webhook 通道。
+    channels 为空则不推送; 复用监控中心的全局外部渠道配置。
     推送失败静默降级 (Webhook 是辅助通道), 不影响已归档的报告。
     """
     try:
-        from app.services import preferences, webhook_adapter
+        from app import secrets_store
+        from app.services import email_adapter, preferences, webhook_adapter
 
         channels = preferences.get_review_push_channels()
         if not channels:
@@ -1036,10 +1324,46 @@ def _maybe_push_review(content: str, meta: dict) -> None:
                     continue
                 secret = preferences.get_feishu_webhook_secret()
                 ok = webhook_adapter.send_feishu_card(
-                    url, "TickFlow · 每日复盘", subtitle, content, secret
+                    url, "每日复盘", subtitle, content, secret
                 )
                 logger.info("review push(feishu) %s", "sent" if ok else "failed")
-            # 未来更多渠道在此追加分支
+            elif ch == "wecom":
+                url = preferences.get_wecom_webhook_url()
+                if not url:
+                    logger.info("review push(wecom) skipped: webhook not configured")
+                    continue
+                full_body = (f"**{subtitle}**\n\n{content}" if subtitle else content)
+                ok = webhook_adapter.send_wecom_markdown(
+                    url, "每日复盘", full_body
+                )
+                logger.info("review push(wecom) %s", "sent" if ok else "failed")
+            elif ch == "custom":
+                url = preferences.get_custom_webhook_url()
+                if not url:
+                    logger.info("review push(custom) skipped: webhook not configured")
+                    continue
+                ok = webhook_adapter.send_custom(
+                    url,
+                    "每日复盘",
+                    content,
+                    "market_review",
+                    meta,
+                    secrets_store.get_custom_webhook_secret(),
+                )
+                logger.info("review push(custom) %s", "sent" if ok else "failed")
+            elif ch == "email":
+                config = preferences.get_email_smtp_config()
+                if not email_adapter.is_configured(config):
+                    logger.info("review push(email) skipped: SMTP not configured")
+                    continue
+                email_body = (f"{subtitle}\n\n{content}" if subtitle else content)
+                ok = email_adapter.send_email(
+                    config,
+                    secrets_store.get_email_smtp_password(),
+                    "每日复盘",
+                    email_body,
+                )
+                logger.info("review push(email) %s", "sent" if ok else "failed")
     except Exception as e:
         logger.warning("review push error: %s", e)
 
@@ -1070,7 +1394,7 @@ def start_scheduler(repo: KlineRepository, capset: CapabilitySet) -> AsyncIOSche
     """启动调度器。
 
     工作日 09:10 — 同步个股维表
-    工作日 HH:MM — 盘后管道（时间由用户偏好决定，默认 15:30）
+    工作日 HH:MM — 盘后管道（时间由用户偏好决定，默认 15:35）
     """
     from app.services import preferences
     sched = preferences.get_pipeline_schedule()
@@ -1083,7 +1407,14 @@ def start_scheduler(repo: KlineRepository, capset: CapabilitySet) -> AsyncIOSche
         emit = on_progress or _noop
         emit("sync_instruments", 0, "同步个股维表…")
         result = run_instruments_sync(repo)
-        emit("done", 100, f"个股维表同步完成,{result.get('instruments_rows', 0)} 只标的")
+        if result.get("outcome") == "published":
+            message = f"个股维表同步完成,{result.get('instruments_rows', 0)} 只标的"
+        else:
+            message = (
+                f"个股维表同步降级，保留旧目录 {result.get('instruments_rows', 0)} 只："
+                f"{result.get('error_code') or 'unknown'}"
+            )
+        emit("done", 100, message)
         return result
 
     scheduler.add_job(

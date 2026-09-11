@@ -211,6 +211,9 @@ def test_clear_rescans_after_deletion_so_old_serving_state_is_not_returned(
     artifact = tmp_path / "kline_daily" / "date=2026-07-21" / "part.parquet"
     artifact.parent.mkdir(parents=True)
     artifact.write_bytes(b"old")
+    f10_artifact = tmp_path / "f10" / "stock_margin_trading" / "part.parquet"
+    f10_artifact.parent.mkdir(parents=True)
+    f10_artifact.write_bytes(b"old-f10")
 
     class Catalog:
         serving_ready = True
@@ -218,6 +221,7 @@ def test_clear_rescans_after_deletion_so_old_serving_state_is_not_returned(
         def refresh_after_mutation(self, dataset_id=None):
             assert dataset_id is None
             assert not artifact.exists()
+            assert not f10_artifact.exists()
             self.serving_ready = False
 
     class DB:
@@ -249,5 +253,5 @@ def test_clear_rescans_after_deletion_so_old_serving_state_is_not_returned(
         )
     )
 
-    assert data_api.clear_data(request) == {"deleted_files": 1}
+    assert data_api.clear_data(request) == {"deleted_files": 2}
     assert catalog.serving_ready is False

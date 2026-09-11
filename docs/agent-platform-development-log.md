@@ -1,6 +1,8 @@
 # one-trading Agent 台开发日志
 
-最近维护：2026-08-12（多用户 Hermes 最新版 Zeabur 上线验收）
+最近维护：2026-09-12（当前入口改为 2026-09-10T00:19:35+08:00 融合完成基线导航，见 `/Users/simon/Trading/one-trading/docs/development-baseline.md`。`restore_pre_cursor_20260911` 的「回退 9/9 05:12 之前」已是 superseded 历史范围。本进程 AI/Hermes 仍暂停；不是 `approved`/`production`。）
+
+最近追加：2026-09-12 文档/记忆对齐。三项新授权增量不改 Agent Runtime。旧 9/11 历史正文不改数字。
 
 适用项目：`/Users/simon/Trading/one-trading`
 
@@ -14,6 +16,7 @@
 - 用户可见入口：`/Users/simon/Trading/one-trading/docs/workbench-development-log.md`。
 - 数据集实现和准入：`/Users/simon/Trading/one-trading/docs/data-platform-development-log.md`。
 - 本文件不复制上游完整调查，不把 Codex 外部工具或 AGD 插件已安装写成 one-trading Agent Runtime 已完成。
+- 开发基线导航：`/Users/simon/Trading/one-trading/docs/development-baseline.md`。旧会话/PID/「已完成」不能覆盖现行条目。
 
 ## 1. 本地状态词
 
@@ -34,6 +37,171 @@ GitHub 的“设计采纳/工程机制参考”不能替代上述本地状态。
 - Codex 的 AGD 工作区记忆是外部开发工具，不是 one-trading 产品 Runtime。
 
 ## 3. 当前能力条目
+
+L3 当前入口（2026-09-12）：固定代码基线是 `2026-09-10T00:19:35+08:00` 融合完成版，见 `restore_whole_20260910_0019`。AI/Hermes 仍由验证 wrapper 暂停，不是日常全功能 Agent 运行面。三项新授权增量不改本台 Runtime。
+
+### restore_pre_cursor_20260911
+
+- **superseded 历史范围**：本条记录 2026-09-11 撤回到 9/9 05:12。该操作已被 `restore_whole_20260910_0019` 取代，不再是当前入口。
+- 用户授权恢复到 2026-09-09 05:12 升级前。本进程 AI/Hermes 仍由验证 wrapper 暂停，不是 `approved`/`production`，也不是日常全功能 Agent 运行面。
+- 恢复事实：SOURCE 1533/1533；206 还原 / 176 新增移 Trash / 40 从 9/8 补全；`.env`/现有数据保留。前端 tsc/build 通过。后端 46 passed / 12 errors 为旧版固有，不修旧版。
+- Codex IAB（转录，非本执行端观察）只覆盖用户台看板/`/data` 主路径；本条不把 IAB 写成 Agent 能力验收。
+- 独立只读 review `aca6de45-3dcf-4aa3-8b86-12c80cef1590`，session `b09672e5-80b9-4d25-b8ee-eefdedf1f63c`，success/pass。Grok 4.6 Extra High 配置 ack 有，实际模型/effort 未核验。实现任务传输超时，不写 workflow 成功。
+- 完整证据：`/Users/simon/Trading/one-trading/docs/cursor-handoffs/restore-pre-cursor-20260911/restore-report.md`。后写 Agent 实现已从运行代码撤回；本日志历史条目不抹。
+
+
+
+### restore_whole_20260910_0019
+
+- 时点：2026-09-12T00:55:46+08:00。本进程 AI/Hermes 仍由验证 wrapper 暂停（`ONE_TRADING_HERMES_RUNTIME_ENABLED=false`），不是 `approved`/`production`，也不是日常全功能 Agent 运行面。
+- Hermes 本机 PID 973 / 8650 **未重启、未改**。正式 3018 PID 31588 为 audit wrapper，不是 daily-run。
+- 证据：`/Users/simon/Trading/docs/audits/restore-whole-20260910-0019/restore-report.md`。后写 9/11 Agent 实现不在本次 00:19 运行代码中；本日志历史条目不抹。
+
+### 3.21 Agent 设置分流启动本地内部网关
+
+#### 用户目标、权限与外部副作用
+
+- 用户目标：`/ai/hermes` Agent 设置在 multiplex gateway 掉线时，管理员可以直接点「启动内部网关」，不必再离开控制台手工拉进程。
+- 授权边界：只新增本机受管 `data/hermes` / `127.0.0.1:8651` 的启动分流。未部署、未改个人 Hermes `8650`、未改模型 Key、未开放普通用户或 APK 启动入口。
+- 外部副作用：管理员点击后会拉起项目 multiplex gateway 进程；已在运行则直接返回 already_running，不重复 spawn。
+
+#### Interface、Module、Seam 与 Adapter
+
+- Runtime：`backend/app/services/hermes_runtime.py` 抽出 `local_gateway_capability()` / `start_managed_gateway()` / `run_supervised_gateway()`。`dev.sh` 仍走 `scripts/start_local_hermes_gateway.py`，但该脚本只做监督包装。
+- 启动门：runtime 与 multiuser 开关都开、地址是 loopback、根目录是项目 `data/hermes`。不满足时 `gateway_kind=unavailable`，控制台不显示启动按钮。
+- Adapter：`HermesAgentAdapter.status()` 附带 `gateway_kind / gateway_running / gateway_startable / can_start_gateway`。只有管理员且网关可启动时 `can_start_gateway=true`。
+- API：`POST /api/hermes-agent/gateway/start`。管理员本机 Web 可调用；普通用户 403；APK UA `one-trading-android/` 403。
+- 用户台：`HermesAgentChat` 在未连接且可启动时显示「内部网关未运行」和「启动内部网关」；已连接后按钮消失，只留重新检查。
+
+#### 自动检查与真实目标运行面
+
+- 后端 `tests/test_hermes_runtime_packaging.py`、`tests/test_hermes_agent.py`、`tests/test_multitenancy.py`：`26 passed`。
+- 前端 `HermesAgentChat.test.tsx`：`25 passed`，覆盖管理员可启动、普通用户看不到按钮。
+- 当前本机 `8651` 已在运行，因此已登录页面显示 `Profile 已连接`，启动按钮按分流隐藏。掉线后再点即可拉起。
+
+#### 当前状态与下一步
+
+- 当前状态：`sandbox`。启动分流已接到 Agent 设置，未把 `./dev.sh` 监督环改成自动重启。
+- 生产/Zeabur 仍由容器 supervisor 管 gateway，控制台不会对非项目本地根显示启动按钮。
+
+### 3.20 本地 Hermes multiplex gateway 再次掉线恢复
+
+#### 用户目标、权限与外部副作用
+
+- 用户目标：`/ai/hermes` Agent 设置再次显示「Profile 未连接」，即使提供商配置已保存、当前配置为 Subrouter / `gpt-5.6-sol`。
+- 授权边界：只恢复本机项目受管 gateway `127.0.0.1:8651`。未改代码、未部署、未动个人 Hermes `127.0.0.1:8650`，也没有重启 `3011/3018`。
+- 外部副作用：重新拉起项目 `data/hermes` multiplex gateway 进程；没有调用模型生成新对话，没有改 Profile 配置或订阅 Key。
+
+#### 根因与修复边界
+
+- 设置里「提供商配置已保存 / 已是当前配置」只说明服务器订阅草稿已落地，不等于 Hermes Profile 已连上。
+- 「独立记忆 / 仅记忆与会话检索 / 图表 Skill 未启用」仍是未连接时的前端回退文案。
+- 本机 `3018` 后端和 `3011` 前端在跑，但 `8651` 无监听。gateway 日志记录 2026-08-24 10:45:14 收到 SIGTERM 后 graceful shutdown；`gateway.lock` 仍记着已死 pid `83769`。
+- 现有 `./dev.sh` 监督环在 Hermes 子进程退出后没有把前后端一起停掉，因此页面继续可用，但 Agent 设置红点。个人 gateway `8650` 全程仍在听。
+
+#### Interface、Module、Seam 与 Adapter
+
+- 运行面：用既有 `backend/scripts/start_local_hermes_gateway.py` 重新拉起项目 multiplex gateway。新 PID `12410`，`HERMES_HOME=/Users/simon/Trading/one-trading/data/hermes`。
+- Adapter 未改。`HermesAgentAdapter.status()` 在订阅就绪后探 `/p/ot-owner/health`；gateway 未运行时仍返回 `connected=false`。
+
+#### 自动检查与真实目标运行面
+
+- `GET http://127.0.0.1:8651/health` 与 `/p/ot-owner/health` 均为 200，版本 `0.20.0`。
+- 进程内 Adapter `status()`：`connected=true / profile=ot-owner / model=gpt-5.6-sol / model_plan=Subrouter / memory_provider=holographic / data_view_count=75`。
+- Codex 内置浏览器打开已登录 `http://127.0.0.1:3011/ai/hermes`，Agent 设置显示 `Profile 已连接 / ot-owner / Subrouter / Holographic / 75 个只读视图`。历史对话 24 条仍在。
+- 个人 `8650`、前端 `3011`、后端 `3018` 均未重启。
+
+#### 当前状态与下一步
+
+- 当前状态：本地 Runtime 恢复为 `sandbox`（gateway 已就绪，已在已登录浏览器确认连接状态；本轮未发新对话）。
+- 本地 `./dev.sh` 监督环仍不能在 Hermes 被外部 SIGTERM 后自动拉起 8651；下次再掉线仍需单独恢复 gateway。
+
+### 3.19 页面嵌入 AI 样板消费现有 Hermes
+
+#### 用户目标、权限与外部副作用
+
+- 用户台在连板梯队/概念分析嵌入现有 Hermes。本轮 Agent 台不改 Profile、MCP、模型桥或权限。
+- 嵌入发送只是把用户台结构化快照作为普通用户消息附件；仍是 analysis-only，不开放账户/交易/外发。
+
+#### Interface、Module、Seam 与用户台依赖
+
+- 继续消费 `POST /api/hermes-agent/sessions/{id}/chat`。快照由用户台 `composePageContextMessage()` 生成。
+- 数据仍只能来自现有 `one_trading_data_query` 视图，例如 `limit_ladder`、`fund_flow_concepts`。
+
+#### 当前状态与用户验收
+
+- 当前状态：沿用既有 Runtime，不单独升 `sandbox/verified`。用户台样板状态见工作台日志 `page_embedded_hermes_limit_concept_20260819`。
+
+### 3.18 ot-owner 关注面记忆最小闭环
+
+#### 用户目标、权限与外部副作用
+
+- 用户目标：日常协作里明确说“记住这个习惯”后，下一轮新对话先读当前账户关注面，而不是空着按默认财务比重写。
+- 本轮只改受管 Profile 的 SOUL 生成/写回，以及 `/ai/hermes` 一句提示。不改三个分析 Skill，不开放终端、文件、代码执行、浏览器，不打开 holographic auto_extract，不做记忆编辑器。
+- 外部副作用：Agent 被允许把稳定关注面写入当前 Profile 的 `memory(target="user")` / USER.md；禁止写入当次行情、章节模板、chart spec 和其他账户信息。
+
+#### GitHub 情报与固定上游点
+
+- 本轮没有新增或重新审阅 GitHub 项目。沿用已开通的 memory / user_profile / holographic / session_search，只把产品约定写进 SOUL。
+
+#### Interface、Module、Seam 与用户台依赖
+
+- Agent Module：`backend/app/services/hermes_tenant.py` 的 `_analysis_soul_lines()` 与 `_ensure_profile_identity()`。
+- 写回目标：`data/hermes/profiles/ot-owner/SOUL.md`。走 `HermesTenantRegistry.resolve(owner)`，不是手改后放着被旧模板覆盖。
+- 用户台最小提示：`frontend/src/pages/HermesAgentChat.tsx` 空状态和预填条各一句。
+- 测试：`backend/tests/test_hermes_multitenancy.py`。
+- 非目标：三个 `hermes-skills/*/SKILL.md`、chart renderer、消息协议、数据台。
+
+#### 自动检查与真实目标运行面
+
+- `uv run pytest tests/test_hermes_multitenancy.py -q`：14 passed。
+- `pnpm exec vitest run src/pages/__tests__/HermesAgentChat.test.tsx`：18 passed。
+- ot-owner `SOUL.md` 已含“先读用户关注面 / 禁止写入产品指令 / 禁止 skill_manage 三个权威 Skill”。
+- 三个分析 Skill SHA-1 未变：stock-analysis `2c29b00a4bd7bdfc9a1b55069b8a5f8d17ac70d7`，financial-analysis `4d97d1d53e55e6729cad54075954448cde1cd185`，market-recap `b16608a72db7fb991f29d9b7dbf4e320a906845e`。
+- 本轮未做已登录 Hermes 对话验收；`USER.md` / `memories/` 仍空，关注面要等用户在新对话里明确说记住后才会从 0 变成有记录。
+
+#### 当前状态与用户验收
+
+- 当前状态：`sandbox`。
+- 未标记 `verified` / `approved`。请在已登录的 `http://127.0.0.1:3011/ai/hermes?symbol=605289.SH&name=罗曼股份` 明确说记住短线/资金习惯，再开新对话只说“按我的习惯继续分析”。
+
+#### 阻塞、回滚和下一步
+
+- 备份：`/Users/simon/备份/codex/20260818-142329-one-trading-hermes-profile-focus-memory`。
+- 回滚：把备份中的 `hermes_tenant.py`、`test_hermes_multitenancy.py`、`HermesAgentChat.tsx`、对应测试和 `SOUL.md` 复制回原路径，再走一次 `resolve(owner)` 让身份模板覆盖回去。
+- 下一步仍是真实对话写入关注面；不要做记忆编辑器，也不要改三个 SKILL.md。
+
+### 3.17 分析 Skill 允许文末受控 chart spec
+
+#### 用户目标、权限与外部副作用
+
+- 用户目标：个股分析、财务分析和大盘复盘在保持原报告结构的同时，能给用户台已经能渲染的受控图表提供数据点。
+- 本轮只改三个 Hermes Skill 的输出约定；不开放终端、文件、代码执行、浏览器，不改数据台，不改消息协议。
+
+#### GitHub 情报与固定上游点
+
+- 本轮没有新增或重新审阅 GitHub 项目。沿用用户台已实现的 `type: "chart"` + `points` 渲染契约。
+
+#### Interface、Module、Seam 与用户台依赖
+
+- Skill：`hermes-skills/stock-analysis/SKILL.md`、`financial-analysis/SKILL.md`、`market-recap/SKILL.md`。
+- 约定：正文继续 Markdown；免责声明后最多附一份 JSON fence。`type` 必须是 `chart`，并带 `title`、`as_of`/`source` 和 2-24 个真实 `points`。禁止只写模板名，禁止 HTML/图片。
+- 用户台依赖：`frontend/src/components/HermesChartBlock.tsx` 已能把该 spec 画成 echarts。本轮不改用户台。
+
+#### 自动检查与真实目标运行面
+
+- 三个文件均已去掉 “Write Markdown only. No JSON. No code fences.”。
+- 本轮未做真实 Hermes 对话验收；新约定要等下一次分析对话才会出现图。
+
+#### 当前状态与用户验收
+
+- 当前状态：`designed` / Skill 文本已更新。
+- 未标记 `verified` 或 `approved`。
+
+#### 阻塞、回滚和下一步
+
+- 备份：`/Users/simon/备份/codex/20260817-170619-one-trading-hermes-analysis-skills-chart-spec`。
+- 回滚：把备份中的三个 `*-SKILL.md` 复制回 `hermes-skills/*/SKILL.md`。
 
 ### 3.1 AI 设置入口
 
@@ -378,10 +546,106 @@ GitHub 的“设计采纳/工程机制参考”不能替代上述本地状态。
 - 当前状态：线上多用户 Hermes Runtime 和现有 owner Profile 为 `production`；用户尚未用新注册的普通账户完成真实模型对话验收，因此不把普通用户产品体验提升为 `approved`。新用户首次使用时仍需按正常惰性 provisioning 创建自己的 Profile。
 - 回滚应用可恢复前一 Deployment；Profile/PVC 回滚或清理是独立高风险动作，必须使用 `/Users/simon/备份/codex/20260812-164436-one-trading-zeabur-latest-sync/online-pvc/pre-sync-complete-pvc.tar.zst` 并另行授权，不能因应用回滚覆盖现有账户对话或记忆。
 
+### 3.12 本地云订阅增加 86game 与 SubRouter
+
+#### 用户目标、权限与外部副作用
+
+- 用户目标：本地开发版 AI 在现有 Grok 云订阅之外，增加本机已有的 86game（api.86gamestore.com）和 SubRouter 作为可切换的服务器持有订阅源，四项分析/生成和 Hermes 共用当前选中源。
+- 授权边界：只改本地 one-trading Agent Adapter、设置 API 和设置页；APK 仍不能改凭据或切换订阅。未部署、未下单、未外发。
+- 凭据：86game / SubRouter Key 只写入 gitignored 的本地 `.env`，从本机 OpenCodex 已有配置复用，不进仓库、前端或 Hermes Profile。
+
+#### Interface、Module、Seam 与 Adapter
+
+- Module：`backend/app/services/ai_provider.py` 增加托管订阅注册表；`POST /api/settings/ai/subscription` 只切换 provider/model。
+- 当前目录（2026-08-13 对账户 `/v1/models` 实查）：86game 为 `gpt-5.6-sol / gpt-5.6-terra / gpt-5.6 / gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex-spark / codex-auto-review`；SubRouter 当前账户仅 `gpt-5.6-sol`。
+- Hermes 模型桥接继续走 `/api/hermes-xai/v1`，上游改为当前选中订阅；Profile 不保存第三方 Key。
+- 用户台：`frontend/src/pages/settings/AI.tsx` 云订阅页增加订阅源切换；自托管预设同步增加 86game / Subrouter。
+
+#### 当前状态与下一步
+
+- 当前状态：`sandbox`。自动测试覆盖 Grok 兼容、目录、切换和 APK 拒绝；真实 86game / SubRouter 对话与分析主路径尚未在本轮浏览器验收。
+- 线上 Zeabur 仍保持原 Grok 订阅，不因本地 `.env` 额外 Key 自动改变。
+
+### 3.13 本地 Hermes multiplex gateway 掉线恢复
+
+#### 用户目标、权限与外部副作用
+
+- 用户目标：`/ai/hermes` 红条显示「Hermes one-trading Profile 当前不可用」、Agent 设置为「Profile 未连接」。
+- 授权边界：只恢复本机项目受管 gateway `127.0.0.1:8651`，并区分「网关未运行」与「Profile 健康检查失败」。未部署、未改 Zeabur、未动个人 Hermes `127.0.0.1:8650`。
+
+#### 根因与修复边界
+
+- Grok 订阅是通的。`status()` 只有在订阅就绪后才会去探 Profile；红条文案来自 gateway `/health`、`/v1/models`、`/v1/toolsets` 失败。
+- 本机 `3018` 后端和 `3011` 前端在跑，但 `8651` 无监听。`gateway_state.json` 仍记着已死的 pid `6845`。`ot-owner` 日志最后一次正常访问是 2026-08-12，之后 gateway 被 SIGTERM 停掉；后端是单独的 `uvicorn --reload`，没有 `dev.sh` 那样的三进程监督，gateway 死后不会被拉起。
+- 设置里「独立记忆 / 仅记忆与会话检索 / 图表 Skill 未启用」是未连接时的前端回退文案，不是 Profile 配置真的被关掉。
+
+#### Interface、Module、Seam 与 Adapter
+
+- 运行面：用 `backend/scripts/start_local_hermes_gateway.py` 重新拉起项目 `data/hermes` multiplex gateway。个人 `8650` 仍在听。
+- Adapter：`hermes_agent.py` 的 `status()` 把 `ConnectError / ConnectTimeout` 单独标成「Hermes multiplex gateway 当前未运行」，其它 Profile 探测失败仍用原红条。
+- 用户台横幅改为同时显示 `message` 和 `detail`，见工作台日志 `hermes_gateway_offline_banner`。
+
+#### 自动检查与真实目标运行面
+
+- 后端 `tests/test_hermes_agent.py`、`tests/test_hermes_multitenancy.py`：`17 passed`。
+- 进程内 Adapter `status()`：`connected=true / profile=ot-owner / memory_provider=holographic / data_view_count=70`；`GET http://127.0.0.1:8651/health` 与 `/p/ot-owner/health` 均为 200。
+- Cursor 内置浏览器打开 `/ai/hermes` 被重定向到登录页（该浏览器无用户会话），未代替用户登录。用户已登录的 `3011` 页面刷新后应能连上。
+
+#### 当前状态与下一步
+
+- 当前状态：本地 Runtime 恢复为 `sandbox`（gateway 已就绪，未在已登录浏览器里做对话验收）。
+- 本地后端若继续只用 `uvicorn --reload` 而不走 `./dev.sh`，gateway 再次退出后仍不会自动拉起。
+
+### 3.14 Hermes 管理员模型提供商与模型选择
+
+#### 用户目标、权限与外部副作用
+
+- 用户目标：在多用户管理员的 Agent 设置里选择模型提供商和具体模型；配置后普通用户不能改。
+- 授权边界：只改本地 Hermes 设置 UI、订阅切换鉴权和既有 `POST /api/settings/ai/subscription`。未部署、未下单、未外发。Key 仍只在服务器 `.env`。
+- 追加：管理员可先 `POST /api/settings/ai/subscription/test` 探测当前下拉选择的连通性，不切换全站生效源；模型下拉支持自定义 ID，草稿编辑不会被设置刷新覆盖。
+- 追加：管理员可在 Agent 设置保存提供商 URL 与 API Key 到 `DATA_DIR/control/deployment-secrets.json`（覆盖 `.env` 引导值）；前端只见脱敏 Key，普通用户与 APK 403。
+
+#### Interface、Module、Seam 与 Adapter
+
+- 切换仍走 `select_server_subscription()`；探测走 `probe_server_subscription()`。`authorization.require_request_access` 把 `/api/settings/ai` 标为管理员前缀，接口内再检查 `user_context.is_admin()`。APK 与普通用户均 403。
+- Hermes Session 每次请求从当前服务器模型解析 Profile `default`，不把选择权下放到账户。
+
+#### 自动检查与真实目标运行面
+
+- 后端 `test_multitenancy`、`test_ai_cloud_subscription`：含探测不切换与普通用户 403，`24 passed`。
+- 前端 `HermesAgentChat.test.tsx`：管理员下拉、测试连通、应用；普通用户只读。共 `10 passed`。
+- 未在已登录浏览器完成真实切换验收；Cursor 内置浏览器仍无该管理员会话。
+
+#### 当前状态与下一步
+
+- 当前状态：`sandbox`。用户刷新已登录管理员 `/ai/hermes` 后，在 Agent 设置中选择、点「测试连通」，再点「应用到全部账户」。
+
+### 3.15 Hermes 首条消息 Session 标题冲突
+
+#### 用户目标、权限与外部副作用
+
+- 用户目标：新建对话或重复发送常见开场白（如「你好」）时不再被 Hermes 拒绝。
+- 现象：`Title already in use by session api_…`；根因是前端把首条消息当 Session 标题，而 Hermes Profile 内标题全局唯一。
+- 授权边界：只改本地 Session 创建/软重命名路径；不改模型订阅、不部署、不下单。
+
+#### Interface、Module、Seam 与 Adapter
+
+- 前端 `HermesAgentChat`：新建 Session 传空标题；首条消息成功后再软重命名为 `前缀 · session后缀`，冲突则忽略。
+- 后端 `HermesAgentAdapter.create_session`：若 Hermes 返回 title already in use，自动无标题重试一次。
+
+#### 自动检查与真实目标运行面
+
+- 后端新增 `test_create_session_retries_without_title_on_hermes_title_conflict`。
+- 前端 `HermesAgentChat.test.tsx`：`11 passed`（创建会话改为空标题并断言软重命名）。
+- 真实聊天验收待用户刷新 `/ai/hermes` 后发送首条消息确认。
+
+#### 当前状态与下一步
+
+- 当前状态：`sandbox`。用户刷新页面后新建对话即可验证；旧冲突 Session 可继续使用，不必删除。
+
 ## 4. 后续条目模板
 
 ```md
-### capability_name
 
 #### 用户目标、权限与外部副作用
 #### GitHub 情报与固定上游点
@@ -392,3 +656,297 @@ GitHub 的“设计采纳/工程机制参考”不能替代上述本地状态。
 #### 当前状态与用户批准
 #### 阻塞和下一步
 ```
+
+### 3.16 Hermes 个股 / 财务 / 大盘分析 Skill
+
+#### 用户目标、权限与外部副作用
+
+- 用户目标：把已经定型的 AI 个股分析、AI 财务分析和 AI 大盘复盘做成 Hermes Skill，让用户直接对话时按原框架分析，不必先点对应板块。
+- 授权边界：本轮只做第一档 Skill，不新增受控分析工具，不写长期记忆，不部署，不改三个页面分析器。
+- 外部副作用：更新了受管 `ot-owner` Profile 的 `config.yaml` 与 `SOUL.md`，使该账户能发现项目内三份只读 Skill。没有调用模型生成报告，没有保存新报告，没有下单或外发。
+
+#### Interface、Module、Seam 与 Adapter
+
+- 权威 Skill 目录：`/Users/simon/Trading/one-trading/hermes-skills/{stock-analysis,financial-analysis,market-recap}/SKILL.md`。
+- 数据仍只走 `one_trading_data_catalog` / `one_trading_data_query`。个股日 K 改走 `stock_daily_analysis`（本地窄表，默认 90 根），另用 `stock_levels` 和轻量财务；财务用四张表最近四期；大盘以 `market_overview` 为主。宽表 `stock_daily` 仍给页面，不给个股 Skill。
+- Module：`backend/app/services/hermes_tenant.py` 在受管 Profile 硬化时挂入精确 `skills.external_dirs`、打开 `skills` toolset，并在 SOUL 中加入很短的 Skill 路由。产品指令不写入 Holographic 记忆。
+- 现有三个分析器文件仍是页面报告权威；Skill 复述其角色、章节和禁止编造规则，供对话复用，不复制第二套会漂移的 system prompt 到账户记忆。
+
+#### 数据台和用户台依赖
+
+- 只读消费现有用户台视图；没有新增数据集，也没有改页面入口。
+- 策略生成未纳入本轮。
+
+#### 审计、确认、失败和回滚语义
+
+- 修改前备份：`/Users/simon/备份/codex/20260814-1651-one-trading-hermes-before-analysis-skills`。
+- 回滚：用该备份覆盖 `ot-owner` 的 `config.yaml`/`SOUL.md` 与 `hermes_tenant.py` 后重启 multiplex gateway；不会删除 Session 或长期记忆。删除三份 Skill 目录即可撤回对话框架。
+
+#### 自动检查与真实目标运行面
+
+- 租户测试 `tests/test_hermes_multitenancy.py`：`14 passed`。
+- Hermes 发现：`HERMES_HOME=.../profiles/ot-owner hermes skills list` 返回 `stock-analysis`、`financial-analysis`、`market-recap` 三个 enabled local Skill。
+- 本地 `127.0.0.1:8651` multiplex gateway 本轮未运行，因此没有做真实对话生成验收；3018 后端仍在，但本轮未触发分析 API。
+- 2026-08-14 第二层：新增 `GET /api/stock-analysis/daily-window` 与 Hermes 视图 `stock_daily_analysis`。只读 `repo.get_daily`，返回分析列和最近 N 根，不走 `/api/kline/daily`，不触发同步。Skill 默认 `days=90` / `max_items=180`。
+- 窄表实查 `300750.SZ`：`days=90` 返回最近 90 根，`last_date=2026-07-31`，JSON 47331；`days=180` 返回最近 180 根，`last_date=2026-07-31`，JSON 94866。两份都低于 12 万，且不是 2026-02 到 2026-04 的错窗口。宽表 `stock_daily` 仍带 `stock_info` / `quote_overlay`。
+- 自动检查：`tests/test_hermes_data.py`、`tests/test_stock_daily_analysis.py`、`tests/test_stock_analyzer.py` 共 10 passed。当前视图总数 75。
+- 2026-08-17 数据台把盘后正式日 K 扩到 CSI1800+自选并收口当前证据链后，同一窄表消费契约未改。本地仓库抽查 `300750.SZ` / `600519.SH` / `000001.SZ` 的 `repo.get_daily` 现为 `2019-07-05..2026-08-14`、1726 根。不在 1800 和当前自选里的股票仍停在 `2026-07-31`。本轮未改 Hermes 视图、Skill 或分析桥；数据事实只见数据平台开发日志 `4.1` 的 2026-08-17 三条。
+
+#### 当前状态与用户批准
+
+- 当前状态：`sandbox`。Skill 已可被受管 Profile 发现，尚未用真实对话跑通一份个股/财务/复盘报告。
+- 未标记 `verified / approved / production`。
+
+#### 阻塞和下一步
+
+- 若要和页面点出来的报告完全一致，需要另做受控分析工具，直接调用现有三个分析器。
+- 真实对话验收需要本地 Hermes multiplex gateway 在跑。
+
+### 3.22 upstream_908b385_merge_foundation_20260908
+
+#### 用户目标、权限与外部副作用
+
+- 目标：候选里保留 Hermes / `/ai` / `/ai/save`，同时不要丢掉 908 已落入的 AI `publish` 路由。
+- 本阶段不调用模型、不发布策略、不外发、不下单。`publish` 与 webhook/wecom 保持默认关闭，待下一阶段按 ACL 再接。
+
+#### GitHub 情报
+
+- 上游 `908b3855010fca39a424db43c6292f686c4418ba`。记录见 `/Users/simon/Trading/docs/upstream-integrations/2026-09-08-latest-local-first/merge-foundation.md`。
+
+#### Interface、Module、Seam 与 Adapter
+
+- 候选 `strategy.py:498` `/ai/save` 仍走 `UserStrategyWorkspace`。
+- 候选 `strategy.py:522` `POST /{id}/publish` 已从非冲突上游落入，但仍走 `_get_engine`，**没有**叠 owner ACL。这不是已完成能力。
+- 候选 `main.py` 仍挂 hermes_agent / hermes_data / hermes_model_proxy。
+- 前端 `strategyPublish` 只是客户端接线，未验证。
+
+#### 数据台和用户台依赖
+
+- 用户台路由仍无 `/signals` 挂载（文件已在）。数据台 Catalog / Hermes 权限未在本阶段改正式树。
+
+#### 审计、确认、失败和回滚语义
+
+- 只写候选。未改正式 Agent Runtime。回滚不必动 canonical。
+
+#### 自动检查与真实目标运行面
+
+- 未跑 Agent 测试，未调模型，未开 Hermes。
+- 当前状态：候选 `isolated` / `designed`。未标记 `sandbox` 以外的完成态，也未标 `verified / approved / production`。
+
+#### 阻塞和下一步
+
+- `next-adaptation.json` A7：把 publish 叠到 workspace ACL，并决定 research_only 列表是否带 `include_research`。
+
+### 3.23 upstream_908b385_candidate_adaptation_20260908
+
+#### 用户目标、权限与外部副作用
+
+- 目标：候选里 `POST /strategies/{id}/publish` 叠 owner/workspace ACL，并保留 `/ai/save`。
+- 本阶段不调用模型、不外发、不下单。wecom/email/review_push 仍默认关闭。
+
+#### GitHub 情报
+
+- 上游 `908b3855010fca39a424db43c6292f686c4418ba`。记录见 `/Users/simon/Trading/docs/upstream-integrations/2026-09-08-latest-local-first/adaptation.md`。
+
+#### Interface、Module、Seam 与 Adapter
+
+- `strategy.py`：`_publish_path_allowed` 只允许当前 owner 工作区或共享 `strategies`；跨用户路径 403。
+- 无 `request.state.user` 时回退 `user_context.current()`，避免测试/无会话路径半接。
+- `/ai/save` 仍走 `UserStrategyWorkspace`。
+- lots / custom_factors 新 store 必须走 `user_data_dir`，禁止共享目录跨用户读写。
+
+#### 数据台和用户台依赖
+
+- 用户台候选已挂 `/signals`；数据台 Catalog / Hermes 权限未改正式树。
+
+#### 审计、确认、失败和回滚语义
+
+- 只写候选。发布失败会 `_restore_strategy_file`。未改正式 Agent Runtime。
+
+#### 自动检查与真实目标运行面
+
+- `tests/test_strategy_publish.py`（含跨用户路径拒绝）与 `tests/test_ext_pull_auth.py` 在隔离 DATA_DIR 下通过。
+- 未调模型，未开 Hermes，未开候选服务。
+- 当前状态：候选 `isolated` / `sandbox`。未标 `verified / approved / production`。
+
+#### 阻塞和下一步
+
+- A12 外发通道仍刻意关闭。独立复核后再谈回写。
+
+### 3.24 upstream_9a4bdcd_v6_ai_acl_20260909
+
+#### 用户目标、权限与外部副作用
+
+- 目标：候选上用两名合成用户走真实 `/api/strategies/ai/save` 与 `/publish`，确认普通用户不能发布、owner/admin 权限仍在。
+- 本阶段不调用模型、不外发、不下单。
+
+#### GitHub 情报
+
+- 上游 `9a4bdcd07dfe999f123a8226608d4c90213fae5b`。报告见 `docs/upstream-integrations/2026-09-08-latest-local-first/diagnose-a16-v6-rerun.log`。
+
+#### Interface、Module、Seam 与 Adapter
+
+- 未改 Agent Runtime。只复验已有 workspace ACL：alice save 200、alice/bob publish 403、owner save 200。
+- 外部模型边界未实调。
+
+#### 数据台和用户台依赖
+
+- 用户身份来自真实 `auth.register_user` 与 cookie 会话，不是常量 mock 用户模块。
+
+#### 自动检查与真实目标运行面
+
+- `test_ai_save_and_publish_keep_owner_admin_acl` 含在复跑 33 passed 内。
+- 未调模型，未开 Hermes，未开候选服务。
+- 当前状态：候选 `isolated` / `sandbox`。未标 `verified / approved / production`。
+
+#### 阻塞和下一步
+
+- A18 与浏览器验收仍开。不得把本条写成 Agent Runtime 已完成。
+
+### 3.25 upstream_9a4bdcd_unified_qa_20260909
+
+#### 用户目标、权限与外部副作用
+
+- 目标：统一 QA 期间默认关闭模型/外发/下单；fixture 把 `ai_provider.chat` 替身成禁止真实调用。
+- 本阶段不调用模型、不外发、不下单。管理员权限继续在候选测试中生效，不是 Hermes Runtime 完成。
+
+#### GitHub 情报
+
+- 上游 `9a4bdcd07dfe999f123a8226608d4c90213fae5b`。主记录在用户台 2026-09-09 子记录。报告 `unified-qa.md`。
+
+#### Interface、Module、Seam 与 Adapter
+
+- 未改 Agent Runtime。隔离包装器只在 sandbox 替换外部边界。
+- 外部模型边界未实调。
+
+#### 数据台和用户台依赖
+
+- 合成 admin/user 只存在 fixture `runtime/data`。不复制正式账户。
+
+#### 自动检查与真实目标运行面
+
+- AI ACL 仍以先前 33-pass 日志为证据，不改写 `e827c380` FAILED。
+- 本轮未调模型，未开 Hermes。
+- 当前状态：候选 `isolated` / `sandbox`。未标 `verified / approved / production`。
+
+#### 阻塞和下一步
+
+- Codex 浏览器与独立复核仍开。不得把本条写成 Agent Runtime 已完成。
+
+### 3.26 upstream_9a4bdcd_regression_fix_guard_20260909
+
+#### 用户目标、权限与外部副作用
+
+- 目标：回归修复阶段的 fixture 进程内阻断外网 TCP/UDP/DNS 与 3018 旁路；`ai_provider.chat` 替身禁止真实调用。
+- 本阶段不调用模型、不外发、不下单。上一任务 `172ec9c4` `structured_final=false`，本条只补记当时候选真实状态。
+
+#### GitHub 情报
+
+- 上游 `9a4bdcd07dfe999f123a8226608d4c90213fae5b`。主记录在用户台 2026-09-09 回归修复子记录。报告 `regression-fixes.md`。
+
+#### Interface、Module、Seam 与 Adapter
+
+- 未改 Agent Runtime。当时 guard 只补丁当前进程 socket，子进程不继承。
+
+#### 数据台和用户台依赖
+
+- 合成 admin/user 只存在当时 fixture `runtime/data`。
+
+#### 自动检查与真实目标运行面
+
+- 父进程 `self_test` ok。未调模型，未开 Hermes。
+- 当前状态：候选 `isolated` / `sandbox`。未标 `verified / approved / production`。
+
+#### 阻塞和下一步
+
+- 子进程继承见 `3.27`。不得把本条写成 Agent Runtime 已完成。
+
+### 3.27 upstream_9a4bdcd_sitecustomize_inherit_20260909
+
+#### 用户目标、权限与外部副作用
+
+- 目标：让 fixture 的 Python 子进程继承同一外联阻断，并在 spawn 入口禁用 Node/Hermes/Codex CLI/curl。包装器替身真实模型路径，不只 `chat`。
+- 本阶段不调用模型、不外发、不下单。不是 OS 级沙盒。
+
+#### GitHub 情报
+
+- 上游 `9a4bdcd07dfe999f123a8226608d4c90213fae5b`。主记录在用户台 2026-09-09 preferences HTTP 子记录。报告 `reports/preferences-http-fix.md` 与 `runtime/fixture-isolation.md`。
+
+#### Interface、Module、Seam 与 Adapter
+
+- 未改 Agent Runtime。继承缝是 `PYTHONPATH` + `runtime/fixture_bootstrap/sitecustomize.py`。
+- 包装器替身 `generate_ai_text` / `stream_ai_text` / `_run_codex_cli` / `_openai_client` / `chat`。
+
+#### 数据台和用户台依赖
+
+- 合成账户只存在 `runtime/data-v18`。用户台 cookie 仍是产品 `tf_session`；仅包装器改名。
+
+#### 自动检查与真实目标运行面
+
+- `child_self_test`：子进程 TCP/UDP/DNS/3018/`node` 在发生前被挡，无真实外联。
+- 未调模型，未开 Hermes，未下单。
+- 当前状态：候选 `isolated` / `sandbox`。未标 `verified / approved / production`。
+
+#### 阻塞和下一步
+
+- Codex 浏览器与独立复核仍开。不得把本条写成 Agent Runtime 已完成。
+
+### 3.29 upstream_9a4bdcd_review_f1f2_no_model_20260909
+
+#### 用户目标、权限与外部副作用
+
+- 目标：记录 F1/F2 修复未进入 Agent Runtime。本阶段不调用模型、不外发、不下单、不开 Hermes。
+- pytest 环境不含 `runtime/fixture_bootstrap` PYTHONPATH。
+
+#### GitHub 情报
+
+- 上游 `9a4bdcd07dfe999f123a8226608d4c90213fae5b`。主记录在用户台 2026-09-09 F1/F2 子记录。报告 `reports/review-fixes.md`。
+
+#### Interface、Module、Seam 与 Adapter
+
+- 未改 Agent Runtime。未改 wrapper/guard/sitecustomize 哈希。
+
+#### 数据台和用户台依赖
+
+- 用户台 F1 偏好缓存、数据台 F2 分钟门控。合成账户仍在 `runtime/data-v18`。
+
+#### 自动检查与真实目标运行面
+
+- 未调模型，未开 Hermes，未下单。
+- 当前状态：候选 `isolated` / `sandbox`。未标 `verified / approved / production`。
+
+#### 阻塞和下一步
+
+- 新独立 review 仍开。不得把本条写成 Agent Runtime 已完成。
+
+### 3.30 upstream_9a4bdcd_official_promotion_no_model_20260909
+
+#### 用户目标、权限与外部副作用
+
+- 目标：记录正式源晋升未进入 Agent Runtime。不调用模型、不外发、不下单。
+- 2026-09-09T05:37 仅对已确认空闲的项目受管 gateway **83190/:8651** 做 keep-PID 脱离旧 tmux（SIGKILL supervisor 83183，不跑 `finally`）。**未重启 83190**，未改全局 Hermes 软件/配置/profile/session，未连模型，未动个人 **39227/:8650**。
+- 正式 pytest 环境不含 `fixture_bootstrap`。
+
+#### GitHub 情报
+
+- 上游 `9a4bdcd07dfe999f123a8226608d4c90213fae5b`。主记录在用户台 2026-09-09 正式晋升子记录。报告 `reports/local-promotion.md`。
+
+#### Interface、Module、Seam 与 Adapter
+
+- 未改 Agent Runtime。Hermes 83190 仍是 2026-09-02 10:43:41 原进程；现 PPID 1 / 自有 session / TTY `??`。
+
+#### 数据台和用户台依赖
+
+- 用户台/数据台源已落地正式树。合成账户仍在 fixture `runtime/data-v18`。
+
+#### 自动检查与真实目标运行面
+
+- 未调模型，未开新 Hermes，未下单。Hermes 83190 仍是 2026-09-02 10:43:41；`8651/health` 与 `/p/ot-owner/health` 200。`data/hermes/profiles/ot-owner` 仍在。
+- Codex after-IAB「云端 Subrouter 已连接」只是 UI 配置态，不是真实模型调用成功。Codex `/backtest` 观察未触发模型。
+- 当前状态：保留源 / 受管 Hermes 运行收尾 **verified**。最终报告 `reports/final-acceptance.md`。不是真实模型或 Agent Runtime `approved` / `production`。
+
+#### 阻塞和下一步
+
+- 不得把本条写成 Agent Runtime 已完成。Helper 仅拒绝重复启动分支已查；启动/恢复分支未验收，不得包装成完整恢复工具。
+
+

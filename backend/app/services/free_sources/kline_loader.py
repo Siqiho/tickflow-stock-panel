@@ -1,12 +1,19 @@
 """Load local daily bars for free derived features."""
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import polars as pl
 
 
-def load_daily_bars_for_symbol(data_dir: Path, symbol: str, *, days: int = 120) -> list[dict]:
+def load_daily_bars_for_symbol(
+    data_dir: Path,
+    symbol: str,
+    *,
+    days: int = 120,
+    as_of: date | str | None = None,
+) -> list[dict]:
     """Load last `days` daily bars for one symbol.
 
     Prefer kline_daily_enriched (has turnover_rate); fallback to kline_daily.
@@ -41,6 +48,13 @@ def load_daily_bars_for_symbol(data_dir: Path, symbol: str, *, days: int = 120) 
     out = pl.concat(dfs, how="diagonal_relaxed")
     if "date" in out.columns:
         out = out.sort("date")
+        if as_of is not None:
+            as_of_text = as_of.isoformat() if isinstance(as_of, date) else str(as_of)[:10]
+            out = out.filter(
+                pl.col("date").cast(pl.Utf8).str.slice(0, 10) <= as_of_text
+            )
+    if out.is_empty():
+        raise ValueError(f"no daily bars for {symbol} on or before {as_of}")
     if days > 0 and out.height > days:
         out = out.tail(days)
 

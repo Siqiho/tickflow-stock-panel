@@ -1,0 +1,59 @@
+{
+  "as_of": "2026-09-11T22:55:23+08:00",
+  "backend": {
+    "pid": 5762,
+    "ppid": 1,
+    "cwd": "/Users/simon/Trading/one-trading/backend",
+    "listen": "127.0.0.1:3018",
+    "cmd": "official .venv python -B verify-start-wrapper.py",
+    "version": "v0.1.68",
+    "wrapper": "/Users/simon/Trading/one-trading/docs/cursor-handoffs/restore-pre-cursor-20260911/verify-start-wrapper.py"
+  },
+  "frontend": {
+    "pid": 5690,
+    "ppid": 1,
+    "cwd": "/Users/simon/Trading/one-trading/frontend",
+    "listen": "127.0.0.1:3011",
+    "cmd": "official node_modules vite --host 127.0.0.1 --port 3011 --strictPort",
+    "isolated_config": false
+  },
+  "data_dir": "/Users/simon/Trading/one-trading/data",
+  "preferences_sha256": "45a0612d01d25f3376aff38bedac9d908c2eeefc033081976fa88fac2f39323a",
+  "capabilities_sha256": "1088d2bf92b97601bf5127e736ea849a3f1391448ed9c9f6468f91b9e99ef523",
+  "parquet_count": 5770,
+  "sqlite_ok": true,
+  "smokes": [
+    {
+      "url": "http://127.0.0.1:3018/health",
+      "http": "200",
+      "body": "{\"status\":\"ok\",\"version\":\"0.1.68\",\"release_channel\":\"development\",\"build_sha\":\"local\",\"mode\":\"none\"}",
+      "err": ""
+    },
+    {
+      "url": "http://127.0.0.1:3018/api/health",
+      "http": "404",
+      "body": "{\"detail\":\"Not Found\"}",
+      "err": ""
+    },
+    {
+      "url": "http://127.0.0.1:3018/api/settings",
+      "http": "401",
+      "body": "{\"detail\":\"未登录或会话已过期\"}",
+      "err": ""
+    },
+    {
+      "url": "http://127.0.0.1:3018/api/overview/market",
+      "http": "401",
+      "body": "{\"detail\":\"未登录或会话已过期\"}",
+      "err": ""
+    },
+    {
+      "url": "http://127.0.0.1:3011/",
+      "http": "200",
+      "body": "<!doctype html>\n<html lang=\"zh-CN\">\n  <head>\n    <script type=\"module\">import { injectIntoGlobalHook } from \"/@react-refresh\";\ninjectIntoGlobalHook(window);\nwindow.$RefreshReg$ = () => {};\nwindow.$RefreshSig$ = () => (type) => type;</script>\n\n    <script type=\"module\" src=\"/@vite/client\"></script>\n\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.",
+      "err": ""
+    }
+  ],
+  "auth_note": "at least one API returned 401; auth not lowered",
+  "first_start_mistake": "PID 5688 inherited leftover DATA_DIR=/tmp/ot-restore-pytest-20260911 from the test shell and was replaced by PID 5762 without DATA_DIR"
+}

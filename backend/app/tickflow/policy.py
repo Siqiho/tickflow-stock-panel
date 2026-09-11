@@ -246,7 +246,50 @@ def _probe_real(tiers: dict) -> tuple[CapabilitySet, list[str]]:
     return CapabilitySet(available), log
 
 
+_DATASET_CAP_MAP: tuple[tuple[str, Cap], ...] = (
+    ("daily", Cap.KLINE_DAILY_BATCH),
+    ("adj_factor", Cap.ADJ_FACTOR),
+    ("minute", Cap.KLINE_MINUTE_BATCH),
+    ("depth5", Cap.DEPTH5_BATCH),
+    ("financial", Cap.FINANCIAL),
+    ("full_minute", Cap.INTRADAY_UNIVERSE),
+)
+
+
+def _augment_custom_sources(capset: CapabilitySet) -> None:
+    """自定义/插件源被选为当前 provider 且声明了数据集时补授能力, 不覆盖 TickFlow。"""
+    try:
+        from app.data_providers import custom as custom_sources
+        from app.services import preferences
+
+        active_providers = {
+            "daily": preferences.get_daily_data_provider(),
+            "adj_factor": preferences.get_adj_factor_provider(),
+            "minute": preferences.get_minute_data_provider(),
+            "depth5": preferences.get_depth5_data_provider(),
+            "financial": preferences.get_financial_provider(),
+            "full_minute": preferences.get_full_minute_data_provider(),
+        }
+        for dataset, cap in _DATASET_CAP_MAP:
+            provider = active_providers[dataset]
+            if provider != "tickflow" and custom_sources.provider_has_dataset(provider, dataset):
+                capset.grant(cap)
+                logger.info(
+                    "custom source '%s' provides dataset '%s': granted %s",
+                    provider, dataset, cap.value,
+                )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("custom source augment skipped: %s", e)
+
+
 def detect_capabilities(force: bool = False) -> CapabilitySet:
+    """探测 TickFlow 档位, 再按本地自定义源补授能力。不改 Catalog full_minute.field=None。"""
+    capset = _detect_tickflow_caps(force)
+    _augment_custom_sources(capset)
+    return capset
+
+
+def _detect_tickflow_caps(force: bool = False) -> CapabilitySet:
     """探测当前 API Key 的能力集。"""
     cache_path = settings.data_dir / _CAPSET_CACHE_FILE
     if not force and cache_path.exists():

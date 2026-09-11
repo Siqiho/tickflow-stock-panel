@@ -17,19 +17,22 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from app.services.fs_utils import atomic_write_text
 from app.strategy.custom_signals import ALLOWED_FIELDS
 
 logger = logging.getLogger(__name__)
 
 # ── 常量 ────────────────────────────────────────────────
 ID_RE = re.compile(r"^[a-z0-9_]{1,40}$")
-RULE_TYPES = {"strategy", "signal", "price", "market"}
+RULE_TYPES = {"strategy", "signal", "price", "market", "date", "abnormal"}
 SCOPES = {"symbols", "all", "sector"}
 LOGICS = {"and", "or"}
 DIRECTIONS = {"entry", "exit", "both"}
+ABNORMAL_DIRECTIONS = {"up", "down", "both"}
+ABNORMAL_WINDOWS = {"any", "3d", "10d", "30d"}
 SEVERITIES = {"info", "warn", "critical"}
 OPS = {">", ">=", "<", "<=", "==", "!="}
 
@@ -39,7 +42,8 @@ _SIGNAL_PREFIXES = ("signal_", "csg_")
 
 # ── 持久化 (镜像 custom_signals.py) ─────────────────────
 def _dir(data_dir: Path) -> Path:
-    d = data_dir / "user_data" / "monitor_rules"
+    from app.services.user_context import user_data_dir
+    d = user_data_dir(data_dir) / "monitor_rules"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -60,6 +64,51 @@ def load_all(data_dir: Path) -> list[dict]:
     return out
 
 
+def _load_from_directory(directory: Path) -> list[dict]:
+    if not directory.is_dir():
+        return []
+    out: list[dict] = []
+    for file in sorted(directory.glob("*.json")):
+        try:
+            out.append(json.loads(file.read_text(encoding="utf-8")))
+        except Exception as exc:
+            logger.warning("monitor rule load failed %s: %s", file.name, exc)
+    return out
+
+
+def iter_user_principals(data_dir: Path) -> list[dict]:
+    """Enumerate tenant principals that already have a user_data directory."""
+    principals = [{
+        "id": "owner",
+        "username": "admin",
+        "role": "admin",
+        "legacy_home": True,
+    }]
+    tenants = Path(data_dir) / "tenants"
+    if tenants.is_dir():
+        for child in sorted(tenants.iterdir()):
+            if child.is_dir() and (child / "user_data").is_dir() and child.name != "owner":
+                principals.append({
+                    "id": child.name,
+                    "username": child.name,
+                    "role": "user",
+                    "legacy_home": False,
+                })
+    return principals
+
+
+def load_all_users(data_dir: Path) -> list[tuple[str, list[dict]]]:
+    """Load every tenant's monitor rules without binding request context."""
+    from app.services.user_context import user_data_dir_for
+
+    loaded: list[tuple[str, list[dict]]] = []
+    for principal in iter_user_principals(data_dir):
+        root = user_data_dir_for(principal, data_dir, create=False)
+        rules = _load_from_directory(root / "monitor_rules")
+        loaded.append((str(principal["id"]), rules))
+    return loaded
+
+
 def load_one(data_dir: Path, rule_id: str) -> dict | None:
     p = _path(data_dir, rule_id)
     if not p.exists():
@@ -74,7 +123,7 @@ def load_one(data_dir: Path, rule_id: str) -> dict | None:
 def save_one(data_dir: Path, rule: dict) -> None:
     p = _path(data_dir, rule["id"])
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(rule, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_text(p, json.dumps(rule, ensure_ascii=False, indent=2))
 
 
 def delete_one(data_dir: Path, rule_id: str) -> bool:
@@ -89,6 +138,22 @@ def delete_one(data_dir: Path, rule_id: str) -> bool:
 def _is_signal_field(field: str) -> bool:
     """判断 field 是否为布尔信号列 (signal_ / csg_ 前缀)。"""
     return any(field.startswith(p) for p in _SIGNAL_PREFIXES)
+
+
+def date_rule_in_window(remind_date: str, lead_days: int, today: str) -> bool:
+    """提醒窗口 [remind_date - lead_days, remind_date] 是否包含 today (均 YYYY-MM-DD)。
+
+    只判自然日历窗口; 是否在交易时段由调用方决定。到期落在休市/节假日不会顺延,
+    需 lead_days 覆盖 (交易日历口径待 issue 定夺)。非法输入一律返回 False (fail-safe)。
+    """
+    try:
+        remind = date.fromisoformat(remind_date)
+        today_d = date.fromisoformat(today)
+        lead = max(0, int(lead_days or 0))
+    except (ValueError, TypeError):
+        return False
+    start = remind - timedelta(days=lead)
+    return start <= today_d <= remind
 
 
 def validate(rule: dict) -> None:
@@ -107,6 +172,24 @@ def validate(rule: dict) -> None:
             raise ValueError("策略类型规则必须指定 strategy_id")
         if rule.get("direction", "entry") not in DIRECTIONS:
             raise ValueError(f"direction 必须是 {DIRECTIONS} 之一")
+    elif rule.get("type") == "date":
+        remind = rule.get("remind_date")
+        if not remind:
+            raise ValueError("日期提醒规则必须指定 remind_date")
+        try:
+            date.fromisoformat(str(remind).strip())
+        except ValueError as exc:
+            raise ValueError(f"remind_date 必须是 YYYY-MM-DD 日期: {remind!r}") from exc
+    elif rule.get("type") == "abnormal":
+        if rule.get("direction", "both") not in ABNORMAL_DIRECTIONS:
+            raise ValueError(f"异动监控 direction 必须是 {ABNORMAL_DIRECTIONS} 之一")
+        if rule.get("abnormal_window", "any") not in ABNORMAL_WINDOWS:
+            raise ValueError(f"abnormal_window 必须是 {ABNORMAL_WINDOWS} 之一")
+        threshold_pct = rule.get("threshold_pct")
+        if not isinstance(threshold_pct, (int, float)) or not 1 <= threshold_pct <= 150:
+            raise ValueError("异动监控 threshold_pct 必须是 1-150 的接近度百分比")
+        if rule.get("asset_type") == "etf":
+            raise ValueError("异动监控不支持 asset_type=etf")
     else:
         # 信号/价格/市场类型: 需要 conditions
         conds = rule.get("conditions")
@@ -141,6 +224,12 @@ def validate(rule: dict) -> None:
         syms = rule.get("symbols")
         if not isinstance(syms, list) or len(syms) == 0:
             raise ValueError("scope=symbols 时 symbols 不能为空")
+    if rule.get("scope") == "sector":
+        sector = str(rule.get("sector") or rule.get("sector_name") or "").strip()
+        targets = rule.get("sector_targets")
+        has_targets = isinstance(targets, list) and len(targets) > 0
+        if not sector and not has_targets:
+            raise ValueError("scope=sector 时必须提供 sector 或 sector_targets, 不能按全市场执行")
 
     # 其余枚举
     if rule.get("severity", "info") not in SEVERITIES:
@@ -154,11 +243,17 @@ def normalize(rule: dict) -> dict:
     """补全默认字段,返回规范化后的规则 (不校验)。"""
     r = dict(rule)
     r.setdefault("enabled", True)
-    r.setdefault("scope", "symbols")
+    if r.get("type") == "abnormal":
+        r.setdefault("scope", "all")
+        r.setdefault("direction", "both")
+        r.setdefault("threshold_pct", 70.0)
+        r.setdefault("abnormal_window", "any")
+    else:
+        r.setdefault("scope", "symbols")
+        r.setdefault("direction", "entry")
     r.setdefault("symbols", [])
     r.setdefault("sector", None)
     r.setdefault("strategy_id", None)
-    r.setdefault("direction", "entry")
     r.setdefault("conditions", [])
     r.setdefault("logic", "and")
     r.setdefault("cooldown_seconds", 3600)

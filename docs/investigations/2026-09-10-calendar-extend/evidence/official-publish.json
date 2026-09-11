@@ -1,0 +1,202 @@
+{
+  "official": {
+    "ok": true,
+    "error": null,
+    "kept_prior": false,
+    "months": [
+      "2026-08",
+      "2026-09",
+      "2026-10"
+    ],
+    "incoming_rows": 276,
+    "merged_rows": 2007,
+    "published_path": "/Users/simon/Trading/one-trading/data/reference/trading_calendar/calendar.parquet",
+    "publish": {
+      "ok": true,
+      "dataset_id": "trading_calendar",
+      "run_id": "wp2-official",
+      "published_path": "/Users/simon/Trading/one-trading/data/reference/trading_calendar/calendar.parquet",
+      "row_count": 2007,
+      "quality_report_path": "/Users/simon/Trading/one-trading/data/.staging/trading_calendar/wp2-official/quality_report.json",
+      "lineage_path": "/Users/simon/Trading/one-trading/data/lineage/trading_calendar/date=2026-09-10/wp2-official.json",
+      "kept_prior": false,
+      "error": null,
+      "checks": [
+        {
+          "code": "not_empty",
+          "passed": true,
+          "detail": "2007 rows"
+        },
+        {
+          "code": "required_columns",
+          "passed": true,
+          "detail": "ok"
+        },
+        {
+          "code": "pk_unique",
+          "passed": true,
+          "detail": "unique=2007 rows=2007"
+        },
+        {
+          "code": "enum:exchange",
+          "passed": true,
+          "detail": "ok"
+        },
+        {
+          "code": "enum:session_type",
+          "passed": true,
+          "detail": "ok"
+        },
+        {
+          "code": "calendar_session_consistency",
+          "passed": true,
+          "detail": "ok"
+        },
+        {
+          "code": "overlap_conflicts",
+          "passed": true,
+          "detail": "intersection=1824"
+        }
+      ],
+      "staging_dir": "/Users/simon/Trading/one-trading/data/.staging/trading_calendar/wp2-official"
+    }
+  },
+  "prior_rows": 1824,
+  "published_rows": 2007,
+  "min": "2025-01-01",
+  "max": "2026-10-31",
+  "freshness": {
+    "data_as_of": "2026-09-09",
+    "freshness_status": "stale",
+    "freshness_note": "已陈旧",
+    "expected_trading_day": "2026-09-10",
+    "calendar_covers": true
+  },
+  "sums_unchanged": true,
+  "before_freshness": {
+    "5": {
+      "freshness_status": "unknown",
+      "calendar_covers": false
+    },
+    "63": {
+      "freshness_status": "unknown",
+      "calendar_covers": false
+    }
+  },
+  "after_windows": {
+    "5": {
+      "start": "2026-09-03",
+      "end": "2026-09-09",
+      "items": [
+        [
+          "BK0448",
+          17973387520.0
+        ],
+        [
+          "BK0459",
+          15576527104.0
+        ],
+        [
+          "BK1287",
+          3117584992.0
+        ],
+        [
+          "BK1034",
+          2514179440.0
+        ],
+        [
+          "BK0450",
+          2240672400.0
+        ],
+        [
+          "BK1230",
+          2049476656.0
+        ],
+        [
+          "BK1036",
+          -19208416512.0
+        ],
+        [
+          "BK0735",
+          -9211827936.0
+        ],
+        [
+          "BK1238",
+          -7572815536.0
+        ],
+        [
+          "BK1037",
+          -4017224960.0
+        ],
+        [
+          "BK0475",
+          -3909425648.0
+        ],
+        [
+          "BK1033",
+          -3457187184.0
+        ]
+      ],
+      "freshness_status": "fresh",
+      "calendar_covers": true,
+      "freshness_note": "足够新"
+    },
+    "63": {
+      "start": "2026-06-12",
+      "end": "2026-09-09",
+      "items": [
+        [
+          "BK1261",
+          1894485435.0
+        ],
+        [
+          "BK1274",
+          809858592.0
+        ],
+        [
+          "BK0732",
+          544161888.0
+        ],
+        [
+          "BK1249",
+          381443909.0
+        ],
+        [
+          "BK1045",
+          294560014.0
+        ],
+        [
+          "BK1260",
+          77359340.0
+        ],
+        [
+          "BK1036",
+          -326656155904.0
+        ],
+        [
+          "BK0448",
+          -202361614848.0
+        ],
+        [
+          "BK0459",
+          -82674570496.0
+        ],
+        [
+          "BK1038",
+          -78687308656.0
+        ],
+        [
+          "BK1033",
+          -78215373360.0
+        ],
+        [
+          "BK1037",
+          -71203759872.0
+        ]
+      ],
+      "freshness_status": "fresh",
+      "calendar_covers": true,
+      "freshness_note": "足够新"
+    }
+  }
+}

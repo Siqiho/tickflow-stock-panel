@@ -256,8 +256,10 @@ class ScreenerService:
         # 加载 warmup 历史 (目标日期前 ~120 天)
         enriched_dir = self.repo.store.data_dir / "kline_daily_enriched"
         start = target_date - timedelta(days=150)
+        # turnover_rate 是 enriched 存储列, 必须随行透传: 否则即时计算后该列
+        # 丢失, 自定义 SQL 用它做条件会 Binder Error 被吞成空结果 (#187)
         read_cols = ["symbol", "date", "open", "high", "low", "close", "volume",
-                     "amount", "raw_close", "raw_high", "raw_low"]
+                     "amount", "raw_close", "raw_high", "raw_low", "turnover_rate"]
 
         try:
             lf = (
@@ -339,7 +341,7 @@ class ScreenerService:
 
         enriched_dir = self.repo.store.data_dir / "kline_daily_enriched"
         read_cols = ["symbol", "date", "open", "high", "low", "close", "volume",
-                     "amount", "raw_close", "raw_high", "raw_low"]
+                     "amount", "raw_close", "raw_high", "raw_low", "turnover_rate"]
 
         try:
             lf = (
@@ -417,7 +419,9 @@ class ScreenerService:
         # 用 DuckDB 做 SQL 过滤 (注册临时视图)
         try:
             import duckdb
-            con = duckdb.connect(database=":memory:")
+            con = duckdb.connect(
+                database=":memory:", config={"enable_external_access": False}
+            )
             con.register("enriched", df.to_arrow())
             where = " AND ".join(f"({c})" for c in conditions)
             sql = f"SELECT * FROM enriched WHERE {where}"

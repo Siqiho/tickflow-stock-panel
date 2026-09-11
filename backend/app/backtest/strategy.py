@@ -4,23 +4,487 @@
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Callable, Literal
 
 import numpy as np
 import polars as pl
 
 from app.backtest.engine import BacktestEngine, MatcherConfig, SimResult
-from app.strategy.engine import StrategyEngine, StrategyDef
+from app.backtest.fundamentals import FUNDAMENTAL_FACTOR_NAMES
+from app.backtest.matrix import MatrixCacheProfile
+from app.indicators.pipeline import (
+    ENRICHED_STORAGE_COLS,
+    INDICATOR_COLUMNS,
+    LIMIT_SIGNAL_OUTPUTS,
+    get_signal_dependencies,
+)
+from app.strategy.engine import StrategyDef, StrategyEngine
+from app.strategy.scoring import effective_scoring, scoring_dependencies, scoring_warmup_bars
 
 logger = logging.getLogger(__name__)
 
 BENCHMARK_SYMBOL = "000001.SH"
+_EXECUTION_COLUMNS = frozenset({
+    "symbol", "date", "open", "high", "low", "close", "volume",
+    "name", "score", "signal_limit_up", "signal_limit_down",
+})
+_LIMIT_BASE_COLUMNS = frozenset({"raw_close", "raw_high", "raw_low"})
+_INSTRUMENT_COLUMNS = frozenset({"name", "total_shares", "float_shares"})
+
+
+@dataclass(frozen=True)
+class FeaturePlan:
+    required_features: frozenset[str]
+    required_signals: frozenset[str]
+    warmup_bars: int
+
+
+@dataclass(frozen=True)
+class ResolvedFeaturePlan:
+    base_columns: frozenset[str]
+    intermediate_columns: frozenset[str]
+    indicator_columns: frozenset[str]
+    signal_columns: frozenset[str]
+    matrix_columns: frozenset[str]
+    instrument_columns: frozenset[str]
+    warmup_bars: int
+    full_feature_fallback: bool = False
+    execution_backend: str = "polars_expr"
+    fundamental_columns: frozenset[str] = frozenset()
+
+
+def _merge_resolved_feature_plans(
+    plans: list[ResolvedFeaturePlan],
+) -> ResolvedFeaturePlan:
+    if not plans:
+        raise ValueError("cannot merge an empty feature plan list")
+    backends = {plan.execution_backend for plan in plans}
+    if backends != {"matrix_native"}:
+        raise ValueError("shared MarketDataMatrix preparation only supports matrix_native")
+
+    def _union(field: str) -> frozenset[str]:
+        merged: set[str] = set()
+        for plan in plans:
+            merged.update(getattr(plan, field))
+        return frozenset(merged)
+
+    return ResolvedFeaturePlan(
+        base_columns=_union("base_columns"),
+        intermediate_columns=_union("intermediate_columns"),
+        indicator_columns=_union("indicator_columns"),
+        signal_columns=_union("signal_columns"),
+        matrix_columns=_union("matrix_columns"),
+        instrument_columns=_union("instrument_columns"),
+        warmup_bars=max(plan.warmup_bars for plan in plans),
+        full_feature_fallback=any(plan.full_feature_fallback for plan in plans),
+        execution_backend="matrix_native",
+        fundamental_columns=_union("fundamental_columns"),
+    )
+
+
+class StrategyDependencyResolver:
+    """Resolve all backtest field dependencies once before loading market data."""
+
+    def resolve(
+        self,
+        strategy: StrategyDef,
+        *,
+        params: dict,
+        basic_filter: dict,
+        entry_signals: list[str],
+        exit_signals: list[str],
+        overrides: dict | None = None,
+        minute_fill: bool = False,
+        asset_type: str = "stock",
+    ) -> ResolvedFeaturePlan:
+        overrides = overrides or {}
+        basic_filter = _basic_filter_for_asset(basic_filter, asset_type)
+        if strategy.execution_backend == "matrix_native":
+            return self._resolve_matrix_native(
+                strategy,
+                params=params,
+                basic_filter=basic_filter,
+                overrides=overrides,
+            )
+
+        required_features = set(strategy.required_features)
+        required_signals = {
+            _normalize_signal_name(signal)
+            for signal in [*entry_signals, *exit_signals]
+            if signal
+        }
+        required_signals.update({"signal_limit_up", "signal_limit_down"})
+
+        scoring = effective_scoring(strategy.meta.get("scoring"), overrides)
+        required_features.update(scoring_dependencies(scoring))
+        order_by = strategy.meta.get("order_by")
+        if order_by and order_by != "score":
+            required_features.add(str(order_by))
+
+        required_features.update(_basic_filter_dependencies(basic_filter))
+        filter_features, filter_resolved = _filter_dependencies(strategy, params)
+        required_features.update(filter_features)
+        embedded_signals = {
+            feature
+            for feature in required_features
+            if feature.startswith(("signal_", "csg_"))
+        }
+        required_signals.update(embedded_signals)
+        required_features.difference_update(embedded_signals)
+
+        full_fallback = bool(strategy.filter_history_fn and not strategy.required_features)
+        full_fallback = full_fallback or not filter_resolved
+        signal_dependencies = get_signal_dependencies()
+        if full_fallback:
+            logger.warning(
+                "strategy %s has dynamic Python dependencies without REQUIRED_FEATURES; "
+                "backtest falls back to full feature computation",
+                strategy.meta.get("id", "<unknown>"),
+            )
+            required_features.update(INDICATOR_COLUMNS)
+            required_signals.update(signal_dependencies)
+            required_signals.update(LIMIT_SIGNAL_OUTPUTS)
+
+        unknown_signals = required_signals - set(signal_dependencies) - set(LIMIT_SIGNAL_OUTPUTS)
+        if unknown_signals:
+            raise ValueError(f"策略引用了不存在的信号: {sorted(unknown_signals)}")
+        for signal in required_signals:
+            required_features.update(signal_dependencies.get(signal, ()))
+
+        indicator_columns = frozenset(required_features & set(INDICATOR_COLUMNS))
+        base_columns = _resolve_base_columns(required_features | set(_EXECUTION_COLUMNS))
+        if required_signals & set(LIMIT_SIGNAL_OUTPUTS):
+            base_columns = frozenset(set(base_columns) | set(_LIMIT_BASE_COLUMNS))
+
+        instrument_columns = frozenset(required_features & set(_INSTRUMENT_COLUMNS))
+        instrument_columns = frozenset(set(instrument_columns) | {"name"})
+        matrix_columns = set(_EXECUTION_COLUMNS) | required_signals
+        if minute_fill:
+            indicator_columns = frozenset(set(indicator_columns) | {"ma5", "ma10", "ma20"})
+            matrix_columns.update({"ma5", "ma10", "ma20"})
+            base_columns = frozenset(set(base_columns) | {"close"})
+
+        plan = FeaturePlan(
+            required_features=frozenset(required_features),
+            required_signals=frozenset(required_signals),
+            warmup_bars=max(60, int(strategy.lookback_days or 1), scoring_warmup_bars(scoring)),
+        )
+        return ResolvedFeaturePlan(
+            base_columns=base_columns,
+            intermediate_columns=frozenset(),
+            indicator_columns=indicator_columns,
+            signal_columns=plan.required_signals,
+            matrix_columns=frozenset(matrix_columns),
+            instrument_columns=instrument_columns,
+            warmup_bars=plan.warmup_bars,
+            full_feature_fallback=full_fallback,
+            execution_backend=strategy.execution_backend,
+            fundamental_columns=frozenset(required_features & FUNDAMENTAL_FACTOR_NAMES),
+        )
+
+    @staticmethod
+    def _resolve_matrix_native(
+        strategy: StrategyDef,
+        *,
+        params: dict,
+        basic_filter: dict,
+        overrides: dict,
+    ) -> ResolvedFeaturePlan:
+        if strategy.matrix_strategy is None:
+            raise ValueError(
+                f"matrix_native strategy {strategy.meta.get('id', '<unknown>')} "
+                "must declare MATRIX_STRATEGY"
+            )
+
+        required_features = set(strategy.required_features)
+        required_features.update(strategy.matrix_strategy.required_fields())
+        parameter_fields = getattr(strategy.matrix_strategy, "required_fields_for_params", None)
+        parameter_scoring: dict[str, float] = {}
+        if callable(parameter_fields):
+            parameter_scoring = {str(name): 1.0 for name in parameter_fields(params)}
+            required_features.update(scoring_dependencies(parameter_scoring))
+        required_features.update(_basic_filter_dependencies(basic_filter))
+        scoring = effective_scoring(strategy.meta.get("scoring"), overrides)
+        required_features.update(scoring_dependencies(scoring))
+        order_by = strategy.meta.get("order_by")
+        if order_by and order_by != "score":
+            required_features.add(str(order_by))
+
+        base_columns = _resolve_base_columns(required_features | set(_EXECUTION_COLUMNS))
+        base_columns = frozenset(set(base_columns) | set(_LIMIT_BASE_COLUMNS))
+        instrument_columns = frozenset(required_features & set(_INSTRUMENT_COLUMNS))
+        instrument_columns = frozenset(set(instrument_columns) | {"name"})
+        warmup_bars = max(
+            60,
+            int(strategy.matrix_strategy.required_warmup_bars(params)),
+            scoring_warmup_bars(scoring),
+            scoring_warmup_bars(parameter_scoring),
+        )
+        matrix_columns = set(base_columns) | set(instrument_columns) | {
+            "signal_limit_up",
+            "signal_limit_down",
+        }
+        return ResolvedFeaturePlan(
+            base_columns=base_columns,
+            intermediate_columns=frozenset(),
+            indicator_columns=frozenset(),
+            signal_columns=frozenset({"signal_limit_up", "signal_limit_down"}),
+            matrix_columns=frozenset(matrix_columns),
+            instrument_columns=instrument_columns,
+            warmup_bars=warmup_bars,
+            full_feature_fallback=False,
+            execution_backend="matrix_native",
+            fundamental_columns=frozenset(required_features & FUNDAMENTAL_FACTOR_NAMES),
+        )
+
+
+def build_matrix_cache_profile(
+    strategy_engine: StrategyEngine,
+    asset_type: str,
+    *,
+    requested_plan: ResolvedFeaturePlan | None = None,
+    requested_forward_bars: int = 0,
+    max_disk_bytes: int = 512 * 1024 * 1024,
+) -> MatrixCacheProfile:
+    resolver = StrategyDependencyResolver()
+    plans: list[ResolvedFeaturePlan] = []
+    if requested_plan is not None:
+        plans.append(requested_plan)
+    forward_bars = max(0, int(requested_forward_bars))
+    common_filter = {
+        "enabled": True,
+        "amount_min": 0.0,
+        "turnover_min": 0.0,
+        "market_cap_min": 0.0,
+        "float_cap_min": 0.0,
+        "exclude_st": True,
+    }
+    definitions = (
+        strategy_engine.strategy_definitions()
+        if hasattr(strategy_engine, "strategy_definitions")
+        else ()
+    )
+    for strategy in definitions:
+        if strategy.execution_backend != "matrix_native":
+            continue
+        if asset_type not in strategy.meta.get("asset_types", ["stock"]):
+            continue
+        if "1d" not in strategy.meta.get("timeframes", ["1d"]):
+            continue
+        params = StrategyEngine.resolve_params(strategy)
+        for item in strategy.meta.get("params", []):
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            if item.get("type") in {"int", "float"} and item.get("max") is not None:
+                params[str(item["id"])] = item["max"]
+        plans.append(resolver.resolve(
+            strategy,
+            params=params,
+            basic_filter={**dict(strategy.basic_filter or {}), **common_filter},
+            entry_signals=strategy.entry_signals,
+            exit_signals=strategy.exit_signals,
+            overrides={},
+            minute_fill=False,
+            asset_type=asset_type,
+        ))
+        forward_bars = max(forward_bars, int(strategy.max_hold_days or 0))
+
+    if not plans:
+        raise ValueError(f"no matrix-native cache profile available for asset_type={asset_type!r}")
+    merged = _merge_resolved_feature_plans(plans)
+    fields = frozenset(set(merged.base_columns) | set(merged.instrument_columns) | set(merged.matrix_columns))
+    generation_payload = json.dumps(
+        {
+            "asset_type": asset_type,
+            "fields": sorted(fields),
+            "warmup_bars": merged.warmup_bars,
+            "forward_bars": forward_bars,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    generation = hashlib.blake2b(generation_payload.encode("utf-8"), digest_size=12).hexdigest()
+    return MatrixCacheProfile(
+        field_columns=fields,
+        warmup_bars=merged.warmup_bars,
+        forward_bars=forward_bars,
+        max_disk_bytes=int(max_disk_bytes),
+        generation=generation,
+    )
+
+
+def _normalize_signal_name(signal: str) -> str:
+    if signal.startswith(("signal_", "csg_")):
+        return signal
+    return f"signal_{signal}"
+
+
+def _filter_dependencies(strategy: StrategyDef, params: dict) -> tuple[set[str], bool]:
+    if strategy.filter_history_fn:
+        return set(strategy.required_features), bool(strategy.required_features)
+    if not strategy.filter_fn:
+        return set(), True
+    try:
+        expr = strategy.filter_fn(pl.DataFrame(), params)
+        if expr is None:
+            return set(), True
+        return set(expr.meta.root_names()), True
+    except Exception as exc:
+        logger.warning("strategy filter dependency resolution failed: %s", exc)
+        return set(strategy.required_features), bool(strategy.required_features)
+
+
+def _basic_filter_dependencies(config: dict) -> set[str]:
+    if not config or not config.get("enabled", True):
+        return set()
+    dependencies = {"symbol", "close"}
+    if any(config.get(key) is not None for key in ("amount_min", "amount_max")):
+        dependencies.add("amount")
+    if any(config.get(key) is not None for key in ("turnover_min", "turnover_max")):
+        dependencies.add("turnover_rate")
+    if any(config.get(key) is not None for key in ("market_cap_min", "market_cap_max")):
+        dependencies.add("total_shares")
+    if any(config.get(key) is not None for key in ("float_cap_min", "float_cap_max")):
+        dependencies.add("float_shares")
+    if config.get("exclude_st"):
+        dependencies.add("name")
+    return dependencies
+
+
+_STOCK_ONLY_FILTER_KEYS = (
+    "market_cap_min", "market_cap_max", "float_cap_min", "float_cap_max",
+    "turnover_min", "turnover_max", "price_min", "price_max", "boards",
+)
+
+
+def _basic_filter_for_asset(basic_filter: dict, asset_type: str) -> dict:
+    if asset_type == "stock" or not basic_filter:
+        return basic_filter
+    sanitized = dict(basic_filter)
+    for key in _STOCK_ONLY_FILTER_KEYS:
+        sanitized[key] = None
+    return sanitized
+
+
+def _resolve_base_columns(features: set[str]) -> frozenset[str]:
+    storage = set(ENRICHED_STORAGE_COLS)
+    base = {"symbol", "date"} | (features & storage)
+    close_indicators = set(INDICATOR_COLUMNS) - {
+        "atr_14", "amplitude", "kdj_k", "kdj_d", "kdj_j",
+        "vol_ma5", "vol_ma10", "vol_ratio_5d",
+    }
+    if features & close_indicators:
+        base.add("close")
+    if features & {"atr_14", "amplitude", "kdj_k", "kdj_d", "kdj_j"}:
+        base.update({"high", "low", "close"})
+    if features & {"vol_ma5", "vol_ma10", "vol_ratio_5d"}:
+        base.add("volume")
+    base.update({"open", "high", "low", "close", "volume"})
+    return frozenset(base & storage)
+
+
+@dataclass(frozen=True)
+class SimulationOptions:
+    include_monte_carlo: bool = True
+    include_curves: bool = True
+    include_trades: bool = True
+    include_per_symbol_stats: bool = True
+    include_return_distribution: bool = True
+
+
+@dataclass(frozen=True)
+class BacktestResultPolicy:
+    required_stats: frozenset[str] | None = None
+    include_monte_carlo: bool = True
+    include_curves: bool = True
+    include_trades: bool = True
+    include_per_symbol_stats: bool = True
+    include_return_distribution: bool = True
+    include_benchmark: bool = True
+    include_strategy_info: bool = True
+
+    @classmethod
+    def optimizer_trial(cls, objective: str) -> BacktestResultPolicy:
+        return cls(
+            required_stats=frozenset({str(objective)}),
+            include_monte_carlo=str(objective).startswith("mc_maxdd_"),
+            include_curves=False,
+            include_trades=False,
+            include_per_symbol_stats=False,
+            include_return_distribution=False,
+            include_benchmark=False,
+            include_strategy_info=False,
+        )
+
+    def simulation_options(self) -> SimulationOptions:
+        return SimulationOptions(
+            include_monte_carlo=self.include_monte_carlo,
+            include_curves=self.include_curves,
+            include_trades=self.include_trades,
+            include_per_symbol_stats=self.include_per_symbol_stats,
+            include_return_distribution=self.include_return_distribution,
+        )
+
+    def select_stats(self, stats: dict) -> dict:
+        if self.required_stats is None:
+            return stats
+        diagnostic = {
+            "error", "timing_ms", "execution", "selection", "execution_backend",
+            "shared_market_data", "shared_market_data_bytes", "shared_prepare_timing_ms",
+            "matrix_data_cache_hit", "matrix_compute_cache", "market_matrix_shape",
+            "market_matrix_bytes", "panel_rows", "panel_columns", "feature_columns",
+            "full_feature_fallback",
+        }
+        keep = set(self.required_stats) | diagnostic
+        return {key: value for key, value in stats.items() if key in keep}
+
+
+def _factor_attribution_summary(snapshot: pl.DataFrame, trades: list) -> dict | None:
+    factor_cols = [c for c in snapshot.columns if c not in ("symbol", "date")]
+    if not factor_cols or not trades:
+        return None
+    normalized = snapshot.with_columns(pl.col("date").cast(pl.Utf8).str.slice(0, 10).alias("date"))
+    symbols: list[str] = []
+    days: list[str] = []
+    pnls: list[float] = []
+    for trade in trades:
+        day = getattr(trade, "entry_signal_date", None) or getattr(trade, "entry_date", None)
+        if day is None:
+            continue
+        symbols.append(trade.symbol)
+        days.append(str(day)[:10])
+        pnls.append(float(trade.pnl_pct))
+    if not symbols:
+        return None
+    frame = pl.DataFrame({"symbol": symbols, "date": days, "pnl_pct": pnls})
+    joined = frame.join(normalized, on=["symbol", "date"], how="left")
+    win = joined.filter(pl.col("pnl_pct") > 0)
+    lose = joined.filter(pl.col("pnl_pct") <= 0)
+    factors: list[dict] = []
+    for col in factor_cols:
+        win_vals = win.get_column(col).drop_nulls().cast(pl.Float64)
+        lose_vals = lose.get_column(col).drop_nulls().cast(pl.Float64)
+        if win_vals.is_empty() and lose_vals.is_empty():
+            continue
+        factors.append({
+            "factor": col,
+            "win_mean": round(float(win_vals.mean()), 6) if not win_vals.is_empty() else None,
+            "lose_mean": round(float(lose_vals.mean()), 6) if not lose_vals.is_empty() else None,
+            "win_n": int(win_vals.len()),
+            "lose_n": int(lose_vals.len()),
+        })
+    if not factors:
+        return None
+    return {"factors": factors, "n_win": win.height, "n_lose": lose.height}
 
 
 @dataclass
@@ -42,6 +506,7 @@ class StrategyBacktestConfig:
     initial_capital: float = 1_000_000.0
     position_sizing: Literal["equal", "score_weight"] = "equal"
     mode: Literal["position", "full"] = "position"
+    asset_type: str = "stock"
     holding_days: int = 5
 
     def __post_init__(self) -> None:
@@ -62,6 +527,7 @@ class StrategyBacktestResult:
     trades: list[dict] = field(default_factory=list)
     per_symbol_stats: list[dict] = field(default_factory=list)
     strategy_info: dict = field(default_factory=dict)
+    factor_attribution: dict | None = None
     elapsed_ms: float = 0.0
     error: str | None = None
 
@@ -80,7 +546,12 @@ class StrategyBacktestService:
         config: StrategyBacktestConfig,
         progress_cb: "Callable[[dict], None] | None" = None,
         cancel_event: "threading.Event | None" = None,
+        *,
+        prepared=None,
+        result_policy: BacktestResultPolicy | None = None,
     ) -> StrategyBacktestResult:
+        del prepared
+        result_policy = result_policy or BacktestResultPolicy()
         t0 = time.perf_counter()
         run_id = uuid.uuid4().hex[:10]
 
@@ -148,7 +619,12 @@ class StrategyBacktestService:
             load_end = config.end + timedelta(days=fwd_buffer * 2)  # 日历日放宽, 确保覆盖 N 个交易日
 
         t_load = time.perf_counter()
-        panel = self.engine.load_panel(config.symbols, load_start, load_end)
+        panel = self.engine.load_panel(
+            config.symbols,
+            load_start,
+            load_end,
+            asset_type=getattr(config, "asset_type", "stock") or "stock",
+        )
         timing_ms["load_panel"] = round((time.perf_counter() - t_load) * 1000, 1)
         if panel.is_empty():
             return _err("无数据，请检查日期范围或先运行盘后管道")
@@ -269,13 +745,13 @@ class StrategyBacktestService:
         return StrategyBacktestResult(
             run_id=run_id,
             config=self._config_to_dict(config),
-            stats=result.stats,
-            equity_curve=result.equity_curve,
-            drawdown_curve=result.drawdown_curve,
-            benchmark_curve=benchmark_curve,
-            trades=[self._trade_to_dict(t) for t in result.trades],
-            per_symbol_stats=result.per_symbol_stats,
-            strategy_info=strategy_info,
+            stats=result_policy.select_stats(result.stats),
+            equity_curve=result.equity_curve if result_policy.include_curves else [],
+            drawdown_curve=result.drawdown_curve if result_policy.include_curves else [],
+            benchmark_curve=benchmark_curve if result_policy.include_benchmark else [],
+            trades=[self._trade_to_dict(t) for t in result.trades] if result_policy.include_trades else [],
+            per_symbol_stats=result.per_symbol_stats if result_policy.include_per_symbol_stats else [],
+            strategy_info=strategy_info if result_policy.include_strategy_info else {},
             elapsed_ms=round(elapsed, 1),
         )
 
@@ -457,6 +933,45 @@ class StrategyBacktestService:
         # 没有策略候选层时, 由 entry_signals 直接决定买点。
         return true_mask
 
+    @staticmethod
+    def _build_regime_mask(
+        timestamp_labels: tuple[str, ...],
+        regime_filter: dict | None,
+        data_dir: Path | None,
+        *,
+        required_start: date | None = None,
+        required_end: date | None = None,
+    ):
+        """构造逐日 T-1 regime mask; 委托本地 regime_alignment, 兼容 908 测试入口。"""
+        if not regime_filter:
+            return None
+        allowed_states = set(regime_filter.get("states") or [])
+        min_score = regime_filter.get("min_score")
+        if not allowed_states and min_score is None:
+            return None
+        if data_dir is None:
+            raise ValueError("市场环境过滤不可用: 未找到环境数据目录")
+
+        from app.backtest.regime_alignment import build_regime_filter_mask
+        from app.services import regime_builder
+
+        regime_df = regime_builder.load_regime_history(data_dir)
+        regime_by_date = {
+            row["date"]: {
+                "state": row.get("state", ""),
+                "score": row.get("score", 0),
+            }
+            for row in regime_df.iter_rows(named=True)
+            if row.get("date") is not None
+        }
+        return build_regime_filter_mask(
+            timestamp_labels,
+            regime_filter,
+            regime_by_date,
+            required_start=required_start,
+            required_end=required_end,
+        )
+
     def _build_entry_mask_from_candidate(
         self,
         panel: pl.DataFrame,
@@ -531,7 +1046,7 @@ class StrategyBacktestService:
 
     @staticmethod
     def _effective_basic_filter(s: StrategyDef, overrides: dict) -> dict:
-        basic_filter = dict(s.basic_filter or {})
+        basic_filter = dict(getattr(s, "basic_filter", None) or {})
         override_filter = overrides.get("basic_filter")
         if isinstance(override_filter, dict):
             basic_filter.update(override_filter)
@@ -660,6 +1175,7 @@ class StrategyBacktestService:
             "initial_capital": c.initial_capital,
             "position_sizing": c.position_sizing,
             "mode": c.mode,
+            "asset_type": getattr(c, "asset_type", "stock") or "stock",
             "holding_days": c.holding_days,
         }
 

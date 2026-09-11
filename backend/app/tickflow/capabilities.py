@@ -20,6 +20,7 @@ class Cap(StrEnum):
     KLINE_MINUTE_BATCH     = "kline.minute.batch"
     INTRADAY               = "intraday"
     INTRADAY_BATCH         = "intraday.batch"
+    INTRADAY_UNIVERSE      = "intraday.universe"
     DEPTH5                 = "depth5"
     DEPTH5_BATCH           = "depth5.batch"
     WEBSOCKET              = "websocket"
@@ -55,6 +56,11 @@ class CapabilitySet:
 
     def all(self) -> dict[Cap, CapabilityLimits]:
         return dict(self._caps)
+
+    def grant(self, cap: Cap, limits: CapabilityLimits | None = None) -> None:
+        """补授一个能力 (不覆盖已有)。自定义分钟源等场景用来补齐检查入口。"""
+        if cap not in self._caps:
+            self._caps[cap] = limits or CapabilityLimits()
 
     def to_dict(self) -> dict[str, dict]:
         return {

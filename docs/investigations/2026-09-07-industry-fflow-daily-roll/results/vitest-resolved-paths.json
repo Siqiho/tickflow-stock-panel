@@ -1,0 +1,9 @@
+{
+  "records": {
+    "alias:@/lib/api": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-07-industry-fflow-daily-roll/overlay/frontend/src/lib/api.ts",
+    "alias:@/components/SectorFundFlowPanel": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-07-industry-fflow-daily-roll/overlay/frontend/src/components/SectorFundFlowPanel.tsx",
+    "@/lib/api": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-07-industry-fflow-daily-roll/overlay/frontend/src/lib/api.ts"
+  },
+  "overlayApi": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-07-industry-fflow-daily-roll/overlay/frontend/src/lib/api.ts",
+  "overlayPanel": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-07-industry-fflow-daily-roll/overlay/frontend/src/components/SectorFundFlowPanel.tsx"
+}

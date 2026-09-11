@@ -1,0 +1,12 @@
+captured_at: 2026-09-11T13:56 CST
+target_urls:
+  frontend_dev: http://127.0.0.1:3011/
+  backend: http://127.0.0.1:3018/
+listen: neither 3011 nor 3018 has a LISTEN socket
+uvicorn/vite: no matching process
+http_anon: curl 127.0.0.1:3018 /api/free/fund-flow/boards/window?days=5 and concepts/window and /api/health -> connection refused (not 401)
+restart: not performed (queue coordination; other packages share this tree)
+project_dist: /Users/simon/Trading/one-trading/frontend/dist/index.html mtime 2026-09-10 01:23:13 (stale vs SectorFundFlowPanel.tsx 15:12:14)
+HEAD: 31216dda527cd4ec177b9cbf6fd1c524dbadbe82 dirty
+prefs: pipeline_schedule absent -> default 15:30; realtime_data_provider=tickflow; daily_data_provider=tickflow
+logged_in_http_and_browser: pending Codex in-app browser; Cursor did not open any other browser

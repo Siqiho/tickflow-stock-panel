@@ -1,0 +1,31 @@
+{
+  "elapsed_s": 2.23,
+  "progress_n": 2,
+  "result": {
+    "ok": true,
+    "kind": "concept",
+    "status": "ok",
+    "selected": 5,
+    "stable_selected": 5,
+    "history_codes": [
+      "BK1723",
+      "BK1750",
+      "BK0743",
+      "BK1749",
+      "BK0596"
+    ],
+    "skipped_already_current": [],
+    "history_points": 368,
+    "failed": [],
+    "latest_data_date": "2026-09-09",
+    "latest_day_complete": true,
+    "latest_day_covered": 5,
+    "h5_max_date": "2026-09-09",
+    "source": "eastmoney_fflow_day",
+    "limit": 120,
+    "start": "2026-03-19",
+    "end": "2026-09-09",
+    "cancelled": false,
+    "note": "东财 H5 概念日线续更，按本地快照全集、date+code 合并，不写 go-stock"
+  }
+}

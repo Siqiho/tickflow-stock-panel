@@ -67,7 +67,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
   const indicesPinned = prefs?.indices_nav_pinned ?? true
   const isRunning = quoteStatus?.running ?? false
   const isTrading = quoteStatus?.is_trading_hours ?? false
-  const interval = intervalData?.interval ?? 10
+  const interval = intervalData?.interval ?? 15
   const minInterval = intervalData?.min_interval ?? 5
   const maxInterval = intervalData?.max_interval ?? 60
   const [intervalDraft, setIntervalDraft] = useState(interval)
@@ -120,6 +120,10 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
   const toggleIndicesPin = useCallback((pinned: boolean) => {
     api.updateIndicesNavPinned(pinned).then(() => qc.invalidateQueries({ queryKey: QK.preferences }))
   }, [qc])
+
+  const testFeishu = useMutation({
+    mutationFn: () => api.sendTestWebhook('feishu'),
+  })
 
   const toggleLimitLadderMonitor = useCallback(async (enabled: boolean) => {
     await api.updateLimitLadderMonitor(enabled)
@@ -190,7 +194,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
 
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[1fr_1fr] gap-6 max-w-5xl">
+    <div className="grid max-w-5xl grid-cols-1 gap-4 lg:grid-cols-[1fr_1fr] lg:gap-6">
       {/* ========== 左列 ========== */}
       <div className="space-y-6">
         {/* 行情状态 — 开关 + 间隔 */}
@@ -203,7 +207,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
           />
 
           <div className="mt-3 pt-3 border-t border-border">
-            <div className="flex items-center justify-between gap-4 py-1">
+            <div className="flex flex-col items-start gap-1 py-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
               <div className="min-w-0">
                 <div className="text-sm text-foreground">轮询间隔</div>
                 <div className="text-[11px] text-muted">
@@ -214,7 +218,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
                 {intervalDraft < 1 ? intervalDraft.toFixed(1) : intervalDraft.toFixed(0)}s
               </span>
             </div>
-            <div className="flex items-center gap-3 mt-2">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-2">
               <input
                 type="range"
                 min={minInterval}
@@ -222,7 +226,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
                 step={minInterval < 1 ? 0.1 : minInterval < 3 ? 0.5 : 1}
                 value={intervalDraft}
                 onChange={(e) => setIntervalDraft(parseFloat(e.target.value))}
-                className="flex-1 h-1 accent-accent cursor-pointer"
+                className="h-11 min-w-[12rem] flex-1 accent-accent cursor-pointer"
               />
               <span className="text-[10px] text-muted shrink-0">
                 {intervalDraft !== interval ? '2秒后保存' : `${minInterval}s — ${maxInterval}s`}
@@ -365,7 +369,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
         </div>
 
         {/* 推送通知 — 监控告警的外部推送渠道 (全局配置)。
-            飞书已实现; 微信开发中, QMT/ptrade 待定。
+            飞书与企业微信群 Webhook 已实现且默认关闭; QMT/ptrade 仍未实现。
             每个渠道合并成一行: 勾选=新建规则默认推送, 点行展开地址配置。 */}
         <Card icon={Webhook} title="推送通知">
           <p className="text-xs text-secondary mb-3">
@@ -407,7 +411,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
                     <span className="text-[11px] text-muted">Webhook 地址</span>
                     <input
                       value={feishuDraft}
-                      onChange={e => setFeishuDraft(e.target.value)}
+                      onChange={e => { setFeishuDraft(e.target.value); if (!testFeishu.isPending) testFeishu.reset() }}
                       placeholder={FEISHU_PREFIX + 'xxxxxxxx'}
                       className="h-9 w-full rounded-btn border border-border bg-base px-3 text-xs font-mono text-foreground focus:outline-none focus:border-accent/50"
                     />
@@ -418,7 +422,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
                     <input
                       type="password"
                       value={feishuSecretDraft}
-                      onChange={e => setFeishuSecretDraft(e.target.value)}
+                      onChange={e => { setFeishuSecretDraft(e.target.value); if (!testFeishu.isPending) testFeishu.reset() }}
                       placeholder="机器人未启用签名校验则留空"
                       className="h-9 w-full rounded-btn border border-border bg-base px-3 text-xs font-mono text-foreground focus:outline-none focus:border-accent/50"
                     />
@@ -436,9 +440,11 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
                     >
                       {saveFeishuWebhook.isPending ? '保存中…' : '保存'}
                     </button>
+                    <TestSendButton test={testFeishu} configured={!!feishuWebhookUrl} />
                     {feishuWebhookUrl && (
                       <span className="text-[10px] text-emerald-500">● 已配置</span>
                     )}
+                    <TestResult test={testFeishu} />
                   </div>
 
                   <details className="mt-3 text-[10px] text-muted">
@@ -461,11 +467,13 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
               )}
             </div>
 
-            {/* 占位渠道 — 不可点 */}
+            <WecomWebhookRow />
+            <CustomWebhookRow />
+            <EmailSmtpRow />
+            {/* 未实现渠道 — 与「已实现默认关闭」区分 */}
             {[
-              { name: '微信', hint: '公众号/企业微信', status: '开发中' },
-              { name: 'QMT', hint: '量化交易终端', status: '待定' },
-              { name: 'ptrade', hint: '量化交易终端', status: '待定' },
+              { name: 'QMT', hint: '量化交易终端', status: '未实现' },
+              { name: 'ptrade', hint: '量化交易终端', status: '未实现' },
             ].map(ch => (
               <div
                 key={ch.name}
@@ -485,6 +493,298 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
 }
 
 
+function CustomWebhookRow() {
+  const qc = useQueryClient()
+  const { data: prefs } = usePreferences()
+  const customUrl = prefs?.custom_webhook_url ?? ''
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState(customUrl)
+  const [secretDraft, setSecretDraft] = useState('')
+  const [error, setError] = useState('')
+  useEffect(() => { setDraft(customUrl) }, [customUrl])
+  const testCustom = useMutation({ mutationFn: () => api.sendTestWebhook('custom') })
+  const saveCustom = useMutation({
+    mutationFn: (payload: { url: string; secret?: string }) => api.updateCustomWebhook(payload.url, payload.secret),
+    onSuccess: () => {
+      setError('')
+      setSecretDraft('')
+      toast('第三方 Webhook 已保存 (默认不推送, 需规则或复盘勾选渠道)', 'success')
+      qc.invalidateQueries({ queryKey: QK.preferences })
+    },
+    onError: (err: { message?: string }) => setError(String(err?.message ?? '保存失败')),
+  })
+  return (
+    <div className="rounded-btn border border-border/60 bg-base/40 overflow-hidden">
+      <div
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 px-2.5 py-2 cursor-pointer transition-colors hover:bg-base/60"
+      >
+        <input type="checkbox" disabled className="h-3 w-3 accent-accent" title="默认关闭, 在规则或复盘里单独勾选 custom" />
+        <span className="text-[11px] font-medium text-foreground">第三方系统</span>
+        <span className="text-[9px] text-muted">JSON Webhook</span>
+        <span className="rounded bg-muted/10 px-1 py-px text-[9px] text-muted">已实现·默认关闭</span>
+        <span className={`ml-auto text-[9px] ${customUrl ? 'text-emerald-500' : 'text-warning'}`}>
+          {customUrl ? '已配置' : '未配置'}
+        </span>
+        <ChevronDown className={`h-3 w-3 text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+      </div>
+      {open && (
+        <div className="border-t border-border/60 bg-base/30 p-3 space-y-2">
+          <label className="block space-y-1.5">
+            <span className="text-[11px] text-muted">Webhook 地址</span>
+            <input
+              value={draft}
+              onChange={e => { setDraft(e.target.value); testCustom.reset() }}
+              placeholder="https://example.com/hooks/alerts"
+              className="h-9 w-full rounded-btn border border-border bg-base px-3 text-xs font-mono text-foreground focus:outline-none focus:border-accent/50"
+            />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-[11px] text-muted">HMAC 密钥（可选）</span>
+            <input
+              type="password"
+              value={secretDraft}
+              onChange={e => setSecretDraft(e.target.value)}
+              placeholder={prefs?.custom_webhook_secret_set ? '已保存, 留空不改' : '可选'}
+              className="h-9 w-full rounded-btn border border-border bg-base px-3 text-xs font-mono text-foreground focus:outline-none focus:border-accent/50"
+            />
+          </label>
+          {error && <div className="text-[11px] text-danger">{error}</div>}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => saveCustom.mutate({ url: draft.trim(), secret: secretDraft || undefined })}
+              disabled={saveCustom.isPending}
+              className="px-3 py-1.5 rounded-btn bg-accent text-base text-xs font-medium disabled:opacity-50 cursor-pointer hover:bg-accent/90 transition-colors"
+            >
+              {saveCustom.isPending ? '保存中…' : '保存'}
+            </button>
+            <TestSendButton test={testCustom} configured={!!customUrl} />
+            <TestResult test={testCustom} />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function EmailSmtpRow() {
+  const qc = useQueryClient()
+  const { data: prefs } = usePreferences()
+  const smtp = prefs?.email_smtp_config
+  const configured = !!(
+    smtp?.host
+    && smtp.from_address
+    && smtp.to_addresses.length
+    && (!smtp.username || prefs?.email_smtp_password_set)
+  )
+  const [open, setOpen] = useState(false)
+  const [host, setHost] = useState(smtp?.host ?? '')
+  const [port, setPort] = useState(String(smtp?.port ?? 465))
+  const [security, setSecurity] = useState(smtp?.security ?? 'ssl')
+  const [username, setUsername] = useState(smtp?.username ?? '')
+  const [password, setPassword] = useState('')
+  const [fromAddress, setFromAddress] = useState(smtp?.from_address ?? '')
+  const [toAddresses, setToAddresses] = useState((smtp?.to_addresses ?? []).join(', '))
+  const [error, setError] = useState('')
+  useEffect(() => {
+    setHost(smtp?.host ?? '')
+    setPort(String(smtp?.port ?? 465))
+    setSecurity(smtp?.security ?? 'ssl')
+    setUsername(smtp?.username ?? '')
+    setFromAddress(smtp?.from_address ?? '')
+    setToAddresses((smtp?.to_addresses ?? []).join(', '))
+  }, [smtp])
+  const testEmail = useMutation({ mutationFn: () => api.sendTestWebhook('email') })
+  const saveEmail = useMutation({
+    mutationFn: () => api.updateEmailSmtp({
+      host: host.trim(),
+      port: Number(port) || 465,
+      security: security as 'ssl' | 'starttls' | 'none',
+      username: username.trim(),
+      from_address: fromAddress.trim(),
+      to_addresses: toAddresses.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean),
+    }, password || undefined),
+    onSuccess: () => {
+      setError('')
+      setPassword('')
+      toast('邮件 SMTP 已保存 (默认不推送, 需规则或复盘勾选渠道)', 'success')
+      qc.invalidateQueries({ queryKey: QK.preferences })
+    },
+    onError: (err: { message?: string }) => setError(String(err?.message ?? '保存失败')),
+  })
+  return (
+    <div className="rounded-btn border border-border/60 bg-base/40 overflow-hidden">
+      <div
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 px-2.5 py-2 cursor-pointer transition-colors hover:bg-base/60"
+      >
+        <input type="checkbox" disabled className="h-3 w-3 accent-accent" title="默认关闭, 在规则或复盘里单独勾选 email" />
+        <span className="text-[11px] font-medium text-foreground">邮件</span>
+        <span className="text-[9px] text-muted">SMTP</span>
+        <span className="rounded bg-muted/10 px-1 py-px text-[9px] text-muted">已实现·默认关闭</span>
+        <span className={`ml-auto text-[9px] ${configured ? 'text-emerald-500' : 'text-warning'}`}>
+          {configured ? '已配置' : '未配置'}
+        </span>
+        <ChevronDown className={`h-3 w-3 text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+      </div>
+      {open && (
+        <div className="border-t border-border/60 bg-base/30 p-3 space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block space-y-1">
+              <span className="text-[11px] text-muted">SMTP 主机</span>
+              <input value={host} onChange={e => setHost(e.target.value)} className="h-8 w-full rounded-btn border border-border bg-base px-2 text-xs font-mono" />
+            </label>
+            <label className="block space-y-1">
+              <span className="text-[11px] text-muted">端口</span>
+              <input value={port} onChange={e => setPort(e.target.value)} className="h-8 w-full rounded-btn border border-border bg-base px-2 text-xs font-mono" />
+            </label>
+          </div>
+          <label className="block space-y-1">
+            <span className="text-[11px] text-muted">加密</span>
+            <select value={security} onChange={e => setSecurity(e.target.value as 'ssl' | 'starttls' | 'none')} className="h-8 w-full rounded-btn border border-border bg-base px-2 text-xs">
+              <option value="ssl">SSL</option>
+              <option value="starttls">STARTTLS</option>
+              <option value="none">无</option>
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[11px] text-muted">用户名</span>
+            <input value={username} onChange={e => setUsername(e.target.value)} className="h-8 w-full rounded-btn border border-border bg-base px-2 text-xs font-mono" />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[11px] text-muted">密码 / 授权码</span>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder={prefs?.email_smtp_password_set ? '已保存, 留空不改' : ''} className="h-8 w-full rounded-btn border border-border bg-base px-2 text-xs font-mono" />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[11px] text-muted">发件人</span>
+            <input value={fromAddress} onChange={e => setFromAddress(e.target.value)} className="h-8 w-full rounded-btn border border-border bg-base px-2 text-xs font-mono" />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[11px] text-muted">收件人（逗号分隔）</span>
+            <input value={toAddresses} onChange={e => setToAddresses(e.target.value)} className="h-8 w-full rounded-btn border border-border bg-base px-2 text-xs font-mono" />
+          </label>
+          {error && <div className="text-[11px] text-danger">{error}</div>}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => saveEmail.mutate()}
+              disabled={saveEmail.isPending}
+              className="px-3 py-1.5 rounded-btn bg-accent text-base text-xs font-medium disabled:opacity-50 cursor-pointer hover:bg-accent/90 transition-colors"
+            >
+              {saveEmail.isPending ? '保存中…' : '保存'}
+            </button>
+            <TestSendButton test={testEmail} configured={configured} />
+            <TestResult test={testEmail} />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function WecomWebhookRow() {
+  const qc = useQueryClient()
+  const { data: prefs } = usePreferences()
+  const wecomUrl = prefs?.wecom_webhook_url ?? ''
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState(wecomUrl)
+  const [error, setError] = useState('')
+  useEffect(() => { setDraft(wecomUrl) }, [wecomUrl])
+  const testWecom = useMutation({ mutationFn: () => api.sendTestWebhook('wecom') })
+  const saveWecom = useMutation({
+    mutationFn: (url: string) => api.updateWecomWebhook(url),
+    onSuccess: () => {
+      setError('')
+      toast('企业微信 Webhook 已保存 (默认不推送, 需规则勾选渠道)', 'success')
+      qc.invalidateQueries({ queryKey: QK.preferences })
+    },
+    onError: (err: { message?: string }) => setError(String(err?.message ?? '保存失败')),
+  })
+  return (
+    <div className="rounded-btn border border-border/60 bg-base/40 overflow-hidden">
+      <div
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 px-2.5 py-2 cursor-pointer transition-colors hover:bg-base/60"
+      >
+        <input type="checkbox" disabled className="h-3 w-3 accent-accent" title="默认关闭, 在规则里单独勾选 wecom" />
+        <span className="text-[11px] font-medium text-foreground">企业微信</span>
+        <span className="text-[9px] text-muted">群机器人 Webhook</span>
+        <span className="rounded bg-muted/10 px-1 py-px text-[9px] text-muted">已实现·默认关闭</span>
+        <span className={`ml-auto text-[9px] ${wecomUrl ? 'text-emerald-500' : 'text-warning'}`}>
+          {wecomUrl ? '已配置' : '未配置'}
+        </span>
+        <ChevronDown className={`h-3 w-3 text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+      </div>
+      {open && (
+        <div className="border-t border-border/60 bg-base/30 p-3">
+          <label className="block space-y-1.5">
+            <span className="text-[11px] text-muted">Webhook 地址或 key</span>
+            <input
+              value={draft}
+              onChange={e => { setDraft(e.target.value); testWecom.reset() }}
+              placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
+              className="h-9 w-full rounded-btn border border-border bg-base px-3 text-xs font-mono text-foreground focus:outline-none focus:border-accent/50"
+            />
+          </label>
+          {error && <div className="mt-2 text-[11px] text-danger">{error}</div>}
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              onClick={() => saveWecom.mutate(draft.trim())}
+              disabled={saveWecom.isPending || draft.trim() === wecomUrl}
+              className="px-3 py-1.5 rounded-btn bg-accent text-base text-xs font-medium disabled:opacity-50 cursor-pointer hover:bg-accent/90 transition-colors"
+            >
+              {saveWecom.isPending ? '保存中…' : '保存'}
+            </button>
+            <TestSendButton test={testWecom} configured={!!wecomUrl} />
+            <TestResult test={testWecom} />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ===== 推送测试按钮 + 内联结果 =====
+
+function TestSendButton({ test, configured }: {
+  test: { isPending: boolean; mutate: () => void }
+  configured: boolean
+}) {
+  return (
+    <button
+      onClick={() => test.mutate()}
+      disabled={test.isPending || !configured}
+      title={!configured ? '请先完成该渠道配置' : '发送测试消息'}
+      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-btn bg-elevated text-secondary hover:text-foreground text-xs disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+    >
+      {test.isPending ? '测试中…' : '测试'}
+    </button>
+  )
+}
+
+function TestResult({ test }: {
+  test: { data?: { ok: boolean; detail: string } | null; isError: boolean; error?: Error | null; reset: () => void }
+}) {
+  // 成功结果 2 秒后自动消失; 失败保留, 便于阅读
+  useEffect(() => {
+    if (test.data?.ok) {
+      const t = window.setTimeout(test.reset, 2000)
+      return () => window.clearTimeout(t)
+    }
+  }, [test.data, test.reset])
+
+  let text: string | null = null
+  let tone = ''
+  if (test.isError) {
+    text = String(test.error?.message ?? '发送失败')
+    tone = 'text-danger'
+  } else if (test.data) {
+    text = (test.data.ok ? '✓ ' : '✗ ') + test.data.detail
+    tone = test.data.ok ? 'text-emerald-500' : 'text-danger'
+  }
+  if (!text) return null
+  return <span className={`min-w-0 text-[11px] leading-snug ${tone}`}>{text}</span>
+}
+
 // ===== ToggleRow =====
 
 function ToggleRow({
@@ -501,25 +801,28 @@ function ToggleRow({
   icon?: React.ComponentType<{ className?: string }>
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-2">
+    <div className="flex items-start justify-between gap-3 py-2">
       <div className="min-w-0 flex items-start gap-2">
         {Icon && <Icon className="h-3.5 w-3.5 text-secondary shrink-0 mt-0.5" />}
         <div className="min-w-0">
           <div className="text-sm text-foreground">{label}</div>
-          <div className="text-[11px] text-muted truncate">{desc}</div>
+          <div className="text-[11px] leading-relaxed text-muted break-words">{desc}</div>
         </div>
       </div>
       <button
         onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-5 w-9 items-center rounded-full shrink-0 transition-colors duration-200 ${
-          checked ? 'bg-accent' : 'bg-elevated'
-        }`}
+        className="relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
       >
-        <span
-          className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-            checked ? 'translate-x-[18px]' : 'translate-x-[3px]'
-          }`}
-        />
+        <span className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${checked ? 'bg-accent' : 'bg-elevated'}`}>
+          <span
+            className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+              checked ? 'translate-x-[18px]' : 'translate-x-[3px]'
+            }`}
+          />
+        </span>
       </button>
     </div>
   )
@@ -538,11 +841,11 @@ interface CardProps {
 
 function Card({ icon: Icon, title, badge, right, children }: CardProps) {
   return (
-    <section className="rounded-card border border-border bg-surface p-5">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2.5">
+    <section className="rounded-card border border-border bg-surface p-4 sm:p-5">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2.5">
           <Icon className="h-4 w-4 text-secondary" />
-          <h2 className="text-sm font-medium text-foreground">{title}</h2>
+          <h2 className="min-w-0 text-sm font-medium leading-snug text-foreground">{title}</h2>
           {badge && (
             <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-elevated text-muted">
               {badge}

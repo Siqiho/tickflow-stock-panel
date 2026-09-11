@@ -56,6 +56,97 @@ const DIMENSION_NAME_KEYS = [
   'name', '概念名称', '概念', '行业名称', '行业', '板块名称', '板块',
   'concept', 'industry', 'sector', 'theme', 'title', 'label',
 ]
+const DIMENSION_META_FIELDS = new Set([
+  'symbol', 'code', 'name', '股票简称', '股票代码', 'date', 'as_of',
+])
+const NUMERIC_DTYPES = new Set(['int', 'float', 'number', 'double', 'decimal'])
+
+function fieldMatchesCandidates(field: ExtDataField, candidates: string[]): boolean {
+  const name = field.name.toLowerCase()
+  const label = (field.label ?? '').toLowerCase()
+  return candidates.some(candidate => {
+    const needle = candidate.toLowerCase()
+    return name.includes(needle) || label.includes(needle)
+  })
+}
+
+/** 行业/概念分组字段必须是业务文本，不能是金额、涨跌幅或股票元数据。 */
+export function isUsableDimensionField(field: ExtDataField): boolean {
+  return !DIMENSION_META_FIELDS.has(field.name) && !NUMERIC_DTYPES.has(String(field.dtype ?? '').toLowerCase())
+}
+
+/** 配置必须在字段层真实包含目标维度，不能只因表名带“行业/概念”就被选中。 */
+export function hasCandidateDimensionField(
+  config: ExtDataConfig,
+  candidates: string[],
+): boolean {
+  return config.fields.some(field => isUsableDimensionField(field) && fieldMatchesCandidates(field, candidates))
+}
+
+/** 从兼容配置中选源；内置 membership 表可作为稳定优先项。 */
+export function pickBestDimensionConfig(
+  configs: ExtDataConfig[],
+  candidates: string[],
+  preferredIds: string[] = [],
+): string {
+  for (const id of preferredIds) {
+    const preferred = configs.find(config => config.id === id)
+    if (preferred && hasCandidateDimensionField(preferred, candidates)) return preferred.id
+  }
+
+  let best = ''
+  let bestScore = 0
+  for (const config of configs) {
+    const score = config.fields.reduce(
+      (total, field) => total + (isUsableDimensionField(field) && fieldMatchesCandidates(field, candidates) ? 1 : 0),
+      0,
+    )
+    if (score > bestScore) {
+      bestScore = score
+      best = config.id
+    }
+  }
+  return best
+}
+
+/** 已保存的旧配置只有仍是合法维度源时才继续生效。 */
+export function resolveDimensionConfigId(
+  configs: ExtDataConfig[],
+  requestedId: string | undefined,
+  candidates: string[],
+  preferredIds: string[] = [],
+): string {
+  const requested = requestedId ? configs.find(config => config.id === requestedId) : undefined
+  if (requested && hasCandidateDimensionField(requested, candidates)) return requested.id
+  return pickBestDimensionConfig(configs, candidates, preferredIds)
+}
+
+/** 行情快照 change_pct 使用百分点（4.10 = 4.10%），页面统计统一改为小数比例。 */
+export function percentPointsToRatio(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value / 100 : null
+}
+
+/**
+ * market-snapshot 在盘中快照与 canonical 日线切换时曾出现两种 change_pct 单位。
+ * 使用整批横截面的 75 分位判断尺度，避免逐行阈值把小涨跌误判；正常 A 股小数
+ * 比例的该分位远低于 0.30，而百分点数据通常明显高于该值。
+ */
+export function normalizeMarketSnapshotPctRows<T extends { change_pct?: number | null }>(rows: T[]): T[] {
+  const values = rows
+    .map(row => row.change_pct)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+    .map(Math.abs)
+    .sort((a, b) => a - b)
+  if (!values.length) return rows
+
+  const upperQuartile = values[Math.floor((values.length - 1) * 0.75)]
+  if (upperQuartile <= 0.3) return rows
+
+  return rows.map(row => ({
+    ...row,
+    change_pct: percentPointsToRatio(row.change_pct),
+  }))
+}
 
 /** 检测行是否是"板块维度"结构（含成分股列表字段） */
 function detectConstituentField(fields: ExtDataField[]): string | null {
@@ -76,23 +167,17 @@ export function pickDimensionField(
   fields: ExtDataField[],
   candidates: string[],
 ): string {
-  const nonMeta = fields.filter(f =>
-    !['symbol', 'code', 'name', '股票简称', '股票代码', 'date'].includes(f.name)
-  )
+  const nonMeta = fields.filter(isUsableDimensionField)
   for (const c of candidates) {
-    const m = nonMeta.find(f =>
-      f.name.toLowerCase().includes(c.toLowerCase()) ||
-      f.label?.toLowerCase().includes(c.toLowerCase())
-    )
+    const m = nonMeta.find(f => fieldMatchesCandidates(f, [c]))
     if (m) return m.name
   }
-  // 回退：第一个非数值字段
-  return nonMeta.find(f => f.dtype !== 'int' && f.dtype !== 'float')?.name ?? nonMeta[0]?.name ?? ''
+  return nonMeta[0]?.name ?? ''
 }
 
 /** 判断字段是否为数值类型 */
 function isNumericField(f: ExtDataField): boolean {
-  return f.dtype === 'int' || f.dtype === 'float'
+  return NUMERIC_DTYPES.has(String(f.dtype ?? '').toLowerCase())
 }
 
 // ===== 结构 A 解析：个股维度 =====

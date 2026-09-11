@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-09-10T14:44:22.809814+08:00",
+  "weekday": "Thursday",
+  "before_1530": true,
+  "data_status_http": 200,
+  "next_pipeline_run": "2026-09-10T15:30:00+08:00",
+  "last_pipeline_run": "2026-09-09T07:35:01Z",
+  "industry_h5_baseline": {
+    "h5_max_date": "2026-09-09",
+    "latest_rows": 128,
+    "latest_codes": 128
+  },
+  "concept_h5_baseline": {
+    "h5_max_date": "2026-09-09",
+    "latest_rows": 504,
+    "latest_codes": 504
+  },
+  "owner_id": "owner",
+  "owner_username": "admin"
+}

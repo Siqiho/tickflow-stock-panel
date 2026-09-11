@@ -1,20 +1,25 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { RefreshCw, ChevronDown, Flame, Settings2, X } from 'lucide-react'
 import { DatePicker } from '@/components/DatePicker'
 import { api, type LimitLadderTier, type LimitLadderStock } from '@/lib/api'
-import { StockPreviewDialog } from '@/components/StockPreviewDialog'
+import { StockPreviewDialog, toNavItems, type NavItem } from '@/components/StockPreviewDialog'
 import { QK } from '@/lib/queryKeys'
 import { storage } from '@/lib/storage'
 import { fmtPct, priceColorClass } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { useTheme } from '@/lib/theme'
 import { PageHeader } from '@/components/PageHeader'
+import { SourceTraceButton } from '@/components/SourceTraceButton'
 import { EmptyState } from '@/components/EmptyState'
 import { useCapabilities } from '@/lib/useSharedQueries'
 import { SealedBadge } from '@/components/SealedBadge'
+import { SOURCE_TRACE } from '@/lib/sourceTraceSubjects'
 import type { ExtColumnDisplayConfig } from '@/lib/watchlist-columns'
+import { clearPageContext, setPageContext } from '@/lib/pageContext'
+import { buildLimitLadderPageContext } from '@/lib/pageContextSnapshots'
+import { PageContextModule } from '@/components/PageContextModule'
 
 // ===== Ext 字段配置 =====
 
@@ -108,7 +113,7 @@ function getExtTags(stock: LimitLadderStock, item?: ExtFieldItem): string[] {
   const sep = cfg?.separator?.trim() || null
   const tags = sep
     ? str.split(sep).map(s => s.trim()).filter(Boolean)
-    : str.split(/[、,，;；\-]/).map(s => s.trim()).filter(Boolean)
+    : str.split(/[、,，;；-]/).map(s => s.trim()).filter(Boolean)
 
   const maxTags = cfg?.maxTags ?? 0
   const sliced = maxTags > 0 ? tags.slice(0, maxTags) : tags
@@ -1085,6 +1090,49 @@ function ExtConfigDialog({ fields, onSave, onClose }: {
   )
 }
 
+/** 与 TierGroup 卡片展示一致的过滤+排序 (监控优先 → 状态 → 封单量), 供切股导航列表复用 */
+function sortLadderStocks(
+  stocks: LimitLadderStock[],
+  opts: {
+    monitoredSymbols: Set<string>
+    sealMode: 'vol' | 'amount'
+    selectedTag: { fieldKey: 'concept' | 'industry'; tag: string } | null
+    extFields: ExtFieldConfig
+  },
+): LimitLadderStock[] {
+  return [...stocks]
+    .filter(s => {
+      if (!opts.selectedTag) return true
+      const item = opts.extFields[opts.selectedTag.fieldKey]
+      if (!item) return true
+      const tags = getExtTags(s, item)
+      return tags.includes(opts.selectedTag.tag)
+    })
+    .sort((a, b) => {
+      const ma = opts.monitoredSymbols.has(a.symbol) ? 0 : 1
+      const mb = opts.monitoredSymbols.has(b.symbol) ? 0 : 1
+      if (ma !== mb) return ma - mb
+      const ord = (s: string) => {
+        if (s === 'limit_up' || s === 'limit_down' || !s) return 0
+        if (s === 'broken' || s === 'recovery') return 1
+        return 2
+      }
+      const oa = ord(a.status ?? '')
+      const ob = ord(b.status ?? '')
+      if (oa !== ob) return oa - ob
+      if (oa === 0) {
+        const sealVal = (s: LimitLadderStock) => {
+          if (s.sealed_vol == null) return -1
+          return opts.sealMode === 'amount' && s.close
+            ? s.sealed_vol * 100 * s.close
+            : s.sealed_vol
+        }
+        return sealVal(b) - sealVal(a)
+      }
+      return 0
+    })
+}
+
 // ===== 主页面 =====
 
 export function LimitUpLadder() {
@@ -1126,7 +1174,19 @@ export function LimitUpLadder() {
   }, [showConcept])
   const [previewSymbol, setPreviewSymbol] = useState<string | null>(null)
   const [previewName, setPreviewName] = useState('')
+  const [previewNavList, setPreviewNavList] = useState<NavItem[]>([])
   const [selectedTag, setSelectedTag] = useState<{ fieldKey: 'concept' | 'industry'; tag: string } | null>(null)
+  const rulesQuery = useQuery({ queryKey: QK.monitorRules, queryFn: api.monitorRulesList })
+  const monitoredSymbols = useMemo(() => {
+    const next = new Set<string>()
+    for (const rule of rulesQuery.data?.rules ?? []) {
+      if (rule.enabled === false) continue
+      for (const symbol of rule.symbols ?? []) {
+        if (symbol) next.add(symbol)
+      }
+    }
+    return next
+  }, [rulesQuery.data])
   const handleSelectTag = useCallback((sel: { fieldKey: 'concept' | 'industry'; tag: string } | null) => {
     setSelectedTag(prev => prev?.fieldKey === sel?.fieldKey && prev?.tag === sel?.tag ? null : sel)
   }, [])
@@ -1146,11 +1206,6 @@ export function LimitUpLadder() {
     storage.limitLadderExtFields.set(f)
   }, [])
 
-  const handleStockClick = (symbol: string, name?: string) => {
-    setPreviewSymbol(symbol)
-    setPreviewName(name ?? '')
-  }
-
   const extColumnsParam = useMemo(() => buildExtColumnsParam(extFields), [extFields])
 
   const { data, isLoading, refetch, isFetching } = useQuery({
@@ -1160,11 +1215,55 @@ export function LimitUpLadder() {
   })
 
   const rawTiers = data?.tiers ?? []
-  const tiers = filterTiers(rawTiers, filterKeys, extFields.bf)
+  // filterTiers 每次返回新数组, 不 memo 会破坏 React.memo(StockCard) 且全梯队二次排序
+  const tiers = useMemo(() => filterTiers(rawTiers, filterKeys, extFields.bf), [rawTiers, filterKeys, extFields.bf])
   const displayDate = data?.as_of ?? asOf
+
+  // 单源: 梯队按展示同款过滤+排序一次 (监控优先 → 状态 → 封单量),
+  // 卡片渲染(TierGroup)与切股导航(ladderNavItems)共用, 避免每 tick 二次排序。
+  const resolvedExtFields = useMemo(
+    () => resolveExtFields(extFields, showConcept, showIndustry),
+    [extFields, showConcept, showIndustry],
+  )
+  const sortedTiers = useMemo(
+    () => tiers.map(t => ({ ...t, stocks: sortLadderStocks(t.stocks, { monitoredSymbols, sealMode, selectedTag, extFields: resolvedExtFields }) })),
+    [tiers, monitoredSymbols, sealMode, selectedTag, resolvedExtFields],
+  )
+
+  // 切股导航列表: 由 sortedTiers 展平 (顺序 = 卡片展示顺序)
+  const ladderNavItems = useMemo(
+    () => toNavItems(sortedTiers.flatMap(t => t.stocks)),
+    [sortedTiers],
+  )
+
+  const handleStockClick = useCallback((symbol: string, name?: string, navList?: NavItem[]) => {
+    setPreviewSymbol(symbol)
+    setPreviewName(name ?? '')
+    setPreviewNavList(navList ?? ladderNavItems)
+  }, [ladderNavItems])
 
   // sealed 降级判定
   const sealedDegrade = useSealedDegrade(asOf, data?.as_of, data?.sealed_ready, data?.sealed_counts)
+
+  useEffect(() => {
+    const date = displayDate || asOf || ''
+    const filterLabels: string[] = [...filterKeys]
+    if (showConcept) filterLabels.push('概念')
+    if (showIndustry) filterLabels.push('行业')
+    if (sealMode === 'amount') filterLabels.push('封单额')
+    setPageContext(buildLimitLadderPageContext({
+      data,
+      tiers,
+      direction,
+      asOf: date,
+      filters: filterLabels,
+      selectedTag,
+      previewSymbol,
+      previewName,
+      empty: !isLoading && (!data || rawTiers.length === 0),
+    }))
+    return () => clearPageContext('/limit-ladder')
+  }, [asOf, data, direction, displayDate, filterKeys, isLoading, previewName, previewSymbol, rawTiers.length, sealMode, selectedTag, showConcept, showIndustry, tiers])
 
   if (isLoading) {
     return (
@@ -1312,6 +1411,7 @@ export function LimitUpLadder() {
             ))}
 
             <div className="w-px h-4 bg-border mx-1" />
+            <SourceTraceButton subjects={SOURCE_TRACE.limitLadder} />
             <button
               onClick={() => setShowExtConfig(true)}
               className="p-1.5 hover:bg-surface text-muted hover:text-accent"
@@ -1331,43 +1431,43 @@ export function LimitUpLadder() {
       />
 
       {/* 总览条 + 日期 */}
-      <OverviewBar tiers={tiers} dateValue={dateValue} onDateChange={setAsOf} filterKeys={filterKeys} bf={extFields.bf} direction={direction} />
+      <PageContextModule id="overview"><OverviewBar tiers={tiers} dateValue={dateValue} onDateChange={setAsOf} filterKeys={filterKeys} bf={extFields.bf} direction={direction} /></PageContextModule>
 
       {/* 概念统计 */}
       {(extFields.showConceptStats ?? true) && (
-        <TagStats
+        <PageContextModule id="concepts"><TagStats
           title="概念分布"
           tiers={tiers}
-          extFields={resolveExtFields(extFields, showConcept, showIndustry)}
+          extFields={resolvedExtFields}
           fieldKey="concept"
           color={{ text: [250, 204, 21], textLight: [161, 98, 7], bg: [234, 179, 8] }}
           selectedTag={selectedTag}
           onSelect={handleSelectTag}
           direction={direction}
-        />
+        /></PageContextModule>
       )}
       {/* 行业统计 */}
       {(extFields.showIndustryStats ?? true) && (
-        <TagStats
+        <PageContextModule id="industries"><TagStats
           title="行业分布"
           tiers={tiers}
-          extFields={resolveExtFields(extFields, showConcept, showIndustry)}
+          extFields={resolvedExtFields}
           fieldKey="industry"
           color={{ text: [96, 165, 250], textLight: [30, 64, 175], bg: [59, 130, 246] }}
           selectedTag={selectedTag}
           onSelect={handleSelectTag}
           direction={direction}
-        />
+        /></PageContextModule>
       )}
 
       {/* 梯队列表 */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+      <PageContextModule id="ladder"><div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
         {tiers.map(t => (
           <TierGroup
             key={t.boards}
             tier={t}
             defaultOpen={t.boards >= 1 || t.count <= 8}
-            extFields={resolveExtFields(extFields, showConcept, showIndustry)}
+            extFields={resolvedExtFields}
             filterKeys={filterKeys}
             bf={extFields.bf}
             onStockClick={handleStockClick}
@@ -1377,13 +1477,15 @@ export function LimitUpLadder() {
             sealMode={sealMode}
           />
         ))}
-      </div>
+      </div></PageContextModule>
 
       {/* 个股K线弹窗 */}
       <StockPreviewDialog
         symbol={previewSymbol}
         name={previewName}
-        onClose={() => setPreviewSymbol(null)}
+        onClose={() => { setPreviewSymbol(null); setPreviewNavList([]) }}
+        navList={previewNavList}
+        onNavigate={(sym, n) => { setPreviewSymbol(sym); setPreviewName(n ?? '') }}
       />
 
       {/* 字段配置弹窗 */}

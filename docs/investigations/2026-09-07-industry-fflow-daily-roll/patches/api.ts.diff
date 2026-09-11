@@ -1,0 +1,14 @@
+--- a/frontend/src/lib/api.ts
++++ b/frontend/src/lib/api.ts
+@@ -4008,6 +4008,11 @@
+   prior_note?: string | null
+   window_note?: string | null
+   source?: string
++  data_as_of?: string | null
++  freshness_status?: 'fresh' | 'stale' | 'unknown'
++  freshness_note?: string | null
++  expected_trading_day?: string | null
++  calendar_covers?: boolean
+ }
+ 
+ export interface FundFlowHistoryPoint {

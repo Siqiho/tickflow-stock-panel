@@ -1,0 +1,30 @@
+--- a/frontend/src/components/SectorFundFlowPanel.tsx
++++ b/frontend/src/components/SectorFundFlowPanel.tsx
+@@ -47,6 +47,17 @@
+   const x = n(v)
+   if (x == null || x === 0) return 'text-muted'
+   return x > 0 ? 'text-bull' : 'text-bear'
++}
++
++function industryWindowFreshnessLine(windowData: FundFlowWindowResponse) {
++  const asOf = windowData.data_as_of || windowData.end || '—'
++  const statusText = windowData.freshness_status === 'fresh'
++    ? '足够新'
++    : windowData.freshness_status === 'stale'
++      ? '已陈旧'
++      : '无法确定'
++  const completeText = windowData.window_complete === false ? '窗口不完整' : '窗口完整'
++  return `数据截止 ${asOf} · ${statusText} · ${completeText}`
+ }
+ 
+ function moneyTone(v: number | null | undefined) {
+@@ -338,6 +349,9 @@
+           {windowData.missing_count ? ` · 缺 ${windowData.missing_count} 只` : ''}
+         </div>
+       ) : null}
++      {kind === 'board' && windowData ? (
++        <div className="mb-2 text-[10px] text-muted">{industryWindowFreshnessLine(windowData)}</div>
++      ) : null}
+       {(useWindowRanking ? windowQuery.isLoading : query.isLoading) ? (
+ 
+         <div className="flex items-center justify-center gap-2 py-10 text-[12px] text-muted">

@@ -1,0 +1,754 @@
+{
+  "000001.SZ": {
+    "result": {
+      "as_of": "2026-08-27",
+      "count": 5,
+      "coverage": {
+        "as_of": "2026-08-27",
+        "file_max_date": "2026-08-27",
+        "file_min_date": "2016-01-04",
+        "file_rows": 2588,
+        "historical_inventory": {
+          "as_of": "2026-09-06",
+          "cited_from": "/Users/simon/Trading/下载数据/stockdb_quantdb_integration_review_20260906/package_sanity.json",
+          "note": "Market-wide coverage is the 2026-09-06 inventory only. This round reads four by-symbol files and does not rescan the 80G packages.",
+          "this_round_full_market_scan": false,
+          "valuation_by_symbol": {
+            "bytes": 694488966,
+            "empty_files": 0,
+            "files": 5554,
+            "physical_rows": 10770127,
+            "time_max_native": "2026-08-27 00:00:00",
+            "time_min_native": "2016-01-04 00:00:00"
+          }
+        }
+      },
+      "data_count": 5,
+      "data_preview": [
+        {
+          "annual_net_profit": 42633000000.0,
+          "close": 11.25,
+          "date": "2026-08-12",
+          "dividend_rate": 0.052977777777777776,
+          "equity": 544083000000.0,
+          "float_mv": 218313007346.25,
+          "float_share": 19405600653.0,
+          "net_profit_ttm": 43060000000.0,
+          "pb": 0.40125602109880293,
+          "pe_static": 5.120835496622335,
+          "pe_ttm": 5.070055265385508,
+          "ps_ttm": 1.6413546329411322,
+          "revenue_ttm": 133010000000.0,
+          "symbol": "000001.SZ",
+          "total_mv": 218316579727.5,
+          "total_share": 19405918198.0
+        },
+        {
+          "annual_net_profit": 42633000000.0,
+          "close": 11.26,
+          "date": "2026-08-11",
+          "dividend_rate": 0.05293072824156305,
+          "equity": 544083000000.0,
+          "float_mv": 218507063352.78,
+          "float_share": 19405600653.0,
+          "net_profit_ttm": 43060000000.0,
+          "pb": 0.40161269311755743,
+          "pe_static": 5.12538735039711,
+          "pe_ttm": 5.074561981176963,
+          "ps_ttm": 1.64281361483708,
+          "revenue_ttm": 133010000000.0,
+          "symbol": "000001.SZ",
+          "total_mv": 218510638909.48,
+          "total_share": 19405918198.0
+        }
+      ],
+      "dataset": "5_technical_derived/valuation",
+      "date": {
+        "end": "2026-08-12",
+        "start": "2026-07-21"
+      },
+      "fields": {
+        "mapped": {
+          "Symbol": "symbol",
+          "annual_net_profit": "annual_net_profit",
+          "circulating_capital": "float_share",
+          "close": "close",
+          "dividend_rate": "dividend_rate",
+          "equity": "equity",
+          "float_mv": "float_mv",
+          "net_profit_ttm": "net_profit_ttm",
+          "pb": "pb",
+          "pe_static": "pe_static",
+          "pe_ttm": "pe_ttm",
+          "ps_ttm": "ps_ttm",
+          "revenue_ttm": "revenue_ttm",
+          "time": "date",
+          "total_capital": "total_share",
+          "total_mv": "total_mv"
+        },
+        "missing_versus_project": [
+          "pcf_ttm",
+          "shares_pit_safe",
+          "shares_source",
+          "unit_version",
+          "unit_note",
+          "history_guarantee",
+          "fetched_at"
+        ],
+        "optional_absent": [],
+        "optional_present": [
+          "net_profit_ttm",
+          "revenue_ttm",
+          "equity",
+          "annual_net_profit",
+          "pe_static",
+          "dividend_rate"
+        ],
+        "original": [
+          "time",
+          "Symbol",
+          "close",
+          "total_capital",
+          "circulating_capital",
+          "total_mv",
+          "float_mv",
+          "net_profit_ttm",
+          "revenue_ttm",
+          "equity",
+          "annual_net_profit",
+          "pe_ttm",
+          "pe_static",
+          "pb",
+          "ps_ttm",
+          "dividend_rate"
+        ]
+      },
+      "layout": "by_symbol",
+      "limit": 5,
+      "missing_fields": [
+        "pcf_ttm",
+        "shares_pit_safe",
+        "shares_source",
+        "unit_version",
+        "unit_note",
+        "history_guarantee",
+        "fetched_at"
+      ],
+      "ok": true,
+      "optional_absent": [],
+      "overlay": {
+        "default_overlay": false,
+        "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+        "preclose_candidates_loaded": false,
+        "project_null_overlay": false,
+        "stockdb_repair_loaded": false
+      },
+      "quality": {
+        "anomalies": [],
+        "duplicate_keys": [],
+        "max_date": "2026-08-27",
+        "min_date": "2016-01-04",
+        "negative_pe_ttm": 0,
+        "non_finite_counts": {},
+        "null_counts": {
+          "Symbol": 0,
+          "annual_net_profit": 292,
+          "circulating_capital": 58,
+          "close": 0,
+          "dividend_rate": 0,
+          "equity": 72,
+          "float_mv": 58,
+          "net_profit_ttm": 292,
+          "pb": 72,
+          "pe_static": 292,
+          "pe_ttm": 292,
+          "ps_ttm": 292,
+          "revenue_ttm": 292,
+          "time": 0,
+          "total_capital": 58,
+          "total_mv": 58
+        },
+        "row_count": 2588
+      },
+      "source": "offline_quantdb",
+      "source_file": {
+        "exists": true,
+        "is_symlink": false,
+        "mode": "0o644",
+        "mtime": "2026-08-27T18:19:36",
+        "mtime_ns": 1787825976537502100,
+        "path": "/Users/simon/Trading/下载数据/quant_data/5_technical_derived/valuation/000001.SZ.parquet",
+        "sha256": "a190a94b6f34f2307b2763e24ce5ffccfcf6dba125d8e19a22151ac3bd5d28e1",
+        "size": 164774
+      },
+      "status": "ok",
+      "symbol": "000001.SZ",
+      "unit_note": "No silent conversion. Daily-bar amount×10000 is not applied to valuation. Units for total_capital/circulating_capital and total_mv/float_mv remain unknown/unverified. total_mv == close * total_capital on finite rows is identity consistency only; it does not prove 股/元 versus 万股/万元 and is not a unit rewrite. PE/PB/PS formulas are not confirmed. dividend_rate ratio versus percent is not confirmed by appearance. Negative PE is kept. NaN/Inf is emitted as JSON null plus an anomaly mark."
+    },
+    "returncode": 0
+  },
+  "000338.SZ": {
+    "result": {
+      "as_of": "2026-08-27",
+      "count": 5,
+      "coverage": {
+        "as_of": "2026-08-27",
+        "file_max_date": "2026-08-27",
+        "file_min_date": "2016-01-04",
+        "file_rows": 2588,
+        "historical_inventory": {
+          "as_of": "2026-09-06",
+          "cited_from": "/Users/simon/Trading/下载数据/stockdb_quantdb_integration_review_20260906/package_sanity.json",
+          "note": "Market-wide coverage is the 2026-09-06 inventory only. This round reads four by-symbol files and does not rescan the 80G packages.",
+          "this_round_full_market_scan": false,
+          "valuation_by_symbol": {
+            "bytes": 694488966,
+            "empty_files": 0,
+            "files": 5554,
+            "physical_rows": 10770127,
+            "time_max_native": "2026-08-27 00:00:00",
+            "time_min_native": "2016-01-04 00:00:00"
+          }
+        }
+      },
+      "data_count": 5,
+      "data_preview": [
+        {
+          "annual_net_profit": 10930504451.02,
+          "close": 31.31,
+          "date": "2026-08-12",
+          "dividend_rate": 0.0114340466304695,
+          "equity": 95366132816.32,
+          "float_mv": 155184650521.33,
+          "float_share": 4956392543.0,
+          "net_profit_ttm": 11305405202.38,
+          "pb": 2.836702083375399,
+          "pe_static": 24.749572067395793,
+          "pe_ttm": 23.92884667119754,
+          "ps_ttm": 1.1418969935454182,
+          "revenue_ttm": 236908678429.54,
+          "symbol": "000338.SZ",
+          "total_mv": 270525307643.50998,
+          "total_share": 8640220621.0
+        },
+        {
+          "annual_net_profit": 10930504451.02,
+          "close": 31.14,
+          "date": "2026-08-11",
+          "dividend_rate": 0.011496467565831727,
+          "equity": 95366132816.32,
+          "float_mv": 154342063789.02,
+          "float_share": 4956392543.0,
+          "net_profit_ttm": 11305405202.38,
+          "pb": 2.8212999960495027,
+          "pe_static": 24.615192404302302,
+          "pe_ttm": 23.798923198374048,
+          "ps_ttm": 1.1356969779305117,
+          "revenue_ttm": 236908678429.54,
+          "symbol": "000338.SZ",
+          "total_mv": 269056470137.94,
+          "total_share": 8640220621.0
+        }
+      ],
+      "dataset": "5_technical_derived/valuation",
+      "date": {
+        "end": "2026-08-12",
+        "start": "2026-07-21"
+      },
+      "fields": {
+        "mapped": {
+          "Symbol": "symbol",
+          "annual_net_profit": "annual_net_profit",
+          "circulating_capital": "float_share",
+          "close": "close",
+          "dividend_rate": "dividend_rate",
+          "equity": "equity",
+          "float_mv": "float_mv",
+          "net_profit_ttm": "net_profit_ttm",
+          "pb": "pb",
+          "pe_static": "pe_static",
+          "pe_ttm": "pe_ttm",
+          "ps_ttm": "ps_ttm",
+          "revenue_ttm": "revenue_ttm",
+          "time": "date",
+          "total_capital": "total_share",
+          "total_mv": "total_mv"
+        },
+        "missing_versus_project": [
+          "pcf_ttm",
+          "shares_pit_safe",
+          "shares_source",
+          "unit_version",
+          "unit_note",
+          "history_guarantee",
+          "fetched_at"
+        ],
+        "optional_absent": [],
+        "optional_present": [
+          "net_profit_ttm",
+          "revenue_ttm",
+          "equity",
+          "annual_net_profit",
+          "pe_static",
+          "dividend_rate"
+        ],
+        "original": [
+          "time",
+          "Symbol",
+          "close",
+          "total_capital",
+          "circulating_capital",
+          "total_mv",
+          "float_mv",
+          "net_profit_ttm",
+          "revenue_ttm",
+          "equity",
+          "annual_net_profit",
+          "pe_ttm",
+          "pe_static",
+          "pb",
+          "ps_ttm",
+          "dividend_rate"
+        ]
+      },
+      "layout": "by_symbol",
+      "limit": 5,
+      "missing_fields": [
+        "pcf_ttm",
+        "shares_pit_safe",
+        "shares_source",
+        "unit_version",
+        "unit_note",
+        "history_guarantee",
+        "fetched_at"
+      ],
+      "ok": true,
+      "optional_absent": [],
+      "overlay": {
+        "default_overlay": false,
+        "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+        "preclose_candidates_loaded": false,
+        "project_null_overlay": false,
+        "stockdb_repair_loaded": false
+      },
+      "quality": {
+        "anomalies": [],
+        "duplicate_keys": [],
+        "max_date": "2026-08-27",
+        "min_date": "2016-01-04",
+        "negative_pe_ttm": 0,
+        "non_finite_counts": {},
+        "null_counts": {
+          "Symbol": 0,
+          "annual_net_profit": 301,
+          "circulating_capital": 58,
+          "close": 0,
+          "dividend_rate": 0,
+          "equity": 79,
+          "float_mv": 58,
+          "net_profit_ttm": 301,
+          "pb": 79,
+          "pe_static": 301,
+          "pe_ttm": 301,
+          "ps_ttm": 301,
+          "revenue_ttm": 301,
+          "time": 0,
+          "total_capital": 58,
+          "total_mv": 58
+        },
+        "row_count": 2588
+      },
+      "source": "offline_quantdb",
+      "source_file": {
+        "exists": true,
+        "is_symlink": false,
+        "mode": "0o644",
+        "mtime": "2026-08-27T18:19:47",
+        "mtime_ns": 1787825987005545800,
+        "path": "/Users/simon/Trading/下载数据/quant_data/5_technical_derived/valuation/000338.SZ.parquet",
+        "sha256": "8edf492ecab841d064d90f7efecf6c3c02f657307be3cb4a42aabfdd7e0c734f",
+        "size": 176957
+      },
+      "status": "ok",
+      "symbol": "000338.SZ",
+      "unit_note": "No silent conversion. Daily-bar amount×10000 is not applied to valuation. Units for total_capital/circulating_capital and total_mv/float_mv remain unknown/unverified. total_mv == close * total_capital on finite rows is identity consistency only; it does not prove 股/元 versus 万股/万元 and is not a unit rewrite. PE/PB/PS formulas are not confirmed. dividend_rate ratio versus percent is not confirmed by appearance. Negative PE is kept. NaN/Inf is emitted as JSON null plus an anomaly mark."
+    },
+    "returncode": 0
+  },
+  "300750.SZ": {
+    "result": {
+      "as_of": "2026-08-27",
+      "count": 5,
+      "coverage": {
+        "as_of": "2026-08-27",
+        "file_max_date": "2026-08-27",
+        "file_min_date": "2018-06-11",
+        "file_rows": 1995,
+        "historical_inventory": {
+          "as_of": "2026-09-06",
+          "cited_from": "/Users/simon/Trading/下载数据/stockdb_quantdb_integration_review_20260906/package_sanity.json",
+          "note": "Market-wide coverage is the 2026-09-06 inventory only. This round reads four by-symbol files and does not rescan the 80G packages.",
+          "this_round_full_market_scan": false,
+          "valuation_by_symbol": {
+            "bytes": 694488966,
+            "empty_files": 0,
+            "files": 5554,
+            "physical_rows": 10770127,
+            "time_max_native": "2026-08-27 00:00:00",
+            "time_min_native": "2016-01-04 00:00:00"
+          }
+        }
+      },
+      "data_count": 5,
+      "data_preview": [
+        {
+          "annual_net_profit": 72201282000.0,
+          "close": 393.93,
+          "date": "2026-08-12",
+          "dividend_rate": 0.023798644429213308,
+          "equity": 357262588000.0,
+          "float_mv": 1676974085512.83,
+          "float_share": 4257035731.0,
+          "net_profit_ttm": 78976434000.0,
+          "pb": 5.101504145387118,
+          "pe_static": 25.242994628180288,
+          "pe_ttm": 23.077473638196047,
+          "ps_ttm": 3.893327167317828,
+          "revenue_ttm": 468128286000.0,
+          "symbol": "300750.SZ",
+          "total_mv": 1822576573673.73,
+          "total_share": 4626650861.0
+        },
+        {
+          "annual_net_profit": 72201282000.0,
+          "close": 390.4,
+          "date": "2026-08-11",
+          "dividend_rate": 0.02401383196721311,
+          "equity": 357262588000.0,
+          "float_mv": 1661946749382.4,
+          "float_share": 4257035731.0,
+          "net_profit_ttm": 78976434000.0,
+          "pb": 5.055789653895694,
+          "pe_static": 25.016792584574883,
+          "pe_ttm": 22.87067679118558,
+          "ps_ttm": 3.858439129086081,
+          "revenue_ttm": 468128286000.0,
+          "symbol": "300750.SZ",
+          "total_mv": 1806244496134.4,
+          "total_share": 4626650861.0
+        }
+      ],
+      "dataset": "5_technical_derived/valuation",
+      "date": {
+        "end": "2026-08-12",
+        "start": "2026-07-21"
+      },
+      "fields": {
+        "mapped": {
+          "Symbol": "symbol",
+          "annual_net_profit": "annual_net_profit",
+          "circulating_capital": "float_share",
+          "close": "close",
+          "dividend_rate": "dividend_rate",
+          "equity": "equity",
+          "float_mv": "float_mv",
+          "net_profit_ttm": "net_profit_ttm",
+          "pb": "pb",
+          "pe_static": "pe_static",
+          "pe_ttm": "pe_ttm",
+          "ps_ttm": "ps_ttm",
+          "revenue_ttm": "revenue_ttm",
+          "time": "date",
+          "total_capital": "total_share",
+          "total_mv": "total_mv"
+        },
+        "missing_versus_project": [
+          "pcf_ttm",
+          "shares_pit_safe",
+          "shares_source",
+          "unit_version",
+          "unit_note",
+          "history_guarantee",
+          "fetched_at"
+        ],
+        "optional_absent": [],
+        "optional_present": [
+          "net_profit_ttm",
+          "revenue_ttm",
+          "equity",
+          "annual_net_profit",
+          "pe_static",
+          "dividend_rate"
+        ],
+        "original": [
+          "time",
+          "Symbol",
+          "close",
+          "total_capital",
+          "circulating_capital",
+          "total_mv",
+          "float_mv",
+          "net_profit_ttm",
+          "revenue_ttm",
+          "equity",
+          "annual_net_profit",
+          "pe_ttm",
+          "pe_static",
+          "pb",
+          "ps_ttm",
+          "dividend_rate"
+        ]
+      },
+      "layout": "by_symbol",
+      "limit": 5,
+      "missing_fields": [
+        "pcf_ttm",
+        "shares_pit_safe",
+        "shares_source",
+        "unit_version",
+        "unit_note",
+        "history_guarantee",
+        "fetched_at"
+      ],
+      "ok": true,
+      "optional_absent": [],
+      "overlay": {
+        "default_overlay": false,
+        "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+        "preclose_candidates_loaded": false,
+        "project_null_overlay": false,
+        "stockdb_repair_loaded": false
+      },
+      "quality": {
+        "anomalies": [],
+        "duplicate_keys": [],
+        "max_date": "2026-08-27",
+        "min_date": "2018-06-11",
+        "negative_pe_ttm": 0,
+        "non_finite_counts": {},
+        "null_counts": {
+          "Symbol": 0,
+          "annual_net_profit": 0,
+          "circulating_capital": 0,
+          "close": 0,
+          "dividend_rate": 0,
+          "equity": 0,
+          "float_mv": 0,
+          "net_profit_ttm": 0,
+          "pb": 0,
+          "pe_static": 0,
+          "pe_ttm": 0,
+          "ps_ttm": 0,
+          "revenue_ttm": 0,
+          "time": 0,
+          "total_capital": 0,
+          "total_mv": 0
+        },
+        "row_count": 1995
+      },
+      "source": "offline_quantdb",
+      "source_file": {
+        "exists": true,
+        "is_symlink": false,
+        "mode": "0o644",
+        "mtime": "2026-08-27T18:25:12",
+        "mtime_ns": 1787826312316471300,
+        "path": "/Users/simon/Trading/下载数据/quant_data/5_technical_derived/valuation/300750.SZ.parquet",
+        "sha256": "79964e0983d924b6869fd5ecc15a18a2a17e25262560b2cff9bd5c93b57c62cc",
+        "size": 164998
+      },
+      "status": "ok",
+      "symbol": "300750.SZ",
+      "unit_note": "No silent conversion. Daily-bar amount×10000 is not applied to valuation. Units for total_capital/circulating_capital and total_mv/float_mv remain unknown/unverified. total_mv == close * total_capital on finite rows is identity consistency only; it does not prove 股/元 versus 万股/万元 and is not a unit rewrite. PE/PB/PS formulas are not confirmed. dividend_rate ratio versus percent is not confirmed by appearance. Negative PE is kept. NaN/Inf is emitted as JSON null plus an anomaly mark."
+    },
+    "returncode": 0
+  },
+  "600519.SH": {
+    "result": {
+      "as_of": "2026-08-27",
+      "count": 5,
+      "coverage": {
+        "as_of": "2026-08-27",
+        "file_max_date": "2026-08-27",
+        "file_min_date": "2016-01-04",
+        "file_rows": 2588,
+        "historical_inventory": {
+          "as_of": "2026-09-06",
+          "cited_from": "/Users/simon/Trading/下载数据/stockdb_quantdb_integration_review_20260906/package_sanity.json",
+          "note": "Market-wide coverage is the 2026-09-06 inventory only. This round reads four by-symbol files and does not rescan the 80G packages.",
+          "this_round_full_market_scan": false,
+          "valuation_by_symbol": {
+            "bytes": 694488966,
+            "empty_files": 0,
+            "files": 5554,
+            "physical_rows": 10770127,
+            "time_max_native": "2026-08-27 00:00:00",
+            "time_min_native": "2016-01-04 00:00:00"
+          }
+        }
+      },
+      "data_count": 5,
+      "data_preview": [
+        {
+          "annual_net_profit": 82320067101.68,
+          "close": 1343.0,
+          "date": "2026-08-12",
+          "dividend_rate": 0.03870513775130305,
+          "equity": 270894035676.27,
+          "float_mv": 1678859590143.0,
+          "float_share": 1250081601.0,
+          "net_profit_ttm": 82715105749.37,
+          "pb": 6.197477127733109,
+          "pe_static": 20.39429326593367,
+          "pe_ttm": 20.29689226572484,
+          "ps_ttm": 9.576320761732447,
+          "revenue_ttm": 175313633692.37003,
+          "symbol": "600519.SH",
+          "total_mv": 1678859590143.0,
+          "total_share": 1250081601.0
+        },
+        {
+          "annual_net_profit": 82320067101.68,
+          "close": 1346.5,
+          "date": "2026-08-11",
+          "dividend_rate": 0.038604530263646485,
+          "equity": 270894035676.27,
+          "float_mv": 1683234875746.5,
+          "float_share": 1250081601.0,
+          "net_profit_ttm": 82715105749.37,
+          "pb": 6.213628408408511,
+          "pe_static": 20.447442950543323,
+          "pe_ttm": 20.34978811302941,
+          "ps_ttm": 9.601277666174788,
+          "revenue_ttm": 175313633692.37003,
+          "symbol": "600519.SH",
+          "total_mv": 1683234875746.5,
+          "total_share": 1250081601.0
+        }
+      ],
+      "dataset": "5_technical_derived/valuation",
+      "date": {
+        "end": "2026-08-12",
+        "start": "2026-07-21"
+      },
+      "fields": {
+        "mapped": {
+          "Symbol": "symbol",
+          "annual_net_profit": "annual_net_profit",
+          "circulating_capital": "float_share",
+          "close": "close",
+          "dividend_rate": "dividend_rate",
+          "equity": "equity",
+          "float_mv": "float_mv",
+          "net_profit_ttm": "net_profit_ttm",
+          "pb": "pb",
+          "pe_static": "pe_static",
+          "pe_ttm": "pe_ttm",
+          "ps_ttm": "ps_ttm",
+          "revenue_ttm": "revenue_ttm",
+          "time": "date",
+          "total_capital": "total_share",
+          "total_mv": "total_mv"
+        },
+        "missing_versus_project": [
+          "pcf_ttm",
+          "shares_pit_safe",
+          "shares_source",
+          "unit_version",
+          "unit_note",
+          "history_guarantee",
+          "fetched_at"
+        ],
+        "optional_absent": [],
+        "optional_present": [
+          "net_profit_ttm",
+          "revenue_ttm",
+          "equity",
+          "annual_net_profit",
+          "pe_static",
+          "dividend_rate"
+        ],
+        "original": [
+          "time",
+          "Symbol",
+          "close",
+          "total_capital",
+          "circulating_capital",
+          "total_mv",
+          "float_mv",
+          "net_profit_ttm",
+          "revenue_ttm",
+          "equity",
+          "annual_net_profit",
+          "pe_ttm",
+          "pe_static",
+          "pb",
+          "ps_ttm",
+          "dividend_rate"
+        ]
+      },
+      "layout": "by_symbol",
+      "limit": 5,
+      "missing_fields": [
+        "pcf_ttm",
+        "shares_pit_safe",
+        "shares_source",
+        "unit_version",
+        "unit_note",
+        "history_guarantee",
+        "fetched_at"
+      ],
+      "ok": true,
+      "optional_absent": [],
+      "overlay": {
+        "default_overlay": false,
+        "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+        "preclose_candidates_loaded": false,
+        "project_null_overlay": false,
+        "stockdb_repair_loaded": false
+      },
+      "quality": {
+        "anomalies": [],
+        "duplicate_keys": [],
+        "max_date": "2026-08-27",
+        "min_date": "2016-01-04",
+        "negative_pe_ttm": 0,
+        "non_finite_counts": {},
+        "null_counts": {
+          "Symbol": 0,
+          "annual_net_profit": 311,
+          "circulating_capital": 58,
+          "close": 0,
+          "dividend_rate": 0,
+          "equity": 72,
+          "float_mv": 58,
+          "net_profit_ttm": 311,
+          "pb": 72,
+          "pe_static": 311,
+          "pe_ttm": 311,
+          "ps_ttm": 311,
+          "revenue_ttm": 311,
+          "time": 0,
+          "total_capital": 58,
+          "total_mv": 58
+        },
+        "row_count": 2588
+      },
+      "source": "offline_quantdb",
+      "source_file": {
+        "exists": true,
+        "is_symlink": false,
+        "mode": "0o644",
+        "mtime": "2026-08-27T18:27:13",
+        "mtime_ns": 1787826433859212300,
+        "path": "/Users/simon/Trading/下载数据/quant_data/5_technical_derived/valuation/600519.SH.parquet",
+        "sha256": "e7a3337d7be135c55a300dfa645abd1f709f9d441f4f2a05a7d4a5101f578b55",
+        "size": 201468
+      },
+      "status": "ok",
+      "symbol": "600519.SH",
+      "unit_note": "No silent conversion. Daily-bar amount×10000 is not applied to valuation. Units for total_capital/circulating_capital and total_mv/float_mv remain unknown/unverified. total_mv == close * total_capital on finite rows is identity consistency only; it does not prove 股/元 versus 万股/万元 and is not a unit rewrite. PE/PB/PS formulas are not confirmed. dividend_rate ratio versus percent is not confirmed by appearance. Negative PE is kept. NaN/Inf is emitted as JSON null plus an anomaly mark."
+    },
+    "returncode": 0
+  }
+}

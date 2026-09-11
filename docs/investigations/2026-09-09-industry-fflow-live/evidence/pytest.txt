@@ -1,0 +1,8 @@
+..............                                                           [100%]
+=============================== warnings summary ===============================
+docs/investigations/2026-09-09-industry-fflow-live/tests/test_industry_fflow_live.py::test_roll_selects_all_local_industry_codes_not_top20
+  /Users/simon/Trading/one-trading/backend/app/factors/ext_factors.py:54: SyntaxWarning: invalid escape sequence '\w'
+    保留中日韩文字 (\w 含 unicode 字母) —— 预设表的字段名多为中文
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+14 passed, 1 warning in 4.88s

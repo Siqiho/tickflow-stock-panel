@@ -257,6 +257,8 @@ async def analyze_financials(request: Request, req: AnalyzeRequest):
 
     if not req.symbol:
         raise HTTPException(400, "symbol 不能为空")
+    from app.api.ai_guard import require_ai_http_access
+    require_ai_http_access()
 
     data_dir = request.app.state.repo.store.data_dir
 

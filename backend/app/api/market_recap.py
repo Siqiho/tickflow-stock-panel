@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from datetime import date as date_cls
+
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.services import market_recap_reports
+from app.services import auction_benchmark, dragon_tiger, market_recap_reports, preferences
 from app.services.market_recap import recap_market_stream
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,34 @@ class AnalyzeRequest(BaseModel):
     """AI 大盘复盘请求。"""
     as_of: str | None = None  # 可选:复盘日期(YYYY-MM-DD),缺省取最新有数据日
     focus: str = ""           # 可选:用户追加的复盘关注点
+
+
+@router.get("/dragon-tiger")
+def get_dragon_tiger(
+    request: Request,
+    date: str | None = Query(default=None, description="复盘目标日 YYYY-MM-DD, 缺省取最近已发布交易日"),
+):
+    target = None
+    if date:
+        try:
+            target = date_cls.fromisoformat(date)
+        except ValueError:
+            raise HTTPException(400, f"date 格式应为 YYYY-MM-DD, 收到: {date}")
+    return dragon_tiger.get_dragon_tiger(request.app.state.repo.store.data_dir, target)
+
+
+@router.get("/auction-benchmark")
+def get_auction_benchmark(
+    request: Request,
+    date: str | None = Query(default=None, description="复盘目标日 YYYY-MM-DD, 缺省取最近交易日"),
+):
+    target = None
+    if date:
+        try:
+            target = date_cls.fromisoformat(date)
+        except ValueError:
+            raise HTTPException(400, f"date 格式应为 YYYY-MM-DD, 收到: {date}")
+    return auction_benchmark.get_auction_benchmark(request.app.state.repo.store.data_dir, target)
 
 
 @router.post("/analyze")
@@ -43,7 +73,10 @@ async def analyze_market(request: Request, req: AnalyzeRequest):
       {"type":"error","message":"..."}
       {"type":"done"}
     """
+    from app.api.ai_guard import require_ai_http_access
     from datetime import date as date_cls
+
+    require_ai_http_access()
 
     repo = request.app.state.repo
     quote_service = getattr(request.app.state, "quote_service", None)
@@ -79,6 +112,7 @@ class SaveReportRequest(BaseModel):
     summary: str = ""
     emotion_score: int | None = None
     emotion_label: str = ""
+    push: bool = False  # 是否显式外发推送(manual 模式下需显式传 true)
 
 
 @router.get("/reports")
@@ -89,7 +123,7 @@ def list_reports(request: Request):
 
 @router.post("/reports")
 def save_report(request: Request, req: SaveReportRequest):
-    """保存一条复盘报告。"""
+    """保存一条复盘报告。req.push=True 或 review_push_mode=auto 时才推送到外部渠道。"""
     report = market_recap_reports.save_report({
         "as_of": req.as_of,
         "focus": req.focus,
@@ -98,13 +132,14 @@ def save_report(request: Request, req: SaveReportRequest):
         "emotion_score": req.emotion_score,
         "emotion_label": req.emotion_label,
     })
-    # 推送到飞书(可选): 与定时复盘共用同一开关 review_push_enabled 与 _maybe_push_review。
+    # 推送门控: manual 模式需显式 push=True; auto 模式保持归档即推。
     # 内部 try/except 静默降级, 不影响归档返回值。
-    from app.jobs.daily_pipeline import _maybe_push_review
-    _maybe_push_review(req.content, {
-        "as_of": req.as_of,
-        "emotion_label": req.emotion_label,
-    })
+    if req.push or preferences.get_review_push_mode() == "auto":
+        from app.jobs.daily_pipeline import _maybe_push_review
+        _maybe_push_review(req.content, {
+            "as_of": req.as_of,
+            "emotion_label": req.emotion_label,
+        })
     return {"ok": True, "report": report}
 
 

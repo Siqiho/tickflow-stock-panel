@@ -4,7 +4,9 @@ import * as echarts from 'echarts'
 import type { EChartsOption } from 'echarts'
 import { useEffect, useRef } from 'react'
 import { Loader2 } from 'lucide-react'
+import { SourceTraceButton } from '@/components/SourceTraceButton'
 import { api, type ChipDistribution } from '@/lib/api'
+import { SOURCE_TRACE } from '@/lib/sourceTraceSubjects'
 import { QK } from '@/lib/queryKeys'
 import { useChartChrome } from '@/lib/theme'
 
@@ -13,6 +15,8 @@ interface Props {
   height?: number
   days?: number
   bins?: number
+  /** 筹码计算截止交易日；来自用户选中的 K 线日期。 */
+  asOf?: string | null
   className?: string
   /** 分时/日K联动价，用于在筹码轴上画参考线 */
   linkedPrice?: number | null
@@ -192,6 +196,7 @@ export function ChipDistributionPanel({
   height = 520,
   days = 120,
   bins = 80,
+  asOf = null,
   className,
   linkedPrice = null,
 }: Props) {
@@ -200,8 +205,8 @@ export function ChipDistributionPanel({
   const chartRef = useRef<echarts.ECharts | null>(null)
 
   const q = useQuery({
-    queryKey: QK.stockChips(symbol, days, bins),
-    queryFn: () => api.stockChips(symbol, days, bins),
+    queryKey: QK.stockChips(symbol, days, bins, asOf),
+    queryFn: () => api.stockChips(symbol, days, bins, asOf ?? undefined),
     enabled: !!symbol,
     staleTime: 60_000,
   })
@@ -243,9 +248,13 @@ export function ChipDistributionPanel({
     <div className={className} style={{ height, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       <div className="mb-1.5 flex items-start justify-between gap-2 px-0.5">
         <div className="min-w-0">
-          <div className="text-[11px] font-medium text-foreground">筹码分布</div>
+          <div className="flex items-center gap-1 text-[11px] font-medium text-foreground">
+            <span>筹码分布</span>
+            <SourceTraceButton subjects={SOURCE_TRACE.chips} className="h-6 w-6" />
+          </div>
           <div className="mt-0.5 text-[10px] text-muted">
-            本地日K近似 · {days}日
+            本地日K近似 · {data?.days ?? days}日
+            {data?.as_of ? ` · 截至 ${data.as_of}` : ''}
             {data?.source ? ` · ${data.source === 'local_daily_derived' ? '推算' : data.source}` : ''}
           </div>
         </div>

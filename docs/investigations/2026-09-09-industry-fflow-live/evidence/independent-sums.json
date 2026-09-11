@@ -1,0 +1,135 @@
+{
+  "as_of": "2026-09-09T13:23:32.054432+08:00",
+  "snapshot_n": 128,
+  "independent_sums": {
+    "5": {
+      "window": [
+        "2026-09-02",
+        "2026-09-08"
+      ],
+      "api_start": "2026-09-02",
+      "api_end": "2026-09-08",
+      "complete": true,
+      "fresh": "unknown",
+      "data_as_of": "2026-09-08",
+      "rows": [
+        {
+          "code": "BK0459",
+          "independent_sum": 6001295616.0,
+          "window_api": 6001295616.0,
+          "match": true,
+          "days": 5,
+          "window_start": "2026-09-02",
+          "window_end": "2026-09-08"
+        },
+        {
+          "code": "BK1033",
+          "independent_sum": -6996499056.0,
+          "window_api": -6996499056.0,
+          "match": true,
+          "days": 5,
+          "window_start": "2026-09-02",
+          "window_end": "2026-09-08"
+        },
+        {
+          "code": "BK1261",
+          "independent_sum": -139432240.0,
+          "window_api": null,
+          "match": false,
+          "days": 5,
+          "window_start": "2026-09-02",
+          "window_end": "2026-09-08"
+        },
+        {
+          "code": "BK1036",
+          "independent_sum": -21752673536.0,
+          "window_api": -21752673536.0,
+          "match": true,
+          "days": 5,
+          "window_start": "2026-09-02",
+          "window_end": "2026-09-08"
+        },
+        {
+          "code": "BK0450",
+          "independent_sum": 907262224.0,
+          "window_api": null,
+          "match": false,
+          "days": 5,
+          "window_start": "2026-09-02",
+          "window_end": "2026-09-08"
+        }
+      ],
+      "all_match": true
+    },
+    "63": {
+      "window": [
+        "2026-06-11",
+        "2026-09-08"
+      ],
+      "api_start": "2026-06-11",
+      "api_end": "2026-09-08",
+      "complete": true,
+      "fresh": "unknown",
+      "data_as_of": "2026-09-08",
+      "rows": [
+        {
+          "code": "BK0459",
+          "independent_sum": -92431463936.0,
+          "window_api": -92431463936.0,
+          "match": true,
+          "days": 63,
+          "window_start": "2026-06-11",
+          "window_end": "2026-09-08"
+        },
+        {
+          "code": "BK1033",
+          "independent_sum": -78520394288.0,
+          "window_api": -78520394288.0,
+          "match": true,
+          "days": 63,
+          "window_start": "2026-06-11",
+          "window_end": "2026-09-08"
+        },
+        {
+          "code": "BK1261",
+          "independent_sum": 2413849499.0,
+          "window_api": 2413849499.0,
+          "match": true,
+          "days": 63,
+          "window_start": "2026-06-11",
+          "window_end": "2026-09-08"
+        },
+        {
+          "code": "BK1036",
+          "independent_sum": -318235362560.0,
+          "window_api": -318235362560.0,
+          "match": true,
+          "days": 63,
+          "window_start": "2026-06-11",
+          "window_end": "2026-09-08"
+        },
+        {
+          "code": "BK0450",
+          "independent_sum": -8325284768.0,
+          "window_api": null,
+          "match": false,
+          "days": 63,
+          "window_start": "2026-06-11",
+          "window_end": "2026-09-08"
+        }
+      ],
+      "all_match": true
+    }
+  },
+  "concept_daily_span": {
+    "min": "2026-03-09",
+    "max": "2026-08-31",
+    "n": 123
+  },
+  "non_h5_rows_kept": 256,
+  "non_h5_sources": [
+    "go_stock_local_snapshot"
+  ],
+  "old_2026_03_02_rows": 11,
+  "old_2026_03_02_codes": 11
+}

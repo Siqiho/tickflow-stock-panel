@@ -26,6 +26,69 @@ logger = logging.getLogger(__name__)
 JobStatus = Literal["pending", "running", "succeeded", "degraded", "failed"]
 ControlPlaneSink = Callable[[dict[str, Any]], None]
 
+# 卡死判定阈值(秒)。语义是「进度停滞」而非「总时长」:
+# running 期间只要 progress() 还在上报, 就永远不算卡死。
+DEFAULT_JOB_TIMEOUT_S = 1200
+LONG_JOB_TIMEOUT_S = 1800
+# 总时长硬上限(兜底): 进度回调持续但永不结束的病态循环。
+HARD_JOB_TIMEOUT_S = 12 * 3600
+STALE_JOB_TIMEOUT_S = DEFAULT_JOB_TIMEOUT_S
+
+
+class JobCancelledError(BaseException):
+    """协作式取消。继承 BaseException, 避免被 ``except Exception`` 吞掉。"""
+
+    def __init__(self, job_id: str) -> None:
+        super().__init__(f"job {job_id} 已取消")
+        self.job_id = job_id
+
+
+class CreateResult(str):
+    """兼容本地 ``job_id = create()`` 与 908 ``job_id, is_new = create()``。"""
+
+    is_new: bool
+
+    def __new__(cls, job_id: str, is_new: bool = True):
+        obj = str.__new__(cls, job_id)
+        obj.is_new = bool(is_new)
+        return obj
+
+    def __iter__(self):
+        yield str(self)
+        yield self.is_new
+
+
+_CANCEL_FLAG_MAX = 32
+_CANCEL_FLAGS: dict[str, threading.Event] = {}
+_CANCEL_FLAGS_LOCK = threading.Lock()
+
+
+def request_cancel(job_id: str) -> bool:
+    with _CANCEL_FLAGS_LOCK:
+        ev = _CANCEL_FLAGS.get(job_id)
+        if ev is None:
+            ev = threading.Event()
+            _CANCEL_FLAGS[job_id] = ev
+            while len(_CANCEL_FLAGS) > _CANCEL_FLAG_MAX:
+                _CANCEL_FLAGS.pop(next(iter(_CANCEL_FLAGS)))
+        ev.set()
+        return True
+
+
+def is_cancelled(job_id: str) -> bool:
+    ev = _CANCEL_FLAGS.get(job_id)
+    return ev is not None and ev.is_set()
+
+
+def _register_cancel_flag(job_id: str) -> None:
+    with _CANCEL_FLAGS_LOCK:
+        _CANCEL_FLAGS.setdefault(job_id, threading.Event())
+
+
+def _raise_if_cancelled(job_id: str) -> None:
+    if is_cancelled(job_id):
+        raise JobCancelledError(job_id)
+
 
 def terminal_status(result: dict[str, Any]) -> Literal["succeeded", "degraded"]:
     """Map a completed pipeline result to an honest quality-aware terminal state."""
@@ -57,6 +120,7 @@ class JobStore:
         self._store_dir = store_dir
         self._active_jobs: dict[str, dict[str, Any]] = {}   # running/pending
         self._active_id: str | None = None
+        self._active_by_key: dict[str, str] = {}
         self._lock = threading.Lock()
         self._sink_owner_lock = threading.Lock()
         self._control_plane_sink: ControlPlaneSink | None = None
@@ -211,12 +275,53 @@ class JobStore:
 
     # ===== lifecycle =====
 
-    def create(self, *, mirror: Mapping[str, str] | None = None) -> str:
+    @staticmethod
+    def _work_identity(
+        *,
+        work_key: str | None,
+        mirror: Mapping[str, str] | None,
+    ) -> str:
+        from app.services import user_context
+
+        owner = str(user_context.current().get("id") or "owner")
+        if work_key:
+            body = str(work_key)
+        elif mirror:
+            body = f"{mirror.get('dataset_id', '')}|{mirror.get('operation', '')}"
+        else:
+            body = "default"
+        return f"{owner}|{body}"
+
+    def create(
+        self,
+        timeout_s: int | None = None,
+        *,
+        mirror: Mapping[str, str] | None = None,
+        long_running: bool = False,
+        work_key: str | None = None,
+    ) -> CreateResult:
+        """单飞创建。查找+创建在同一把锁内。
+
+        同一 work identity 在 pending/running 窗口复用; 终态后可新建。
+        不同 work_key / mirror operation / 用户 id 不合并。
+        返回值是 str, 也可解包为 (job_id, is_new)。
+        """
+        if timeout_s is None:
+            from app.services import preferences
+            if long_running:
+                timeout_s = preferences.get_data_source_long_job_timeout_s()
+            else:
+                timeout_s = preferences.get_data_source_job_timeout_s()
+
+        identity = self._work_identity(work_key=work_key, mirror=mirror)
         with self._sink_owner_lock:
             owner_token = self._control_plane_sink_token if mirror is not None else None
             with self._lock:
-                if self._active_id and self._active_jobs.get(self._active_id, {}).get("status") == "running":
-                    return self._active_id
+                existing_id = self._active_by_key.get(identity)
+                if existing_id:
+                    active = self._active_jobs.get(existing_id)
+                    if active and active.get("status") in ("pending", "running"):
+                        return CreateResult(existing_id, False)
 
                 job_id = uuid.uuid4().hex[:10]
                 self._active_jobs[job_id] = {
@@ -227,27 +332,35 @@ class JobStore:
                     "stage_pct": 0,
                     "log": [],
                     "started_at": None,
+                    "last_progress_at": None,
                     "finished_at": None,
                     "duration_s": None,
                     "result": None,
                     "error": None,
+                    "timeout_s": timeout_s,
+                    "_work_key": identity,
                 }
                 if mirror is not None and owner_token is not None:
                     self._mirror_metadata[job_id] = dict(mirror)
                     self._mirror_owner_tokens[job_id] = owner_token
+                self._active_by_key[identity] = job_id
                 self._active_id = job_id
                 created = dict(self._active_jobs[job_id])
                 mirror_metadata = self._mirror_metadata.get(job_id)
+        _register_cancel_flag(job_id)
         self._notify_control_plane(created, mirror_metadata, owner_token)
-        return job_id
+        return CreateResult(job_id, True)
 
     def start(self, job_id: str) -> None:
+        _raise_if_cancelled(job_id)
         with self._lock:
             j = self._active_jobs.get(job_id)
             if not j:
                 return
             j["status"] = "running"
-            j["started_at"] = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+            started_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+            j["started_at"] = started_at
+            j["last_progress_at"] = started_at
             started = dict(j)
             mirror_metadata = self._mirror_metadata.get(job_id)
             owner_token = self._mirror_owner_tokens.get(job_id)
@@ -284,6 +397,9 @@ class JobStore:
                 j["duration_s"] = _duration_s(j)
                 if self._active_id == job_id:
                     self._active_id = None
+                key = j.get("_work_key")
+                if key and self._active_by_key.get(key) == job_id:
+                    self._active_by_key.pop(key, None)
                 self._delete_oldest()
                 self._write_file(j)
                 finished = dict(j)
@@ -299,6 +415,7 @@ class JobStore:
                 if self._mirror_owner_tokens.get(job_id) is owner_token:
                     self._mirror_metadata.pop(job_id, None)
                     self._mirror_owner_tokens.pop(job_id, None)
+        # 槽由执行体 finally 释放。终态记录不得在工作线程仍存活时放掉执行权。
 
     def fail(self, job_id: str, error: str) -> None:
         with self._sink_owner_lock:
@@ -314,6 +431,9 @@ class JobStore:
                 j["duration_s"] = _duration_s(j)
                 if self._active_id == job_id:
                     self._active_id = None
+                key = j.get("_work_key")
+                if key and self._active_by_key.get(key) == job_id:
+                    self._active_by_key.pop(key, None)
                 self._delete_oldest()
                 self._write_file(j)
                 failed = dict(j)
@@ -329,17 +449,85 @@ class JobStore:
                 if self._mirror_owner_tokens.get(job_id) is owner_token:
                     self._mirror_metadata.pop(job_id, None)
                     self._mirror_owner_tokens.pop(job_id, None)
+        # 与 _finish 相同: 不在此释放 run slot, 避免取消/失败后旧工作仍在写时新任务入槽。
+
+    def reap_stale(self, timeout_s: int | None = None) -> None:
+        """回收卡死的 running job。两种判定:
+
+        1. 进度停滞(主判定): 距上次 progress() 上报超过阈值秒数。
+        2. 总时长硬上限(兜底): 进度回调持续但永不结束的病态循环。
+
+        本地多用户: 扫描全部 running, 不只看单一 _active_id。
+        终止是协作式的: 置 cancel flag → 僵尸在下一分块 progress() 抛
+        JobCancelledError。卡死线程可能永远不回来, 因此 terminate 会按
+        所有权释放执行槽; 手动取消仍不放槽 (工作线程还活着)。
+        """
+        with self._lock:
+            candidates = [
+                (jid, dict(job))
+                for jid, job in self._active_jobs.items()
+                if job.get("status") == "running" and job.get("started_at")
+            ]
+        for jid, job in candidates:
+            started = job.get("started_at")
+            last_alive = job.get("last_progress_at") or started
+            if not started:
+                continue
+            effective_timeout = (
+                timeout_s if timeout_s is not None
+                else job.get("timeout_s", DEFAULT_JOB_TIMEOUT_S)
+            )
+            try:
+                start_dt = _parse_utc(started)
+                alive_dt = _parse_utc(last_alive)
+                now = datetime.now(start_dt.tzinfo)
+                stalled_s = (now - alive_dt).total_seconds()
+                total_s = (now - start_dt).total_seconds()
+            except Exception:  # noqa: BLE001
+                continue
+            if stalled_s > effective_timeout:
+                logger.warning(
+                    "reap_stale: 强制取消卡死 job %s (进度停滞 %.0fs > 阈值 %ss, 总运行 %.0fs)",
+                    jid, stalled_s, effective_timeout, total_s,
+                )
+                self.terminate(
+                    jid,
+                    f"超时自动取消: 进度停滞 {int(stalled_s)}s 超过阈值 {effective_timeout}s,已请求终止",
+                )
+            elif total_s > HARD_JOB_TIMEOUT_S:
+                logger.warning(
+                    "reap_stale: 强制取消 job %s (总运行 %.0fs 超过硬上限 %ss)",
+                    jid, total_s, HARD_JOB_TIMEOUT_S,
+                )
+                self.terminate(
+                    jid,
+                    f"超时自动取消: 总运行 {int(total_s)}s 超过硬上限,已请求终止",
+                )
+
+    def terminate(self, job_id: str, message: str) -> None:
+        """标记失败 + 请求协作式终止 + 强制释放执行槽(带所有权)。
+
+        仅供 reap_stale / 硬上限使用。卡死线程可能永远回不来释放槽;
+        僵尸即使后续短暂写盘, 也会在下一个 progress() 自行退出。
+        手动取消走 fail()+request_cancel(), 不经过这里, 以免活着的
+        工作线程被新任务并发写入。
+        """
+        request_cancel(job_id)
+        self.fail(job_id, message)
+        release_run_slot(job_id)
 
     # ===== progress =====
 
     def progress(self, job_id: str, stage: str, pct: int, msg: str,
                  stage_pct: int | None = None, skip_log: bool = False) -> None:
+        _raise_if_cancelled(job_id)
         with self._lock:
             j = self._active_jobs.get(job_id)
             if not j:
                 return
             j["stage"] = stage
             j["progress"] = max(0, min(100, int(pct)))
+            j["last_progress_at"] = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
             if stage_pct is not None:
                 j["stage_pct"] = max(0, min(100, int(stage_pct)))
             elif j["stage"] != stage:
@@ -393,6 +581,7 @@ class JobStore:
         with self._lock:
             self._active_jobs.clear()
             self._active_id = None
+            self._active_by_key.clear()
             self._mirror_metadata.clear()
             self._mirror_owner_tokens.clear()
             for f in self._store_dir.glob("*.json"):
@@ -417,6 +606,11 @@ def _summary(j: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _parse_utc(ts: str) -> datetime:
+    """解析 start()/progress() 存的 "2026-07-04T12:00:00Z" 形式时间戳。"""
+    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+
 def _duration_s(j: dict[str, Any]) -> float | None:
     if not j.get("started_at") or not j.get("finished_at"):
         return None
@@ -430,3 +624,28 @@ def _duration_s(j: dict[str, Any]) -> float | None:
 
 # 进程内单例
 job_store = JobStore()
+
+
+# 重任务执行槽: 绑定实际执行体。create 单飞按 work identity;
+# 槽在 start 前获取, fail/succeed/cancel 的 finally 释放。
+_run_slot_lock = threading.Lock()
+_run_slot_owner: str | None = None
+
+
+def try_acquire_run_slot(owner: str = "") -> bool:
+    """尝试占用重任务执行槽(非阻塞)。成功返回 True 并记录持有者。"""
+    global _run_slot_owner
+    with _run_slot_lock:
+        if _run_slot_owner is not None:
+            return False
+        _run_slot_owner = owner
+        return True
+
+
+def release_run_slot(owner: str | None = None) -> None:
+    """释放重任务执行槽。owner 非 None 且不是当前持有者时忽略。"""
+    global _run_slot_owner
+    with _run_slot_lock:
+        if owner is not None and _run_slot_owner is not None and _run_slot_owner != owner:
+            return
+        _run_slot_owner = None

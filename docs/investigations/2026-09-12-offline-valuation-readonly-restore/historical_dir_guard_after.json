@@ -1,0 +1,66 @@
+{
+  "after": {
+    "README.md": {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-09-11T17:16:43",
+      "mtime_ns": 1789118203537960683,
+      "path": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-11-offline-valuation-readonly/README.md",
+      "sha256": "4ba864e447365d83743942cc248ea1cdfc19d4980d252a34e5f666048d090eda",
+      "size": 3989
+    },
+    "input_hashes_after.json": {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-09-11T17:15:51",
+      "mtime_ns": 1789118151820583611,
+      "path": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-11-offline-valuation-readonly/input_hashes_after.json",
+      "sha256": "50aa8c951f068abf07ed5f9c1d5dcae1ae3db6baa3c538c17f1b86cfadd3fbe4",
+      "size": 9821
+    },
+    "input_hashes_before.json": {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-09-11T17:15:51",
+      "mtime_ns": 1789118151710995772,
+      "path": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-11-offline-valuation-readonly/input_hashes_before.json",
+      "sha256": "50aa8c951f068abf07ed5f9c1d5dcae1ae3db6baa3c538c17f1b86cfadd3fbe4",
+      "size": 9821
+    },
+    "input_hashes_compare.json": {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-09-11T17:15:51",
+      "mtime_ns": 1789118151820755987,
+      "path": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-11-offline-valuation-readonly/input_hashes_compare.json",
+      "sha256": "31d213f9d7ee43fcb1b3f66a3dd8f6b7e436bef40ee576ffb4326bcd756a4af2",
+      "size": 67
+    },
+    "summary.json": {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-09-11T17:15:51",
+      "mtime_ns": 1789118151816969096,
+      "path": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-11-offline-valuation-readonly/summary.json",
+      "sha256": "d44751f9a4116063cacaaa6d1091605e7e4d1f0cd751c9c0f37025c1a42698f1",
+      "size": 4484
+    },
+    "tests.txt": {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-09-11T17:15:51",
+      "mtime_ns": 1789118151547270537,
+      "path": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-11-offline-valuation-readonly/tests.txt",
+      "sha256": "1dfbf4fc7de1b7f810c7869fdc181ae1ea8f2d75a33d3fd380e1cf1e13f37a4b",
+      "size": 2613
+    }
+  },
+  "changed": [],
+  "unchanged": true
+}

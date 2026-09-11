@@ -19,10 +19,15 @@ def _data_dir(request: Request) -> Path:
 
 
 def _sync_engine(request: Request) -> None:
-    """保存/删除后,把最新规则集 reload 到引擎内存态。"""
+    """保存/删除后,只 reload 当前用户规则切片, 不覆盖其他租户。"""
     engine = getattr(request.app.state, "monitor_engine", None)
-    if engine is not None:
-        rules = monitor_rules.load_all(_data_dir(request))
+    if engine is None:
+        return
+    rules = monitor_rules.load_all(_data_dir(request))
+    if hasattr(engine, "set_rules_for_user"):
+        from app.services.user_context import current
+        engine.set_rules_for_user(str(current().get("id") or "owner"), rules)
+    else:
         engine.set_rules(rules)
 
 
@@ -46,6 +51,9 @@ class RuleModel(BaseModel):
     conditions: list[ConditionModel] = []
     logic: str = "and"        # and | or
     cooldown_seconds: int = 3600
+    # date 类型 (日期提醒): 纯日历窗口, 无 conditions
+    remind_date: str | None = None   # YYYY-MM-DD
+    lead_days: int = 0               # 提前 N 天进入提醒窗口
     severity: str = "info"    # info | warn | critical
     webhook_url: str = ""     # Webhook 推送地址 (推送到 QMT 等外部软件, 待定)
     webhook_enabled: bool = False
@@ -65,10 +73,14 @@ def get_options(request: Request):
         for f in sorted(ALLOWED_FIELDS)
     ]
     # 内置信号列 (布尔, 用于 op=truth)
+    from app.strategy.intraday_signals import INTRADAY_SIGNAL_LABELS
     builtin_signals = [
         {"key": k, "label": v}
         for k, v in ENRICHED_COLUMNS.items()
         if k.startswith("signal_")
+    ] + [
+        {"key": k, "label": v}
+        for k, v in INTRADAY_SIGNAL_LABELS.items()
     ]
     # 自定义信号列 (csg_)
     custom_sigs = []
@@ -130,6 +142,9 @@ def save_rule(req: RuleModel, request: Request):
     rule = monitor_rules.normalize(req.model_dump())
     # 编辑现有规则时, 保留原 created_at (避免按时间排序时位置跳动)
     existing = monitor_rules.load_one(_data_dir(request), rule["id"])
+    # 批次派生规则由「持仓提醒」页托管, 监控中心只读 (启停/改/删均回持仓页)
+    if existing and existing.get("lot_id"):
+        raise HTTPException(status_code=409, detail="该规则由「持仓提醒」页托管, 请在持仓提醒页修改")
     if existing and existing.get("created_at"):
         rule["created_at"] = existing["created_at"]
     try:
@@ -146,6 +161,10 @@ def save_rule(req: RuleModel, request: Request):
 def delete_rule(rule_id: str, request: Request):
     if not monitor_rules.ID_RE.match(rule_id):
         raise HTTPException(status_code=400, detail="规则 id 非法")
+    # 批次派生规则由「持仓提醒」页托管, 删除需在持仓页操作 (级联清理派生规则)
+    existing = monitor_rules.load_one(_data_dir(request), rule_id)
+    if existing and existing.get("lot_id"):
+        raise HTTPException(status_code=409, detail="该规则由「持仓提醒」页托管, 请在持仓提醒页删除批次")
     deleted = monitor_rules.delete_one(_data_dir(request), rule_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="规则不存在")

@@ -20,6 +20,8 @@ describe('dataset details', () => {
     render(<DatasetDetailDrawer entry={makeEntry('stock_daily', 'A 股日 K')} runs={[failedRun]} onClose={() => {}} />)
 
     const dialog = screen.getByRole('dialog', { name: 'A 股日 K 详情' })
+    expect(within(dialog).queryByText('close')).not.toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: '高级信息' }))
     expect(within(dialog).getByText('close')).toBeInTheDocument()
     for (const value of ['float64', '收盘价', '元', '0.01', 'CNY', 'Asia/Shanghai']) {
       expect(within(dialog).getByText(value)).toBeInTheDocument()
@@ -46,12 +48,13 @@ describe('dataset details', () => {
       onClose={() => {}}
     />)
 
+    fireEvent.click(screen.getByRole('button', { name: '高级信息' }))
     expect(screen.getByText('amount')).toBeInTheDocument()
     expect(screen.queryByText('close')).not.toBeInTheDocument()
     expect(screen.getByText('未声明')).toBeInTheDocument()
   })
 
-  it('moves focus inside on open and traps Tab with one focusable control', () => {
+  it('moves focus inside on open and wraps focus across progressive disclosure', () => {
     render(<DrawerHarness />)
     const trigger = screen.getByRole('button', { name: '打开数据详情' })
     trigger.focus()
@@ -59,11 +62,14 @@ describe('dataset details', () => {
     fireEvent.click(trigger)
 
     const close = screen.getByRole('button', { name: /关闭.*A 股日 K.*详情/ })
+    const advanced = screen.getByRole('button', { name: '高级信息' })
     expect(close).toHaveFocus()
-    fireEvent.keyDown(close, { key: 'Tab' })
+    advanced.focus()
+    fireEvent.keyDown(advanced, { key: 'Tab' })
     expect(close).toHaveFocus()
+    close.focus()
     fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })
-    expect(close).toHaveFocus()
+    expect(advanced).toHaveFocus()
   })
 
   it('wraps Tab and Shift+Tab across future drawer focusables', () => {
@@ -117,6 +123,7 @@ describe('dataset details', () => {
       <QualityLineagePanel entry={entry} />
       <DatasetRunHistory runs={[failedRun]} />
     </>)
+    fireEvent.click(screen.getByRole('button', { name: '高级信息' }))
 
     for (const value of [
       'public_feed', 'run-1', '2026-07-21T08:00:00Z', 'cn_market_v1',

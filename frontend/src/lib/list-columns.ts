@@ -24,6 +24,9 @@ export interface ExtColumnDisplayConfig {
   hiddenIndices?: number[]
   /** 标签排列方向: horizontal=横向(默认), vertical=竖向 */
   tagLayout?: 'horizontal' | 'vertical'
+  thousandSeparator?: boolean
+  unitConvert?: 'none' | 'wan' | 'yi' | 'auto'
+  unitDecimals?: number
 }
 
 /** 日k列渲染配置（builtin: candle 列专用） */
@@ -49,6 +52,21 @@ export const DEFAULT_CANDLE_CONFIG: Required<CandleColumnConfig> = {
   days: 12,
 }
 
+export interface IntradayColumnConfig {
+  width?: number
+  height?: number
+}
+
+export const DEFAULT_INTRADAY_CONFIG: Required<IntradayColumnConfig> = {
+  width: 150,
+  height: 80,
+}
+
+const INTRADAY_BOUNDS = {
+  width:  { min: 60, max: 300 },
+  height: { min: 32, max: 200 },
+} as const
+
 /** 数值边界（设置过大取上限，过小取最小值） */
 const CANDLE_BOUNDS = {
   enabledWidth:  { min: 40,  max: 300 },
@@ -67,6 +85,14 @@ function clampNum(v: unknown, bounds: { min: number; max: number }, fallback: nu
  * 合并用户配置与默认值，并对越界数值做钳制（过大取上限，过小取最小值）。
  * 返回字段齐全的配置，调用方可直接解构使用。
  */
+export function resolveIntradayConfig(cfg: IntradayColumnConfig | undefined): Required<IntradayColumnConfig> {
+  const c = cfg ?? {}
+  return {
+    width:  clampNum(c.width,  INTRADAY_BOUNDS.width,  DEFAULT_INTRADAY_CONFIG.width),
+    height: clampNum(c.height, INTRADAY_BOUNDS.height, DEFAULT_INTRADAY_CONFIG.height),
+  }
+}
+
 export function resolveCandleConfig(cfg: CandleColumnConfig | undefined): Required<CandleColumnConfig> {
   const c = cfg ?? {}
   return {
@@ -91,6 +117,8 @@ export interface ColumnConfig {
   candleConfig?: CandleColumnConfig
   /** 信息条场景：是否单独占一行显示（仅 StockInfoBar 生效，表格场景忽略） */
   standalone?: boolean
+  /** 分时列渲染配置 */
+  intradayConfig?: IntradayColumnConfig
 }
 
 export interface ColumnGroup {

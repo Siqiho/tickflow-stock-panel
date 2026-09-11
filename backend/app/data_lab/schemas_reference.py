@@ -118,14 +118,77 @@ def _listing_schema() -> ReferenceDatasetSchema:
     )
 
 
+def _corporate_actions_schema() -> ReferenceDatasetSchema:
+    """移植自 7019d03; unit_version 对齐现有物理行的 corporate_actions_v2。"""
+    return ReferenceDatasetSchema(
+        dataset_id="corporate_actions",
+        unit_version="corporate_actions_v2",
+        owned_root="reference/corporate_actions",
+        formal_relpath="reference/corporate_actions/actions.parquet",
+        primary_key=("symbol", "action_id"),
+        required_columns=(
+            "symbol",
+            "action_id",
+            "action_type",
+            "announce_date",
+            "record_date",
+            "ex_date",
+            "pay_date",
+            "cash_per_share",
+            "stock_ratio",
+            "rights_ratio",
+            "currency",
+            "source_published_at",
+            "first_seen_at",
+            "source",
+            "as_of",
+        ),
+        dtypes={
+            "symbol": pl.Utf8,
+            "action_id": pl.Utf8,
+            "action_type": pl.Utf8,
+            "announce_date": pl.Date,
+            "record_date": pl.Date,
+            "ex_date": pl.Date,
+            "pay_date": pl.Date,
+            "cash_per_share": pl.Float64,
+            "stock_ratio": pl.Float64,
+            "rights_ratio": pl.Float64,
+            "currency": pl.Utf8,
+            "source_published_at": pl.Datetime(time_unit="us"),
+            "first_seen_at": pl.Datetime(time_unit="us"),
+            "source": pl.Utf8,
+            "as_of": pl.Date,
+        },
+        enums={
+            "action_type": frozenset(
+                {
+                    "dividend_cash",
+                    "dividend_stock",
+                    "split",
+                    "reverse_split",
+                    "rights_issue",
+                    "bonus",
+                    "mixed",
+                    "unknown",
+                    "identity_marker",
+                }
+            ),
+            "currency": frozenset({"CNY", "unknown"}),
+        },
+    )
+
+
 TRADING_CALENDAR_SCHEMA = _calendar_schema()
 INSTRUMENT_STATUS_HISTORY_SCHEMA = _status_schema()
 LISTING_DELISTING_EVENTS_SCHEMA = _listing_schema()
+CORPORATE_ACTIONS_SCHEMA = _corporate_actions_schema()
 
 REFERENCE_DATASETS: dict[str, ReferenceDatasetSchema] = {
     TRADING_CALENDAR_SCHEMA.dataset_id: TRADING_CALENDAR_SCHEMA,
     INSTRUMENT_STATUS_HISTORY_SCHEMA.dataset_id: INSTRUMENT_STATUS_HISTORY_SCHEMA,
     LISTING_DELISTING_EVENTS_SCHEMA.dataset_id: LISTING_DELISTING_EVENTS_SCHEMA,
+    CORPORATE_ACTIONS_SCHEMA.dataset_id: CORPORATE_ACTIONS_SCHEMA,
 }
 
 

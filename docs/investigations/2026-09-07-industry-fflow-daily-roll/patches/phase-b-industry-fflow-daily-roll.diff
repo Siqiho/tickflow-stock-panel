@@ -1,0 +1,817 @@
+--- a/backend/app/services/free_sources/fund_flow.py
++++ b/backend/app/services/free_sources/fund_flow.py
+@@ -21,13 +21,16 @@
+ """
+ from __future__ import annotations
+ 
++import fcntl
+ import os
+ import sqlite3
++import threading
+ import time
+-from datetime import date, datetime
++from datetime import date, datetime, time as dt_time
+ from pathlib import Path
+ from typing import Any, Literal
+ from urllib.parse import urlencode
++from zoneinfo import ZoneInfo
+ 
+ import polars as pl
+ 
+@@ -43,6 +46,8 @@
+     "Referer": "https://data.eastmoney.com/",
+ }
+ 
++_SHANGHAI = ZoneInfo("Asia/Shanghai")
++_EM_H5_HISTORY_HOST = "https://emdatah5.eastmoney.com/dc/ZJLX/getDBHistoryData"
+ _EM_UT = "8dec03ba335b81bf4ebdf7b29ec27d15"
+ _EM_UT_FFLOW = "fa5fd1943c7b386f172d6893dbfba10b"
+ _EM_UT_DAY = "b2884a393a59ad64002292a3e90d46a5"
+@@ -645,6 +650,7 @@
+     kind: Literal["board", "concept"] = "board",
+     allow_local_fallback: bool = False,
+     prefer_h5: bool = False,
++    h5_only: bool = False,
+ ) -> list[dict]:
+     """Fetch board/concept daily main-net history.
+ 
+@@ -699,7 +705,9 @@
+             "https://data.eastmoney.com/",
+         ),
+     ]
+-    if prefer_h5:
++    if h5_only:
++        hosts = [item for item in hosts if item[0] == _EM_H5_HISTORY_HOST]
++    elif prefer_h5:
+         hosts = [hosts[1], hosts[0], hosts[2], hosts[3]]
+     last_err: str | None = None
+     for i, (host, referer) in enumerate(hosts):
+@@ -933,6 +941,7 @@
+     rows: list[dict],
+     *,
+     kind: Literal["board", "concept"] = "board",
++    atomic: bool = False,
+ ) -> int:
+     """Merge daily rows by date+code. Never replace a date partition wholesale."""
+     if not rows:
+@@ -953,6 +962,7 @@
+             cfg,
+             data_dir,
+             snapshot_date=date.fromisoformat(d),
++            atomic=atomic,
+         )
+         n += len(group)
+     return n
+@@ -1076,6 +1086,417 @@
+             else "东财 H5/daykline 行业日线回补，按 date+code 合并，不写 go-stock"
+         ),
+     }
++
++
++_INDUSTRY_ROLL_THREAD_LOCK = threading.Lock()
++_INDUSTRY_ROLL_LOCK_NAME = ".industry_daily_roll.lock"
++
++
++def _as_iso_day(value: object) -> str | None:
++    if value is None:
++        return None
++    iso = getattr(value, "isoformat", None)
++    if callable(iso):
++        try:
++            text = str(iso())
++        except Exception:
++            return None
++        return text[:10] if len(text) >= 10 else None
++    text = str(value).strip()
++    return text[:10] if len(text) >= 10 else None
++
++
++def _is_open_flag(value: object) -> bool:
++    if value is True or value == 1:
++        return True
++    if value is False or value == 0 or value is None:
++        return False
++    return str(value).strip().lower() in {"true", "1", "yes"}
++
++
++def _load_local_trading_calendar(data_dir: Path) -> pl.DataFrame | None:
++    path = Path(data_dir) / "reference" / "trading_calendar" / "calendar.parquet"
++    if not path.exists():
++        return None
++    try:
++        frame = pl.read_parquet(path)
++    except Exception:
++        return None
++    if frame.is_empty():
++        return None
++    return frame
++
++
++def _parse_close_time(value: object) -> dt_time:
++    text = str(value or "").strip()
++    if len(text) >= 5 and text[2] == ":":
++        try:
++            return dt_time(int(text[:2]), int(text[3:5]))
++        except ValueError:
++            pass
++    return dt_time(15, 0)
++
++
++def assess_industry_window_freshness(
++    data_dir: Path,
++    *,
++    data_as_of: str | None,
++    as_of_today: date | None = None,
++    as_of_now: datetime | None = None,
++) -> dict[str, Any]:
++    """Judge industry window freshness from the local trading calendar only.
++
++    Expected day is the latest completed Shanghai cash session. A date-only
++    as_of_today is treated as that day's end. Missing calendar coverage is
++    unknown; kline dates are never used as a legal calendar.
++    """
++    if as_of_now is not None:
++        now = as_of_now if as_of_now.tzinfo else as_of_now.replace(tzinfo=_SHANGHAI)
++        now = now.astimezone(_SHANGHAI)
++    elif as_of_today is not None:
++        now = datetime.combine(as_of_today, dt_time(23, 59, 59), tzinfo=_SHANGHAI)
++    else:
++        now = datetime.now(_SHANGHAI)
++    today = as_of_today or now.date()
++    today_s = today.isoformat()
++    payload = {
++        "data_as_of": data_as_of,
++        "freshness_status": "unknown",
++        "freshness_note": "无法确定",
++        "expected_trading_day": None,
++        "calendar_covers": False,
++    }
++    calendar = _load_local_trading_calendar(data_dir)
++    if calendar is None:
++        payload["freshness_note"] = "无法确定（交易日历缺失或无法读取）"
++        return payload
++    date_col = "trade_date" if "trade_date" in calendar.columns else (
++        "date" if "date" in calendar.columns else None
++    )
++    if date_col is None:
++        payload["freshness_note"] = "无法确定（交易日历缺少日期列）"
++        return payload
++    all_days: list[str] = []
++    open_days: list[str] = []
++    close_by_day: dict[str, dt_time] = {}
++    open_set: set[str] = set()
++    for row in calendar.to_dicts():
++        day = _as_iso_day(row.get(date_col))
++        if not day:
++            continue
++        all_days.append(day)
++        close_by_day[day] = _parse_close_time(row.get("close_time"))
++        if _is_open_flag(row.get("is_open")):
++            open_days.append(day)
++            open_set.add(day)
++    if not all_days:
++        payload["freshness_note"] = "无法确定（交易日历无日期）"
++        return payload
++    if max(all_days) < today_s:
++        payload["freshness_note"] = "无法确定（交易日历未覆盖到当日）"
++        return payload
++    payload["calendar_covers"] = True
++    prior_open = max((day for day in open_days if day < today_s), default=None)
++    if today_s in open_set and now.timetz().replace(tzinfo=None) < close_by_day.get(today_s, dt_time(15, 0)):
++        expected = prior_open
++    else:
++        expected = max((day for day in open_days if day <= today_s), default=None)
++    payload["expected_trading_day"] = expected
++    if not data_as_of or not expected:
++        payload["freshness_note"] = "无法确定"
++        return payload
++    if data_as_of == expected:
++        payload["freshness_status"] = "fresh"
++        payload["freshness_note"] = "足够新"
++        return payload
++    if data_as_of < expected:
++        payload["freshness_status"] = "stale"
++        payload["freshness_note"] = "已陈旧"
++        return payload
++    payload["freshness_note"] = "无法确定（数据截止日超出日历可判定范围）"
++    return payload
++
++
++def _attach_industry_freshness(
++    payload: dict[str, Any],
++    data_dir: Path,
++    *,
++    as_of_today: date | None = None,
++    as_of_now: datetime | None = None,
++) -> dict[str, Any]:
++    if payload.get("kind") != "board":
++        return payload
++    payload.update(
++        assess_industry_window_freshness(
++            data_dir,
++            data_as_of=payload.get("end"),
++            as_of_today=as_of_today,
++            as_of_now=as_of_now,
++        )
++    )
++    return payload
++
++
++def _industry_h5_latest_coverage(
++    data_dir: Path,
++    snapshot_codes: list[str],
++) -> tuple[str | None, bool, int]:
++    daily_root = Path(data_dir) / "ext_data" / "ext_fund_flow_bk_daily" / "timeseries"
++    wanted = {str(code).strip().upper() for code in snapshot_codes if str(code).strip()}
++    if not daily_root.exists() or not wanted:
++        return None, False, 0
++    frames: list[pl.DataFrame] = []
++    for path in daily_root.rglob("*.parquet"):
++        try:
++            frames.append(pl.read_parquet(path))
++        except Exception:
++            continue
++    if not frames:
++        return None, False, 0
++    daily = pl.concat(frames, how="diagonal_relaxed")
++    if daily.is_empty() or "date" not in daily.columns or "code" not in daily.columns:
++        return None, False, 0
++    daily = daily.with_columns(
++        pl.col("code").cast(pl.Utf8).str.to_uppercase().alias("code"),
++        pl.col("date").cast(pl.Utf8).str.slice(0, 10).alias("date"),
++    )
++    daily = daily.filter(pl.col("code").is_in(list(wanted)))
++    if "source" in daily.columns:
++        daily = daily.filter(pl.col("source") == "eastmoney_fflow_day")
++    if daily.is_empty():
++        return None, False, 0
++    latest = max(str(value) for value in daily["date"].to_list() if value)
++    have = {
++        str(value)
++        for value in daily.filter(pl.col("date") == latest)["code"].to_list()
++        if value
++    }
++    covered = len(wanted & have)
++    return latest, bool(wanted) and wanted <= have, covered
++
++
++def _acquire_industry_roll_lock(data_dir: Path):
++    lock_dir = Path(data_dir) / "ext_data" / "ext_fund_flow_bk_daily"
++    lock_dir.mkdir(parents=True, exist_ok=True)
++    handle = open(lock_dir / _INDUSTRY_ROLL_LOCK_NAME, "a+")
++    try:
++        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
++    except BlockingIOError:
++        handle.close()
++        return None
++    return handle
++
++
++def _release_industry_roll_lock(handle) -> None:
++    if handle is None:
++        return
++    try:
++        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
++    finally:
++        handle.close()
++
++
++def _industry_roll_busy_result() -> dict[str, Any]:
++    return {
++        "ok": False,
++        "kind": "board",
++        "status": "busy",
++        "skipped_lock": True,
++        "selected": 0,
++        "history_codes": [],
++        "failed": [],
++        "latest_data_date": None,
++        "latest_day_complete": False,
++        "source": "eastmoney_fflow_day",
++        "note": "已有行业日线续更在进行，跳过本次",
++    }
++
++
++def _roll_should_stop(
++    cancel_event: threading.Event | None,
++    deadline_monotonic: float | None,
++) -> bool:
++    if cancel_event is not None and cancel_event.is_set():
++        return True
++    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
++        return True
++    return False
++
++
++def _roll_industry_daily_from_h5_unlocked(
++    data_dir: Path,
++    *,
++    client: ResilientHttpClient | None,
++    limit: int,
++    batch_size: int,
++    pause_s: float,
++    pause_code_s: float,
++    cancel_event: threading.Event | None = None,
++    deadline_monotonic: float | None = None,
++) -> dict[str, Any]:
++    snapshot = load_board_snapshot_items(data_dir, kind="board")
++    names = {
++        str(row.get("code") or "").upper(): row.get("name")
++        for row in snapshot
++        if str(row.get("code") or "").strip()
++    }
++    universe: list[str] = []
++    seen: set[str] = set()
++    for row in snapshot:
++        code = str(row.get("code") or "").strip().upper()
++        if not code or code in seen:
++            continue
++        seen.add(code)
++        universe.append(code)
++    if not universe:
++        return {
++            "ok": False,
++            "kind": "board",
++            "status": "no_snapshot",
++            "selected": 0,
++            "history_codes": [],
++            "failed": [],
++            "latest_data_date": None,
++            "latest_day_complete": False,
++            "source": "eastmoney_fflow_day",
++            "note": "本地行业快照为空，未联网补目录",
++        }
++
++    client = client or get_shared_client()
++    ok_codes: list[str] = []
++    failed: list[dict] = []
++    total_points = 0
++    date_min: str | None = None
++    date_max: str | None = None
++    timed_out = False
++    step = max(1, int(batch_size))
++    for i in range(0, len(universe), step):
++        if _roll_should_stop(cancel_event, deadline_monotonic):
++            timed_out = True
++            break
++        batch = universe[i : i + step]
++        batch_rows: list[dict] = []
++        for code in batch:
++            if _roll_should_stop(cancel_event, deadline_monotonic):
++                timed_out = True
++                break
++            try:
++                hist = fetch_board_daily_history(
++                    code,
++                    client=client,
++                    limit=limit,
++                    kind="board",
++                    allow_local_fallback=False,
++                    prefer_h5=True,
++                    h5_only=True,
++                )
++            except Exception as e:  # noqa: BLE001
++                failed.append({"code": code, "error": str(e)})
++                continue
++            hist = [row for row in hist if str(row.get("source")) == "eastmoney_fflow_day"]
++            for row in hist:
++                if not row.get("name"):
++                    row["name"] = names.get(code) or code
++            if not hist:
++                failed.append({"code": code, "error": "empty eastmoney history"})
++                continue
++            dates = [str(row.get("date") or "")[:10] for row in hist if row.get("date")]
++            if dates:
++                lo, hi = min(dates), max(dates)
++                date_min = lo if date_min is None else min(date_min, lo)
++                date_max = hi if date_max is None else max(date_max, hi)
++            batch_rows.extend(hist)
++            ok_codes.append(code)
++            if pause_code_s > 0:
++                time.sleep(float(pause_code_s))
++        if batch_rows:
++            total_points += persist_board_daily_history(
++                data_dir,
++                batch[0],
++                batch_rows,
++                kind="board",
++                atomic=True,
++            )
++        if timed_out:
++            break
++        if pause_s > 0 and i + step < len(universe):
++            time.sleep(float(pause_s))
++
++    latest_data_date, latest_day_complete, latest_day_covered = _industry_h5_latest_coverage(
++        data_dir,
++        universe,
++    )
++    cancelled = bool(cancel_event is not None and cancel_event.is_set())
++    status = "ok"
++    if cancelled:
++        status = "cancelled"
++    elif timed_out:
++        status = "timeout"
++    elif failed and ok_codes:
++        status = "partial"
++    elif failed:
++        status = "failed"
++    elif not latest_day_complete:
++        status = "incomplete_latest_day"
++    return {
++        "ok": bool(ok_codes) and not failed and latest_day_complete and not timed_out and not cancelled,
++        "kind": "board",
++        "status": status,
++        "selected": len(universe),
++        "history_codes": ok_codes,
++        "history_points": total_points,
++        "failed": failed,
++        "latest_data_date": latest_data_date,
++        "latest_day_complete": latest_day_complete,
++        "latest_day_covered": latest_day_covered,
++        "source": "eastmoney_fflow_day",
++        "limit": int(limit),
++        "start": date_min,
++        "end": date_max,
++        "cancelled": cancelled or timed_out,
++        "note": "东财 H5 行业日线续更，按本地快照全集、date+code 合并，不写 go-stock",
++    }
++
++
++def roll_industry_daily_from_h5(
++    data_dir: Path,
++    *,
++    client: ResilientHttpClient | None = None,
++    limit: int = 120,
++    batch_size: int = 8,
++    pause_s: float = 0.35,
++    pause_code_s: float = 0.0,
++    cancel_event: threading.Event | None = None,
++    time_limit_s: float | None = None,
++) -> dict:
++    """Continue industry daily history for the local snapshot universe.
++
++    Uses Eastmoney H5 only. Does not refresh the ranking snapshot, does not
++    call the Top20 history helper, and does not persist stock.db rows.
++    """
++    if not _INDUSTRY_ROLL_THREAD_LOCK.acquire(blocking=False):
++        return _industry_roll_busy_result()
++    handle = None
++    if time_limit_s is None:
++        time_limit_s = 180.0
++    deadline = time.monotonic() + float(time_limit_s)
++    try:
++        handle = _acquire_industry_roll_lock(data_dir)
++        if handle is None:
++            return _industry_roll_busy_result()
++        return _roll_industry_daily_from_h5_unlocked(
++            data_dir,
++            client=client,
++            limit=limit,
++            batch_size=batch_size,
++            pause_s=pause_s,
++            pause_code_s=pause_code_s,
++            cancel_event=cancel_event,
++            deadline_monotonic=deadline,
++        )
++    finally:
++        _release_industry_roll_lock(handle)
++        _INDUSTRY_ROLL_THREAD_LOCK.release()
+ 
+ 
+ def persist_board_intraday(
+@@ -1343,6 +1764,8 @@
+     kind: Literal["board", "concept"] = "board",
+     days: int = 63,
+     top: int = 8,
++    as_of_today: date | None = None,
++    as_of_now: datetime | None = None,
+ ) -> dict[str, Any]:
+     """Rank boards by summed main_net over the latest ``days`` trading dates.
+ 
+@@ -1379,7 +1802,7 @@
+             for row in snapshot_items
+             if str(row.get("code") or "").strip()
+         ]
+-        return {
++        empty = {
+             "ok": True,
+             "kind": kind,
+             "window_days": int(days),
+@@ -1404,6 +1827,9 @@
+             "window_note": "窗口数据不足",
+             "source": daily_id,
+         }
++        return _attach_industry_freshness(
++            empty, data_dir, as_of_today=as_of_today, as_of_now=as_of_now
++        )
+     daily = daily.with_columns(
+         pl.col("code").cast(pl.Utf8).str.to_uppercase().alias("code"),
+         pl.col("date").cast(pl.Utf8).str.slice(0, 10).alias("date"),
+@@ -1505,7 +1931,7 @@
+         )
+     prior_dates = dates[: max(0, len(dates) - len(window_dates))]
+     prior_available = len(prior_dates) >= max(5, int(days) // 2) and grouped.height >= max(20, snapshot_rows // 2)
+-    return {
++    payload = {
+         "ok": True,
+         "kind": kind,
+         "window_days": len(window_dates),
+@@ -1530,4 +1956,7 @@
+         "window_note": None if window_complete else "窗口数据不足",
+         "source": daily_id,
+     }
+-
++    return _attach_industry_freshness(
++        payload, data_dir, as_of_today=as_of_today, as_of_now=as_of_now
++    )
++
+--- a/backend/app/jobs/daily_pipeline.py
++++ b/backend/app/jobs/daily_pipeline.py
+@@ -12,6 +12,7 @@
+ from __future__ import annotations
+ 
+ import logging
++import threading
+ from collections.abc import Callable
+ from datetime import date as Date
+ from pathlib import Path
+@@ -36,6 +37,123 @@
+ 
+ def _noop(stage: str, pct: int, msg: str, **kwargs) -> None:
+     pass
++
++
++_PIPELINE_GUARD = threading.Lock()
++_PIPELINE_IN_FLIGHT = False
++_PIPELINE_CANCEL = threading.Event()
++
++
++def pipeline_in_flight() -> bool:
++    return _PIPELINE_IN_FLIGHT
++
++
++def request_pipeline_cancel() -> None:
++    _PIPELINE_CANCEL.set()
++
++
++def should_force_fail_stale_pipeline_job(
++    *,
++    in_flight: bool,
++    elapsed_s: float,
++    stale_after_s: float = 600,
++) -> bool:
++    """Fail a job_store row only when the worker is gone (reload orphan)."""
++    try:
++        elapsed = float(elapsed_s)
++    except (TypeError, ValueError):
++        return False
++    return elapsed > float(stale_after_s) and not bool(in_flight)
++
++
++def _reset_pipeline_guard_for_tests() -> None:
++    global _PIPELINE_IN_FLIGHT
++    _PIPELINE_CANCEL.clear()
++    _PIPELINE_IN_FLIGHT = False
++    if _PIPELINE_GUARD.locked():
++        try:
++            _PIPELINE_GUARD.release()
++        except RuntimeError:
++            pass
++
++
++def _busy_pipeline_result() -> dict:
++    return {
++        "ok": False,
++        "status": "busy",
++        "reused": True,
++        "universe_size": 0,
++        "daily_days": 0,
++        "daily_source": None,
++        "skipped_stages": ["pipeline_in_flight"],
++        "quality": {
++            "ok": True,
++            "issues": [],
++            "note": "已有盘后任务在运行，未重跑日K",
++        },
++        "industry_fund_flow_daily": {
++            "ok": False,
++            "kind": "board",
++            "status": "busy",
++            "skipped_lock": True,
++            "note": "已有盘后任务在运行，未重跑日K或行业续更",
++        },
++    }
++
++
++def _run_industry_fund_flow_daily_roll(
++    data_dir: Path,
++    *,
++    cancel_event: threading.Event | None = None,
++    time_limit_s: float | None = None,
++) -> dict:
++    """Attach industry H5 daily continuation. Never raise into the daily-K path."""
++    try:
++        from app.services.free_sources.fund_flow import roll_industry_daily_from_h5
++
++        return roll_industry_daily_from_h5(
++            data_dir,
++            cancel_event=cancel_event,
++            time_limit_s=time_limit_s,
++        )
++    except Exception as e:
++        logger.warning("industry fund-flow daily roll failed: %s", e)
++        return {
++            "ok": False,
++            "kind": "board",
++            "status": "error",
++            "error": str(e),
++            "note": "行业日线续更失败，不影响已成功日K",
++        }
++
++
++def run_now(
++    repo: KlineRepository,
++    capset: CapabilitySet,
++    on_progress: ProgressCb | None = None,
++    override_start_date: Date | None = None,
++    industry_time_limit_s: float | None = None,
++) -> dict:
++    """Guard a single in-process pipeline. A second trigger does not redo daily K."""
++    global _PIPELINE_IN_FLIGHT
++    if not _PIPELINE_GUARD.acquire(blocking=False):
++        return _busy_pipeline_result()
++    _PIPELINE_IN_FLIGHT = True
++    _PIPELINE_CANCEL.clear()
++    try:
++        return _run_now_unlocked(
++            repo,
++            capset,
++            on_progress=on_progress,
++            override_start_date=override_start_date,
++            industry_time_limit_s=industry_time_limit_s,
++        )
++    finally:
++        _PIPELINE_IN_FLIGHT = False
++        try:
++            _PIPELINE_GUARD.release()
++        except RuntimeError:
++            pass
+ 
+ 
+ def _invalidate(table: str | None = None) -> None:
+@@ -126,11 +244,12 @@
+     }
+ 
+ 
+-def run_now(
++def _run_now_unlocked(
+     repo: KlineRepository,
+     capset: CapabilitySet,
+     on_progress: ProgressCb | None = None,
+     override_start_date: Date | None = None,
++    industry_time_limit_s: float | None = None,
+ ) -> dict:
+     """立即执行一次盘后管道,支持进度回调。
+ 
+@@ -835,6 +954,14 @@
+         )
+ 
+     quality_ok = bool(quality_report and quality_report.get("ok") is True)
++
++    # Industry continuation is after quality is decided and before done.
++    # Failure here must not flip quality_ok or rewrite daily_days.
++    industry_fund_flow_daily = _run_industry_fund_flow_daily_roll(
++        repo.store.data_dir,
++        cancel_event=_PIPELINE_CANCEL,
++        time_limit_s=industry_time_limit_s,
++    )
+     emit("done", 100, "完成" if quality_ok else "完成，但质量门禁未通过")
+     _invalidate(None)  # 兜底:全清
+ 
+@@ -864,6 +991,7 @@
+         "instruments_sync": instruments_result.as_dict(),
+         "skipped_stages": skipped,
+         "quality": quality_report,
++        "industry_fund_flow_daily": industry_fund_flow_daily,
+     }
+ 
+ 
+--- a/backend/app/api/pipeline.py
++++ b/backend/app/api/pipeline.py
+@@ -29,7 +29,8 @@
+     repo = request.app.state.repo
+     capset = request.app.state.capabilities
+ 
+-    # 检测卡死的 running job (如 reload 后孤儿 task)
++    # 检测卡死的 running job (如 reload 后孤儿 task)。
++    # 进程内仍在跑的 worker 不是孤儿：只复用，不 fail 后再开第二条 run_now。
+     existing_id = job_store.active_id()
+     if existing_id:
+         existing = job_store.get(existing_id)
+@@ -40,9 +41,20 @@
+                 try:
+                     start_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                     elapsed = (datetime.now(timezone.utc) - start_dt).total_seconds()
+-                    if elapsed > 600:  # 超过 10 分钟视为卡死
++                    in_flight = bool(daily_pipeline.pipeline_in_flight())
++                    if daily_pipeline.should_force_fail_stale_pipeline_job(
++                        in_flight=in_flight,
++                        elapsed_s=elapsed,
++                        stale_after_s=600,
++                    ):
+                         logger.warning("强制取消卡死 job %s (已运行 %.0fs)", existing_id, elapsed)
+                         job_store.fail(existing_id, "超时自动取消 (疑似 reload 后孤儿 task)")
++                    elif elapsed > 600 and in_flight:
++                        logger.warning(
++                            "job %s still in-flight after %.0fs; reuse without second run_now",
++                            existing_id,
++                            elapsed,
++                        )
+                 except Exception:
+                     pass
+ 
+@@ -97,6 +109,7 @@
+         raise HTTPException(status_code=404, detail="job not found")
+     if j["status"] not in ("running", "pending"):
+         raise HTTPException(status_code=400, detail=f"job status is {j['status']}, cannot cancel")
++    daily_pipeline.request_pipeline_cancel()
+     job_store.fail(job_id, "用户手动取消")
+     return {"cancelled": job_id}
+ 
+--- a/backend/app/services/ext_data.py
++++ b/backend/app/services/ext_data.py
+@@ -8,6 +8,8 @@
+ from typing import Literal
+ 
+ import polars as pl
++
++from app.services.atomic_io import atomic_write_parquet
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -394,6 +396,8 @@
+     config: ExtConfig,
+     data_dir: Path,
+     snapshot_date: date | None = None,
++    *,
++    atomic: bool = False,
+ ) -> int:
+     """将 DataFrame 写入扩展数据 Parquet。
+ 
+@@ -444,7 +448,10 @@
+                 raise
+ 
+     df = cast_df_to_schema(df, config.fields)
+-    df.write_parquet(out_path)
++    if atomic:
++        atomic_write_parquet(df, out_path)
++    else:
++        df.write_parquet(out_path)
+     logger.info("扩展表写入: %s → %s (%d 行)", config.id, out_path, len(df))
+     return len(df)
+ 
+--- a/frontend/src/components/SectorFundFlowPanel.tsx
++++ b/frontend/src/components/SectorFundFlowPanel.tsx
+@@ -47,6 +47,17 @@
+   const x = n(v)
+   if (x == null || x === 0) return 'text-muted'
+   return x > 0 ? 'text-bull' : 'text-bear'
++}
++
++function industryWindowFreshnessLine(windowData: FundFlowWindowResponse) {
++  const asOf = windowData.data_as_of || windowData.end || '—'
++  const statusText = windowData.freshness_status === 'fresh'
++    ? '足够新'
++    : windowData.freshness_status === 'stale'
++      ? '已陈旧'
++      : '无法确定'
++  const completeText = windowData.window_complete === false ? '窗口不完整' : '窗口完整'
++  return `数据截止 ${asOf} · ${statusText} · ${completeText}`
+ }
+ 
+ function moneyTone(v: number | null | undefined) {
+@@ -338,6 +349,9 @@
+           {windowData.missing_count ? ` · 缺 ${windowData.missing_count} 只` : ''}
+         </div>
+       ) : null}
++      {kind === 'board' && windowData ? (
++        <div className="mb-2 text-[10px] text-muted">{industryWindowFreshnessLine(windowData)}</div>
++      ) : null}
+       {(useWindowRanking ? windowQuery.isLoading : query.isLoading) ? (
+ 
+         <div className="flex items-center justify-center gap-2 py-10 text-[12px] text-muted">
+--- a/frontend/src/lib/api.ts
++++ b/frontend/src/lib/api.ts
+@@ -4008,6 +4008,11 @@
+   prior_note?: string | null
+   window_note?: string | null
+   source?: string
++  data_as_of?: string | null
++  freshness_status?: 'fresh' | 'stale' | 'unknown'
++  freshness_note?: string | null
++  expected_trading_day?: string | null
++  calendar_covers?: boolean
+ }
+ 
+ export interface FundFlowHistoryPoint {

@@ -20,9 +20,14 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.api.ai_guard import require_ai_http_access
 from app.indicators.levels import compute_levels, summarize_levels
 from app.services import stock_reports
-from app.services.stock_analyzer import analyze_stock_stream
+from app.services.stock_analyzer import (
+    KLINE_ANALYSIS_COLS,
+    analyze_stock_stream,
+    clean_kline_analysis_rows,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +149,97 @@ def get_levels(
     }
 
 
+def _compact_analysis_rows(rows: list[dict]) -> list[dict]:
+    """Drop nulls and unused false signals so 180 local bars stay under the Hermes budget."""
+    compact: list[dict] = []
+    for rec in rows:
+        item = {}
+        for key, value in rec.items():
+            if value is None:
+                continue
+            if key.startswith("signal_") and value is False:
+                continue
+            item[key] = value
+        compact.append(item)
+    return compact
+
+
+def _instrument_name(repo, symbol: str) -> str:
+    """Read-only name lookup. Never fetches or syncs market data."""
+    try:
+        instruments = repo.get_instruments()
+    except Exception:
+        return ""
+    if instruments.is_empty() or "symbol" not in instruments.columns:
+        return ""
+    matched = instruments.filter(pl.col("symbol") == symbol)
+    if matched.is_empty() or "name" not in matched.columns:
+        return ""
+    name = matched["name"][0]
+    return str(name) if name is not None else ""
+
+
+@router.get("/daily-window")
+def get_daily_window(
+    request: Request,
+    symbol: str = Query(..., description="标的代码,如 300750.SZ"),
+    days: int = Query(90, ge=10, le=180, description="返回最近 N 根本地日 K"),
+):
+    """Local-only narrow daily window for Hermes stock analysis.
+
+    Reads repo.get_daily only. Missing local bars return an empty rows list
+    and never trigger live fetch or sync.
+    """
+    symbol = (symbol or "").strip().upper()
+    if not symbol:
+        raise HTTPException(400, "symbol 不能为空")
+
+    repo = request.app.state.repo
+    end = date.today()
+    # Pull a long local history, then keep the latest `days` bars.
+    # available is the full local count, not just this request window.
+    history_start = date(1990, 1, 1)
+    df = repo.get_daily(symbol, history_start, end)
+    name = _instrument_name(repo, symbol)
+    empty = {
+        "symbol": symbol,
+        "name": name,
+        "source": "local_enriched",
+        "requested_days": days,
+        "available": 0,
+        "returned": 0,
+        "first_date": None,
+        "last_date": None,
+        "truncated": False,
+        "truncated_side": None,
+        "rows": [],
+    }
+    if df.is_empty():
+        return empty
+
+    if "date" in df.columns:
+        df = df.sort("date")
+    available = int(df.height)
+    window = df.tail(days)
+    rows = _compact_analysis_rows(clean_kline_analysis_rows(window, KLINE_ANALYSIS_COLS))
+    first_date = rows[0]["date"] if rows else None
+    last_date = rows[-1]["date"] if rows else None
+    truncated = available > len(rows)
+    return {
+        "symbol": symbol,
+        "name": name,
+        "source": "local_enriched",
+        "requested_days": days,
+        "available": available,
+        "returned": len(rows),
+        "first_date": first_date,
+        "last_date": last_date,
+        "truncated": truncated,
+        "truncated_side": "tail" if truncated else None,
+        "rows": rows,
+    }
+
+
 class AnalyzeRequest(BaseModel):
     """AI 个股分析请求。"""
     symbol: str
@@ -159,6 +255,7 @@ async def analyze_stock(request: Request, req: AnalyzeRequest):
     """
     if not req.symbol:
         raise HTTPException(400, "symbol 不能为空")
+    require_ai_http_access()
 
     repo = request.app.state.repo
     data_dir = repo.store.data_dir

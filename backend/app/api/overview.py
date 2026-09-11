@@ -8,9 +8,10 @@ from datetime import date
 from typing import Any
 
 import polars as pl
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from app.services.ext_data import ExtConfig, ExtConfigStore
+from app.services.index_const import CORE_INDEX_NAMES, CORE_INDEX_SYMBOLS
 
 router = APIRouter(prefix="/api/overview", tags=["overview"])
 
@@ -31,13 +32,29 @@ def invalidate_overview_cache() -> None:
     _cache_ts = 0.0
 
 
-CORE_INDEX_NAMES = {
-    "000001.SH": "上证指数",
-    "399001.SZ": "深证成指",
-    "399006.SZ": "创业板指",
-    "000680.SH": "科创综指",
-}
-CORE_INDEX_SYMBOLS = tuple(CORE_INDEX_NAMES.keys())
+def _readiness_stats(value: Any) -> dict[str, Any] | None:
+    """Return only the date coverage needed by shared user workbenches."""
+    if not isinstance(value, dict):
+        return None
+    return {
+        "earliest_date": value.get("earliest_date"),
+        "latest_date": value.get("latest_date"),
+        "trading_days": int(value.get("trading_days") or 0),
+    }
+
+
+@router.get("/data-readiness")
+def data_readiness(request: Request) -> dict[str, Any]:
+    """Expose minimal shared-market readiness without data-console metadata."""
+    service = getattr(request.app.state, "catalog_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail={"code": "catalog_unavailable"})
+    status = service.compatibility_status()
+    return {
+        "daily": _readiness_stats(status.get("daily")),
+        "enriched": _readiness_stats(status.get("enriched")),
+    }
+
 
 _DIMENSION_SEP = re.compile(r"[、,，;；|/\s]+")
 
@@ -353,6 +370,7 @@ def _build_overview(request: Request, as_of: date | None = None) -> dict:
         quote_service=getattr(request.app.state, "quote_service", None),
         depth_service=getattr(request.app.state, "depth_service", None),
         as_of=as_of,
+        default_to_live=as_of is None,
     )
 
 

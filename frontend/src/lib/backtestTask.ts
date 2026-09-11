@@ -120,6 +120,7 @@ function connectSSE(url: string): void {
 /** 启动一次 SSE 回测任务 */
 export function startBacktest(params: {
   strategy_id: string
+  strategy_owner_user_id?: string | null
   symbols?: string[] | null
   start?: string | null
   end?: string | null
@@ -149,6 +150,7 @@ export function startBacktest(params: {
 
   const qs = buildQuery({
     strategy_id: params.strategy_id,
+    strategy_owner_user_id: params.strategy_owner_user_id,
     symbols: params.symbols?.join(','),
     start: params.start ?? undefined,
     end: params.end ?? undefined,

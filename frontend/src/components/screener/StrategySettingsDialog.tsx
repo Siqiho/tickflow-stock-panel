@@ -1,7 +1,8 @@
 ﻿import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Settings2, RotateCcw, Save, ChevronDown, Filter, Star, TrendingUp, Sparkles } from 'lucide-react'
-import { api, type StrategyDetail, type StrategyParamDef } from '@/lib/api'
+import { X, Settings2, RotateCcw, Save, ChevronDown, Filter, Star, TrendingUp, Sparkles, Layers, Plus, Trash2 } from 'lucide-react'
+import { api, type StrategyDetail, type StrategyParamDef, type CompositeChildInfo } from '@/lib/api'
+import { toPercentages, normalizeWeights } from '@/lib/weights'
 import { BUILTIN_COLUMNS } from '@/lib/watchlist-columns'
 import { color } from '@/lib/colors'
 import { SignalPicker } from './SignalPicker'
@@ -217,6 +218,10 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
   const [editingScoring, setEditingScoring] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [compositeChildren, setCompositeChildren] = useState<CompositeChildInfo[]>([])
+  const [editingChildId, setEditingChildId] = useState<string | null>(null)
+  const [allStrategies, setAllStrategies] = useState<{ id: string; name: string; source?: string }[]>([])
+  const [showAddChild, setShowAddChild] = useState(false)
 
   // 辅助：更新 basicFilter 某个 key
   const setBF = useCallback((key: string, value: any) => {
@@ -226,6 +231,7 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
   // 加载策略详情
   useEffect(() => {
     if (!strategyId) return
+    setEditingChildId(null)
     setLoading(true)
     api.strategyGet(strategyId)
       .then(d => {
@@ -244,6 +250,21 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
         setExitSignals(d.exit_signals ?? [])
         setDisplayLimit(d.display_limit ?? null)
         setBasicFilterEnabled(d.basic_filter?.enabled !== false)
+        setCompositeChildren((() => {
+          const list = d.composite_children ?? []
+          const pcts = toPercentages(list.map(c => c.weight))
+          return list.map((c, i) => ({
+            id: (c as { id?: string }).id ?? c.strategy_id,
+            name: (c as { name?: string }).name ?? c.strategy_id,
+            source: (c as { source?: string }).source ?? '',
+            weight: pcts[i],
+          }))
+        })())
+        if (d.source === 'composite') {
+          api.screenerStrategies().then(data => {
+            setAllStrategies((data.presets ?? []).filter(s => s.source !== 'composite' && s.id !== strategyId).map(s => ({ id: s.id, name: s.name, source: s.source })))
+          }).catch(() => setAllStrategies([]))
+        }
       })
       .catch(() => setDetail(null))
       .finally(() => setLoading(false))
@@ -265,6 +286,12 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
         entry_signals: entrySignals,
         exit_signals: exitSignals,
         display_limit: displayLimit,
+        ...(detail?.source === 'composite'
+          ? { children: (() => {
+              const normalized = normalizeWeights(compositeChildren.map(c => c.weight))
+              return compositeChildren.map((c, i) => ({ strategy_id: c.id, weight: normalized[i] }))
+            })() }
+          : {}),
       })
       onSaved?.(displayLimit)
       onClose()
@@ -321,7 +348,7 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-        onClick={e => { if (e.target === e.currentTarget) onClose() }}
+        onClick={e => { if (editingChildId) return; if (e.target === e.currentTarget) onClose() }}
       >
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -335,10 +362,10 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
             <div className="flex items-center gap-2.5">
               <Settings2 className="h-4 w-4 text-accent" />
               <span className="text-sm font-semibold text-foreground">{detail?.name ?? strategyId}</span>
-              {detail && <span className="text-[10px] px-1.5 py-0.5 rounded bg-elevated text-muted">{{ builtin: '内置', custom: '自定义', ai: 'AI' }[detail.source] ?? detail.source}</span>}
+              {detail && <span className="text-[10px] px-1.5 py-0.5 rounded bg-elevated text-muted">{{ builtin: '内置', custom: '自定义', ai: 'AI', composite: '叠加' }[detail.source] ?? detail.source}</span>}
               <span className="text-[10px] text-muted/40 font-mono">{strategyId}</span>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer"><X className="h-4 w-4 text-muted" /></button>
+            <button onClick={() => { if (editingChildId) return; onClose() }} className="p-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer"><X className="h-4 w-4 text-muted" /></button>
           </div>
 
           {/* 内容 */}
@@ -368,6 +395,83 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
                     <span className="text-[10px] text-muted/50">只</span>
                   </div>
                 </div>
+
+                {detail.source === 'composite' && (() => {
+                  const compositeTotal = compositeChildren.reduce((s, c) => s + (c.weight || 0), 0)
+                  return (
+                    <div className="rounded-xl border border-teal-500/20 bg-teal-500/[0.04] px-3.5 py-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Layers className="h-4 w-4 text-teal-400" />
+                        <span className="text-sm font-medium text-foreground">子策略与权重</span>
+                        <span className="text-[10px] text-muted flex items-center gap-1.5">
+                          共 {compositeChildren.length} 个 · 权重
+                          <span className={`font-mono ${compositeChildren.length > 0 && compositeTotal !== 100 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                            {compositeTotal}%
+                          </span>
+                          {compositeChildren.length > 0 && compositeTotal !== 100 && (
+                            <span className="text-amber-400/60">(保存时自动按比例归一)</span>
+                          )}
+                        </span>
+                        <button onClick={() => setShowAddChild(v => !v)} className="ml-auto inline-flex items-center gap-1 h-6 px-2 rounded-lg border border-teal-500/30 bg-teal-500/10 text-[11px] text-teal-400 hover:bg-teal-500/20">
+                          <Plus className="h-3 w-3" />添加
+                        </button>
+                      </div>
+                      {showAddChild && (
+                        <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-border/40 bg-base p-1.5">
+                          {allStrategies.filter(s => !compositeChildren.some(c => c.id === s.id)).map(s => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => {
+                                setCompositeChildren(prev => [...prev, { id: s.id, name: s.name, source: s.source ?? '', weight: prev.length === 0 ? 100 : 10 }])
+                                setShowAddChild(false)
+                              }}
+                              className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs hover:bg-accent/10"
+                            >
+                              <span className="truncate">{s.name}</span>
+                              <span className="font-mono text-[9px] text-muted/50">{s.id}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div className="space-y-1.5">
+                        {compositeChildren.map((c, i) => (
+                          <div key={c.id} className="flex items-center gap-2 rounded-lg border border-border/40 bg-base px-2 py-1.5">
+                            <span className="text-[10px] text-muted/50 font-mono w-5">{i + 1}</span>
+                            <div className="flex-1 min-w-0">
+                              <button
+                                type="button"
+                                onClick={() => setEditingChildId(c.id)}
+                                title="点击编辑该子策略的配置"
+                                className="truncate text-left text-xs font-medium text-foreground transition-colors hover:text-accent cursor-pointer"
+                              >
+                                {c.name || c.id}
+                              </button>
+                              <div className="text-[10px] text-muted/50 font-mono">{c.id}</div>
+                            </div>
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              step={1}
+                              value={c.weight}
+                              onChange={e => setCompositeChildren(prev => prev.map((p, j) => j === i ? { ...p, weight: parseInt(e.target.value) || 0 } : p))}
+                              className="h-1 w-24 cursor-pointer accent-teal-400"
+                              aria-label={`${c.name || c.id}权重`}
+                            />
+                            <span className="w-9 text-right font-mono text-[10px] text-muted">{Math.round(c.weight)}%</span>
+                            <button onClick={() => setCompositeChildren(prev => prev.filter(p => p.id !== c.id))} className="text-danger/50 hover:text-danger p-1">
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="text-[10px] text-muted/60 pt-1 border-t border-border/30">
+                        提示: 权重按相对比例生效, 保存时自动归一; 修改后点底部"保存设置"生效。
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 {/* 三列 */}
                 <div className="grid grid-cols-3 gap-5 items-start">
@@ -551,7 +655,7 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
               )}
             </div>
             <div className="flex items-center gap-2">
-              {(detail?.source === 'ai' || detail?.source === 'custom') && (
+              {onAiModify && (detail?.source === 'ai' || detail?.source === 'custom') && (
                 <button onClick={onAiModify}
                   className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-amber-400/30 bg-amber-400/8 text-amber-700 dark:text-amber-400 text-xs font-medium hover:bg-amber-400/15 transition-colors cursor-pointer">
                   <Sparkles className="h-3.5 w-3.5" />AI 修改
@@ -604,6 +708,23 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
         </motion.div>
       </AnimatePresence>
     )}
+
+    <StrategySettingsDialog
+      strategyId={editingChildId}
+      onClose={() => setEditingChildId(null)}
+      onSaved={() => {
+        if (!editingChildId) return
+        api.strategyGet(editingChildId)
+          .then(d => setCompositeChildren(prev =>
+            prev.map(c => c.id === editingChildId ? { ...c, name: d.name ?? c.name } : c),
+          ))
+          .catch(() => {})
+      }}
+      onDeleted={() => {
+        setCompositeChildren(prev => prev.filter(c => c.id !== editingChildId))
+        setEditingChildId(null)
+      }}
+    />
     </>
   )
 }

@@ -1,8 +1,8 @@
 [project]
 name = "one-trading-backend"
-version = "0.1.67"
+version = "0.1.68"
 description = "one-trading A 股选股 + 监控 + 回测面板 — TickFlow 适配"
-readme = "../README.md"
+readme = { text = "one-trading backend service", content-type = "text/plain" }
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
@@ -14,10 +14,14 @@ dependencies = [
     "python-multipart>=0.0.6",
     "sse-starlette>=2.0",
     # Data
-    "polars>=1.0",
+    # 1.44 起含流式引擎 executor 线程调度修复; 上限锁定一个已验证的大版本,
+    # 升级需重跑 scripts/stress_polars_concurrency.py 压测 (并发死锁回归)。
+    "polars>=1.44,<1.45",
     "duckdb>=1.0",
     "pyarrow>=16.0",
     "pandas>=2.2",                # 仅在 BacktestService 边界使用,见 §7.4 / ADR-19
+    "psutil>=5.9",                # 独立回测/挖掘 worker 的峰值 RSS
+    "easy-tdx==1.20.6",           # 自选股按需读取历史单日分时（公开 TDX）
     "fastexcel>=0.10",            # Polars 读取 xlsx/xls
     # TickFlow 官方 SDK
     "tickflow[all]>=0.1.23",
@@ -39,7 +43,7 @@ dependencies = [
 # machines without AVX2/FMA support.
 # Enable with: uv sync --extra legacy-cpu
 legacy-cpu = [
-    "polars[rtcompat]>=1.0",
+    "polars[rtcompat]>=1.44,<1.45",
 ]
 
 # 回测依赖 vectorbt → numba → llvmlite,体积大且 macOS/Intel 上无预构建 wheel 时
@@ -61,6 +65,14 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
 ]
+
+# easy-tdx 1.20.6 官方 METADATA: Requires-Python >=3.10, wheel=py3-none-any。
+# 2026-09 起 PyPI simple/JSON 已 404（项目页下架），但 files.pythonhosted.org
+# 上的官方 wheel 仍可下载。用 url source 让 uv 在全部 marker 环境（含
+# python>=3.15 + win32）解析到同一可安装工件，而不是把项目 requires-python
+# 或系统支持悄悄收窄。
+[tool.uv.sources]
+easy-tdx = { url = "https://files.pythonhosted.org/packages/d9/f5/685ec645a10314875fda34eac5d68cb6696587a1154359274f527b831ea6/easy_tdx-1.20.6-py3-none-any.whl" }
 
 [build-system]
 requires = ["hatchling"]

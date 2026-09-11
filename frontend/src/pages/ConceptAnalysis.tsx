@@ -1,10 +1,13 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence } from 'framer-motion'
 import {
   Activity,
+  CloudDownload,
   Crown,
   Layers3,
+  Loader2,
   RefreshCw,
   Repeat,
   Search,
@@ -14,22 +17,114 @@ import {
 } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
+import { SourceTraceButton } from '@/components/SourceTraceButton'
 import { SectorFundFlowPanel, useTopFundFlowName } from '@/components/SectorFundFlowPanel'
 import { AnalysisConfigDialog, PresetFetchState, type AnalysisFieldConfig } from '@/components/analysis-shared'
-import { StockPreviewDialog } from '@/components/StockPreviewDialog'
+import { StockPreviewDialog, toNavItems, type NavItem } from '@/components/StockPreviewDialog'
 import { RpsRotationDialog } from '@/components/RpsRotationDialog'
-import { api, type MarketSnapshotRow } from '@/lib/api'
+import { api, type FundFlowListResponse, type MarketSnapshotRow, type MarketSnapshotResponse } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { storage } from '@/lib/storage'
 import { fmtBigNum, fmtPct, priceColorClass } from '@/lib/format'
 import { cn } from '@/lib/cn'
-import { resolveDimension, type DimensionGroup, type StockRow } from '@/lib/analysis-adapter'
+import {
+  isUsableDimensionField,
+  normalizeMarketSnapshotPctRows,
+  resolveDimension,
+  resolveDimensionConfigId,
+  type DimensionGroup,
+  type StockRow,
+} from '@/lib/analysis-adapter'
+import { SOURCE_TRACE } from '@/lib/sourceTraceSubjects'
+import { clearPageContext, setPageContext } from '@/lib/pageContext'
+import { buildConceptAnalysisPageContext } from '@/lib/pageContextSnapshots'
+import { PageContextModule } from '@/components/PageContextModule'
 
-const KEYWORDS = ['concept', '概念', 'theme', '题材', '板块']
-const CANDIDATE_FIELDS = ['concept', '概念', 'theme', '题材', '板块', 'concept_name', '概念名称']
+const CANDIDATE_FIELDS = ['concept', '概念', 'theme', '题材', '板块', 'concept_name', '概念名称', '所属概念']
 const PAGE_LIMIT = 12000
 const MAX_RENDERED_CONCEPTS = 120
 const MAX_RENDERED_STOCKS = 160
+const PRESET_CONCEPT_ID = 'ext_gn_ths'
+const CARD_UPDATE_SUCCESS_MS = 3000
+const CARD_UPDATE_STATUS_KEY = 'one-trading.concept-analysis-card-update-status'
+
+type ConceptCardKey = 'heroes' | 'pulse-up' | 'pulse-down' | 'matrix' | 'focus'
+type CardUpdateStatus = {
+  state: 'idle' | 'updating' | 'success' | 'error'
+  at?: string
+  error?: string
+}
+
+function readStoredCardUpdateStatus(): Partial<Record<ConceptCardKey, CardUpdateStatus>> {
+  try {
+    const raw = sessionStorage.getItem(CARD_UPDATE_STATUS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Partial<Record<ConceptCardKey, CardUpdateStatus>>
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeStoredCardUpdateStatus(value: Partial<Record<ConceptCardKey, CardUpdateStatus>>) {
+  try {
+    sessionStorage.setItem(CARD_UPDATE_STATUS_KEY, JSON.stringify(value))
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function formatCardUpdatedAt(iso?: string) {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+function CardUpdateStatusLine({ status }: { status?: CardUpdateStatus }) {
+  if (!status || status.state === 'idle') return null
+  if (status.state === 'updating') {
+    return <div className="mb-2 text-[10px] text-muted">正在更新…</div>
+  }
+  if (status.state === 'error') {
+    return <div className="mb-2 text-[10px] text-bear">{status.error || '更新失败'}</div>
+  }
+  return (
+    <div className="mb-2 rounded-lg border border-bull/20 bg-bull/5 px-2 py-1 font-mono text-[10px] text-secondary">
+      已更新 · {formatCardUpdatedAt(status.at)}
+    </div>
+  )
+}
+
+function CardUpdateButton({
+  onUpdate,
+  updating,
+  label = '更新',
+}: {
+  onUpdate?: () => void
+  updating?: boolean
+  label?: string
+}) {
+  if (!onUpdate) return null
+  return (
+    <button
+      type="button"
+      onClick={event => {
+        event.stopPropagation()
+        onUpdate()
+      }}
+      disabled={updating}
+      aria-label={label}
+      title={label}
+      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-btn text-muted transition-colors hover:bg-elevated hover:text-foreground disabled:opacity-50"
+    >
+      {updating
+        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        : <CloudDownload className="h-3.5 w-3.5" />}
+    </button>
+  )
+}
 
 type SortMode = 'heat' | 'avgPct' | 'leader' | 'amount' | 'down'
 
@@ -73,22 +168,6 @@ function saveConfig(c: AnalysisFieldConfig) {
   storage.conceptAnalysisConfig.set(c)
 }
 
-function pickBestConfig(
-  configs: { id: string; label: string; description?: string; fields: { name: string; label: string }[] }[],
-): string {
-  let best = ''
-  let bestScore = 0
-  for (const c of configs) {
-    const haystack = [c.id, c.label, c.description ?? '', ...c.fields.flatMap(f => [f.name, f.label])].join(' ').toLowerCase()
-    const score = KEYWORDS.reduce((n, k) => n + (haystack.includes(k) ? 1 : 0), 0)
-    if (score > bestScore) {
-      bestScore = score
-      best = c.id
-    }
-  }
-  return best
-}
-
 function symbolKeys(symbol: unknown): string[] {
   const raw = String(symbol ?? '').trim()
   if (!raw) return []
@@ -98,7 +177,7 @@ function symbolKeys(symbol: unknown): string[] {
 
 function buildMarketMap(rows: MarketSnapshotRow[]) {
   const map = new Map<string, MarketSnapshotRow>()
-  for (const r of rows) {
+  for (const r of normalizeMarketSnapshotPctRows(rows)) {
     for (const key of symbolKeys(r.symbol)) map.set(key, r)
   }
   return map
@@ -235,6 +314,8 @@ function statSort(mode: SortMode) {
 }
 
 export function ConceptAnalysis() {
+  const [searchParams] = useSearchParams()
+  const requestedFocus = (searchParams.get('focus') ?? '').trim()
   const [fieldConfig, setFieldConfig] = useState<AnalysisFieldConfig>(loadConfig)
   const [showConfig, setShowConfig] = useState(false)
   const [search, setSearch] = useState('')
@@ -242,17 +323,36 @@ export function ConceptAnalysis() {
   const [sortMode, setSortMode] = useState<SortMode>('heat')
   const [previewSymbol, setPreviewSymbol] = useState<string | null>(null)
   const [previewName, setPreviewName] = useState<string>('')
+  const [previewNavList, setPreviewNavList] = useState<NavItem[]>([])
+  const handleStockClick = useCallback((symbol: string, name?: string, navList?: NavItem[]) => {
+    setPreviewSymbol(symbol)
+    setPreviewName(name ?? '')
+    setPreviewNavList(navList ?? [])
+  }, [])
   const topFlow = useTopFundFlowName('concept')
   const [showRps, setShowRps] = useState(false)
+  const [cardUpdateStatus, setCardUpdateStatus] = useState<Partial<Record<ConceptCardKey, CardUpdateStatus>>>(readStoredCardUpdateStatus)
 
   const configsQuery = useQuery({ queryKey: QK.extData, queryFn: api.extDataList })
   const availableConfigs = configsQuery.data?.items ?? []
-  // 用户配置的 configId 可能已失效 (扩展数据被删除), 此时回退到自动选择,
-  // 避免用失效 ID 请求接口报错; 用户仍可点配置按钮重新选择。
-  const preferredConfigId = fieldConfig.configId || pickBestConfig(availableConfigs)
-  const preferredConfig = availableConfigs.find(c => c.id === preferredConfigId)
-  const activeConfigId = preferredConfig ? preferredConfigId : pickBestConfig(availableConfigs)
+  // 旧版可能把概念资金流快照及其 as_of 保存成概念维度。只有字段层真实包含
+  // 概念分类的配置才继续生效，否则回退到内置股票→概念 membership 表。
+  const activeConfigId = resolveDimensionConfigId(
+    availableConfigs,
+    fieldConfig.configId,
+    CANDIDATE_FIELDS,
+    [PRESET_CONCEPT_ID],
+  )
   const activeConfig = availableConfigs.find(c => c.id === activeConfigId)
+  const requestedDimensionField = activeConfig?.fields.find(field => field.name === fieldConfig.dimensionField)
+  const effectiveDimensionField = requestedDimensionField && isUsableDimensionField(requestedDimensionField)
+    ? requestedDimensionField.name
+    : undefined
+  const effectiveFieldConfig: AnalysisFieldConfig = {
+    ...fieldConfig,
+    configId: activeConfigId || undefined,
+    dimensionField: effectiveDimensionField,
+  }
 
   const rowsQuery = useQuery({
     queryKey: QK.extDataRows(activeConfigId, undefined, PAGE_LIMIT),
@@ -261,7 +361,6 @@ export function ConceptAnalysis() {
   })
 
   // 内置概念预设 (ext_gn_ths) 手动获取数据
-  const PRESET_CONCEPT_ID = 'ext_gn_ths'
   const queryClient = useQueryClient()
   const fetchMutation = useMutation({
     mutationFn: () => api.extDataPresetFetch(PRESET_CONCEPT_ID),
@@ -283,8 +382,8 @@ export function ConceptAnalysis() {
 
   const marketMap = useMemo(() => buildMarketMap(marketQuery.data?.rows ?? []), [marketQuery.data?.rows])
   const resolved = useMemo(
-    () => resolveDimension(rowsQuery.data, activeConfig, fieldConfig.dimensionField ? [fieldConfig.dimensionField, ...CANDIDATE_FIELDS] : CANDIDATE_FIELDS),
-    [rowsQuery.data, activeConfig, fieldConfig.dimensionField],
+    () => resolveDimension(rowsQuery.data, activeConfig, effectiveDimensionField ? [effectiveDimensionField, ...CANDIDATE_FIELDS] : CANDIDATE_FIELDS),
+    [rowsQuery.data, activeConfig, effectiveDimensionField],
   )
 
   const stats = useMemo(() => {
@@ -292,6 +391,14 @@ export function ConceptAnalysis() {
       .map(g => calcConceptStat(g, marketMap))
       .filter(s => s.count > 0)
   }, [resolved.groups, marketMap])
+
+  useEffect(() => {
+    if (!requestedFocus || stats.length === 0) return
+    const match = stats.find(item => item.key === requestedFocus)
+      ?? stats.find(item => item.key.includes(requestedFocus) || requestedFocus.includes(item.key))
+    setSearch(requestedFocus)
+    setSelectedKey(match?.key ?? null)
+  }, [requestedFocus, stats])
 
   const filteredStats = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -324,6 +431,108 @@ export function ConceptAnalysis() {
     setSelectedKey(null)
   }
 
+  useEffect(() => {
+    writeStoredCardUpdateStatus(cardUpdateStatus)
+  }, [cardUpdateStatus])
+
+  useEffect(() => {
+    const timers = Object.entries(cardUpdateStatus).flatMap(([key, status]) => {
+      if (status?.state !== 'success' || !status.at) return []
+      const elapsed = Date.now() - new Date(status.at).getTime()
+      const wait = Math.max(0, CARD_UPDATE_SUCCESS_MS - elapsed)
+      const timer = window.setTimeout(() => {
+        setCardUpdateStatus(current => {
+          if (current[key as ConceptCardKey]?.state !== 'success') return current
+          const next = { ...current }
+          delete next[key as ConceptCardKey]
+          return next
+        })
+      }, wait)
+      return [timer]
+    })
+    return () => {
+      for (const timer of timers) window.clearTimeout(timer)
+    }
+  }, [cardUpdateStatus])
+
+  const handleCardUpdate = async (key: ConceptCardKey) => {
+    if (cardUpdateStatus[key]?.state === 'updating') return
+    setCardUpdateStatus(current => ({ ...current, [key]: { state: 'updating' } }))
+    try {
+      if (key === 'heroes') {
+        const next = await api.fundFlowConcepts(200)
+        queryClient.setQueryData<FundFlowListResponse>(QK.fundFlowConcepts(200), next)
+      } else {
+        const [nextSnapshot, membership] = await Promise.all([
+          api.marketSnapshot(),
+          activeConfigId
+            ? api.extDataRows(activeConfigId, { limit: PAGE_LIMIT })
+            : Promise.resolve(null),
+        ])
+        queryClient.setQueryData<MarketSnapshotResponse>(QK.marketSnapshot, nextSnapshot)
+        if (activeConfigId && membership) {
+          queryClient.setQueryData(QK.extDataRows(activeConfigId, undefined, PAGE_LIMIT), membership)
+        }
+      }
+      setCardUpdateStatus(current => ({
+        ...current,
+        [key]: { state: 'success', at: new Date().toISOString() },
+      }))
+    } catch (error: unknown) {
+      setCardUpdateStatus(current => ({
+        ...current,
+        [key]: {
+          state: 'error',
+          error: error instanceof Error ? error.message : '更新失败',
+        },
+      }))
+    }
+  }
+
+  useEffect(() => {
+    const asOf = marketQuery.data?.as_of ?? rowsQuery.data?.date ?? null
+    setPageContext(buildConceptAnalysisPageContext({
+      asOf,
+      search,
+      sortMode,
+      totalGroups: stats.length,
+      totalSymbols,
+      breadth: conceptBreadth,
+      leading: leading.slice(0, 8).map(item => ({
+        key: item.key,
+        avgPct: item.avgPct,
+        count: item.count,
+        leaderName: item.leader?.name ?? item.leader?.symbol ?? null,
+      })),
+      falling: falling.slice(0, 5).map(item => ({
+        key: item.key,
+        avgPct: item.avgPct,
+        count: item.count,
+      })),
+      selectedFocusId: selected ? 'focus' : 'matrix',
+      hasTreemap: false,
+      topFlowName: topFlow.name,
+      selected: selected ? {
+        key: selected.key,
+        count: selected.count,
+        avgPct: selected.avgPct,
+        heatScore: selected.heatScore,
+        totalAmount: selected.totalAmount,
+        upCount: selected.upCount,
+        downCount: selected.downCount,
+        stocks: selected.stocks.map(stock => ({
+          symbol: stock.symbol,
+          name: stock.name,
+          change_pct: stock.change_pct,
+          leaderScore: stock.leaderScore,
+        })),
+      } : null,
+      empty: !configsQuery.isLoading && (stats.length === 0 || !activeConfig),
+      hint: !activeConfig ? '暂无概念数据' : resolved.hint,
+    }))
+    return () => clearPageContext('/concept-analysis')
+  }, [activeConfig, conceptBreadth, configsQuery.isLoading, falling, leading, marketQuery.data?.as_of, resolved.hint, rowsQuery.data?.date, search, selected, sortMode, stats.length, totalSymbols])
+
   if (configsQuery.isLoading) {
     return <div className="flex h-full items-center justify-center"><RefreshCw className="h-5 w-5 animate-spin text-muted" /></div>
   }
@@ -350,7 +559,7 @@ export function ConceptAnalysis() {
           />
         </div>
         <AnimatePresence>
-          {showConfig && <AnalysisConfigDialog currentConfig={fieldConfig} onSave={handleSaveConfig} onClose={() => setShowConfig(false)} />}
+          {showConfig && <AnalysisConfigDialog currentConfig={effectiveFieldConfig} onSave={handleSaveConfig} onClose={() => setShowConfig(false)} />}
         </AnimatePresence>
       </>
     )
@@ -395,20 +604,35 @@ export function ConceptAnalysis() {
             conceptBreadth={conceptBreadth}
             topFlowName={topFlow.name}
             topFlowNet={topFlow.mainNet}
+            selectedKey={selected?.key ?? null}
+            onSelect={setSelectedKey}
+            onUpdate={() => { void handleCardUpdate('heroes') }}
+            updating={cardUpdateStatus.heroes?.state === 'updating'}
+            updateStatus={cardUpdateStatus.heroes}
           />
 
+          <PageContextModule id="fund-flow">
           <SectorFundFlowPanel kind="concept" top={8} />
+          </PageContextModule>
 
           <MarketPulse
             leading={leading}
             falling={falling}
             selectedKey={selected?.key ?? null}
             onSelect={setSelectedKey}
-            onStockClick={(sym, name) => { setPreviewSymbol(sym); setPreviewName(name ?? '') }}
+            activeSymbol={previewSymbol}
+            onStockClick={handleStockClick}
+            onUpdateUp={() => { void handleCardUpdate('pulse-up') }}
+            onUpdateDown={() => { void handleCardUpdate('pulse-down') }}
+            updatingUp={cardUpdateStatus['pulse-up']?.state === 'updating'}
+            updatingDown={cardUpdateStatus['pulse-down']?.state === 'updating'}
+            updateStatusUp={cardUpdateStatus['pulse-up']}
+            updateStatusDown={cardUpdateStatus['pulse-down']}
           />
 
           {stats.length > 0 ? (
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[18rem_1fr]">
+              <PageContextModule id="matrix">
               <ConceptRail
                 stats={filteredStats.slice(0, MAX_RENDERED_CONCEPTS)}
                 selectedKey={selected?.key ?? null}
@@ -417,8 +641,21 @@ export function ConceptAnalysis() {
                 onSearch={v => { setSearch(v); setSelectedKey(null) }}
                 onSort={setSortMode}
                 onSelect={setSelectedKey}
+                onUpdate={() => { void handleCardUpdate('matrix') }}
+                updating={cardUpdateStatus.matrix?.state === 'updating'}
+                updateStatus={cardUpdateStatus.matrix}
               />
-              <ConceptFocus stat={selected} onStockClick={(sym, name) => { setPreviewSymbol(sym); setPreviewName(name ?? '') }} />
+              </PageContextModule>
+              <PageContextModule id="focus">
+              <ConceptFocus
+                stat={selected}
+                activeSymbol={previewSymbol}
+                onStockClick={handleStockClick}
+                onUpdate={() => { void handleCardUpdate('focus') }}
+                updating={cardUpdateStatus.focus?.state === 'updating'}
+                updateStatus={cardUpdateStatus.focus}
+              />
+              </PageContextModule>
             </div>
           ) : rowsQuery.isLoading ? (
             <div className="rounded-2xl border border-border bg-surface px-6 py-16 text-center text-sm text-muted">正在计算概念强度...</div>
@@ -437,14 +674,16 @@ export function ConceptAnalysis() {
       </div>
 
       <AnimatePresence>
-        {showConfig && <AnalysisConfigDialog currentConfig={fieldConfig} onSave={handleSaveConfig} onClose={() => setShowConfig(false)} />}
+        {showConfig && <AnalysisConfigDialog currentConfig={effectiveFieldConfig} onSave={handleSaveConfig} onClose={() => setShowConfig(false)} />}
       </AnimatePresence>
 
       {previewSymbol && (
         <StockPreviewDialog
           symbol={previewSymbol}
           name={previewName}
-          onClose={() => { setPreviewSymbol(null); setPreviewName('') }}
+          onClose={() => { setPreviewSymbol(null); setPreviewName(''); setPreviewNavList([]) }}
+          navList={previewNavList}
+          onNavigate={(sym, n) => { setPreviewSymbol(sym); setPreviewName(n ?? '') }}
         />
       )}
 
@@ -462,6 +701,11 @@ function HeroPanel({
   conceptBreadth,
   topFlowName,
   topFlowNet,
+  selectedKey,
+  onSelect,
+  onUpdate,
+  updating,
+  updateStatus,
 }: {
   leading?: ConceptStat
   falling?: ConceptStat
@@ -469,11 +713,26 @@ function HeroPanel({
   conceptBreadth: { up: number; down: number; flat: number }
   topFlowName?: string | null
   topFlowNet?: number | null
+  selectedKey?: string | null
+  onSelect?: (key: string) => void
+  onUpdate?: () => void
+  updating?: boolean
+  updateStatus?: CardUpdateStatus
 }) {
   return (
-    <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-      <HeroMetric icon={TrendingUp} label="最强主线" value={leading?.key ?? '—'} hint={leading?.avgPct != null ? <span className={priceColorClass(leading.avgPct)}>{fmtPct(leading.avgPct)}</span> : '等待行情'} tone="up" />
-      <HeroMetric icon={TrendingDown} label="最大风险" value={falling?.key ?? '—'} hint={falling?.avgPct != null ? <span className={priceColorClass(falling.avgPct)}>{fmtPct(falling.avgPct)}</span> : '等待行情'} tone="down" />
+    <div>
+      <div className="mb-2 flex items-center justify-end gap-1">
+        <CardUpdateButton onUpdate={onUpdate} updating={updating} />
+      </div>
+      <CardUpdateStatusLine status={updateStatus} />
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+      <PageContextModule id="hero-strongest">
+      <HeroMetric icon={TrendingUp} label="最强主线" value={leading?.key ?? '—'} hint={leading?.avgPct != null ? <span className={priceColorClass(leading.avgPct)}>{fmtPct(leading.avgPct)}</span> : '等待行情'} tone="up" active={!!leading && selectedKey === leading.key} onClick={leading ? () => onSelect?.(leading.key) : undefined} />
+      </PageContextModule>
+      <PageContextModule id="hero-risk">
+      <HeroMetric icon={TrendingDown} label="最大风险" value={falling?.key ?? '—'} hint={falling?.avgPct != null ? <span className={priceColorClass(falling.avgPct)}>{fmtPct(falling.avgPct)}</span> : '等待行情'} tone="down" active={!!falling && selectedKey === falling.key} onClick={falling ? () => onSelect?.(falling.key) : undefined} />
+      </PageContextModule>
+      <PageContextModule id="hero-breadth">
       <HeroMetric
         icon={Activity}
         label="涨跌板块"
@@ -481,6 +740,8 @@ function HeroPanel({
         hint={<><span className="text-bull">上涨</span><span className="mx-1 text-muted">/</span><span className="text-bear">下跌</span>{conceptBreadth.flat ? <span className="text-muted"> · 平 {conceptBreadth.flat}</span> : null}</>}
         tone="blue"
       />
+      </PageContextModule>
+      <PageContextModule id="hero-inflow">
       <HeroMetric
         icon={Activity}
         label="主力净流入"
@@ -488,17 +749,23 @@ function HeroPanel({
         hint={topFlowNet != null ? <span className="text-bull">{fmtBigNum(topFlowNet)}</span> : (activeConcept ? `成交额 ${fmtBigNum(activeConcept.totalAmount)}` : '点击下方刷新资金流')}
         tone="blue"
       />
+      </PageContextModule>
+      <PageContextModule id="hero-leader">
       <HeroMetric icon={Crown} label="龙头算法" value="6 因子" hint="强势 + 承接 + 容量" tone="gold" />
+      </PageContextModule>
+      </div>
     </div>
   )
 }
 
-function HeroMetric({ icon: Icon, label, value, hint, tone }: {
+function HeroMetric({ icon: Icon, label, value, hint, tone, active, onClick }: {
   icon: typeof TrendingUp
   label: string
   value: ReactNode
   hint: ReactNode
   tone: 'up' | 'down' | 'gold' | 'blue'
+  active?: boolean
+  onClick?: () => void
 }) {
   const toneClass = {
     up: 'text-bull bg-bull/10',
@@ -512,16 +779,25 @@ function HeroMetric({ icon: Icon, label, value, hint, tone }: {
     gold: 'text-amber-700 dark:text-amber-300',
     blue: 'text-foreground',
   }[tone]
-  return (
-    <div className="rounded-xl border border-border bg-surface px-3 py-2">
+  const body = (
+    <>
       <div className="flex items-center justify-between text-[11px] text-muted">
         <span>{label}</span>
         <span className={cn('rounded-md p-1', toneClass)}><Icon className="h-3.5 w-3.5" /></span>
       </div>
       <div className={cn('mt-1 truncate text-sm font-semibold', valueClass)}>{value}</div>
       <div className="mt-0.5 truncate text-[11px] text-muted">{hint}</div>
-    </div>
+    </>
   )
+  const className = cn(
+    'block h-full w-full rounded-xl border bg-surface px-3 py-2 text-left',
+    onClick && 'transition-colors hover:border-accent/40',
+    active ? 'border-accent/50 ring-1 ring-accent/20' : 'border-border',
+  )
+  if (onClick) {
+    return <button type="button" onClick={onClick} className={className}>{body}</button>
+  }
+  return <div className={className}>{body}</div>
 }
 
 function MarketPulse({
@@ -530,17 +806,35 @@ function MarketPulse({
   selectedKey,
   onSelect,
   onStockClick,
+  activeSymbol,
+  onUpdateUp,
+  onUpdateDown,
+  updatingUp,
+  updatingDown,
+  updateStatusUp,
+  updateStatusDown,
 }: {
   leading: ConceptStat[]
   falling: ConceptStat[]
   selectedKey: string | null
   onSelect: (key: string) => void
-  onStockClick: (symbol: string, name?: string) => void
+  onStockClick: (symbol: string, name?: string, navList?: NavItem[]) => void
+  activeSymbol: string | null
+  onUpdateUp?: () => void
+  onUpdateDown?: () => void
+  updatingUp?: boolean
+  updatingDown?: boolean
+  updateStatusUp?: CardUpdateStatus
+  updateStatusDown?: CardUpdateStatus
 }) {
   return (
     <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-      <PulseList title="领涨主线" items={leading} mode="up" selectedKey={selectedKey} onSelect={onSelect} onStockClick={onStockClick} />
-      <PulseList title="领跌方向" items={falling} mode="down" selectedKey={selectedKey} onSelect={onSelect} onStockClick={onStockClick} />
+      <PageContextModule id="pulse-up">
+      <PulseList title="领涨主线" items={leading} mode="up" selectedKey={selectedKey} onSelect={onSelect} onStockClick={onStockClick} activeSymbol={activeSymbol} onUpdate={onUpdateUp} updating={updatingUp} updateStatus={updateStatusUp} />
+      </PageContextModule>
+      <PageContextModule id="pulse-down">
+      <PulseList title="领跌方向" items={falling} mode="down" selectedKey={selectedKey} onSelect={onSelect} onStockClick={onStockClick} activeSymbol={activeSymbol} onUpdate={onUpdateDown} updating={updatingDown} updateStatus={updateStatusDown} />
+      </PageContextModule>
     </div>
   )
 }
@@ -552,13 +846,21 @@ function PulseList({
   selectedKey,
   onSelect,
   onStockClick,
+  activeSymbol,
+  onUpdate,
+  updating,
+  updateStatus,
 }: {
   title: string
   items: ConceptStat[]
   mode: 'up' | 'down'
   selectedKey: string | null
   onSelect: (key: string) => void
-  onStockClick: (symbol: string, name?: string) => void
+  onStockClick: (symbol: string, name?: string, navList?: NavItem[]) => void
+  activeSymbol: string | null
+  onUpdate?: () => void
+  updating?: boolean
+  updateStatus?: CardUpdateStatus
 }) {
   const toneText = mode === 'up' ? 'text-bull' : 'text-bear'
   const toneBorder = mode === 'up' ? 'border-bull/20' : 'border-bear/20'
@@ -572,12 +874,18 @@ function PulseList({
           {mode === 'up' ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
           {title}
         </div>
-        <span className="rounded-full bg-elevated/60 px-2 py-0.5 text-[10px] text-muted">Top 10</span>
+        <div className="flex items-center gap-1">
+          <CardUpdateButton onUpdate={onUpdate} updating={updating} />
+          <SourceTraceButton subjects={SOURCE_TRACE.conceptAnalysis} />
+          <span className="rounded-full bg-elevated/60 px-2 py-0.5 text-[10px] text-muted">Top 10</span>
+        </div>
       </div>
+      <CardUpdateStatusLine status={updateStatus} />
       <div className="space-y-1">
         {items.map((item, idx) => {
           const active = selectedKey === item.key
-          const leaders = [...item.stocks].sort((a, b) => b.leaderScore - a.leaderScore).slice(0, 3)
+          const sortedStocks = [...item.stocks].sort((a, b) => b.leaderScore - a.leaderScore)
+          const leaders = sortedStocks.slice(0, 3)
           const upPct = item.count > 0 ? (item.upCount / item.count) * 100 : 0
           const downPct = item.count > 0 ? (item.downCount / item.count) * 100 : 0
           const flatPct = Math.max(0, 100 - upPct - downPct)
@@ -618,7 +926,7 @@ function PulseList({
                   {Array.from({ length: 3 }).map((_, i) => {
                     const stock = leaders[i]
                     return stock ? (
-                      <span key={stock.symbol} title={stock.name || stock.symbol} onClick={e => { e.stopPropagation(); onStockClick(stock.symbol, stock.name || undefined) }} className={cn('flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] cursor-pointer hover:brightness-125', i === 0 ? 'bg-amber-300/10 text-foreground' : 'bg-elevated/60 text-secondary')}>
+                      <span key={stock.symbol} title={stock.name || stock.symbol} onClick={e => { e.stopPropagation(); onStockClick(stock.symbol, stock.name || undefined, toNavItems(sortedStocks.slice(0, MAX_RENDERED_STOCKS))) }} className={cn('flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] cursor-pointer hover:brightness-125', i === 0 ? 'bg-amber-300/10 text-foreground' : 'bg-elevated/60 text-secondary', stock.symbol === activeSymbol && 'ring-1 ring-accent/60')}>
                         <span className="flex min-w-0 items-center gap-1">
                           <span className="min-w-0 truncate font-medium">{stock.name || stock.symbol}</span>
                         </span>
@@ -644,6 +952,9 @@ function ConceptRail({
   onSearch,
   onSort,
   onSelect,
+  onUpdate,
+  updating,
+  updateStatus,
 }: {
   stats: ConceptStat[]
   selectedKey: string | null
@@ -652,14 +963,22 @@ function ConceptRail({
   onSearch: (v: string) => void
   onSort: (v: SortMode) => void
   onSelect: (v: string) => void
+  onUpdate?: () => void
+  updating?: boolean
+  updateStatus?: CardUpdateStatus
 }) {
   return (
     <section className="rounded-2xl border border-border bg-surface p-2.5">
       <div className="px-1 pb-2.5">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-foreground">概念矩阵</h3>
-          <span className="text-[10px] text-muted">Top {stats.length}</span>
+          <div className="flex items-center gap-1">
+            <CardUpdateButton onUpdate={onUpdate} updating={updating} />
+            <SourceTraceButton subjects={SOURCE_TRACE.conceptAnalysis} />
+            <span className="text-[10px] text-muted">Top {stats.length}</span>
+          </div>
         </div>
+        <CardUpdateStatusLine status={updateStatus} />
         <div className="mt-2 relative">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
           <input value={search} onChange={e => onSearch(e.target.value)} placeholder="搜索概念" className="h-8 w-full rounded-lg border border-border bg-base pl-8 pr-3 text-xs text-foreground outline-none focus:border-accent/50" />
@@ -695,10 +1014,25 @@ function ConceptRail({
   )
 }
 
-function ConceptFocus({ stat, onStockClick }: { stat: ConceptStat | null; onStockClick: (symbol: string, name?: string) => void }) {
+function ConceptFocus({
+  stat,
+  onStockClick,
+  activeSymbol,
+  onUpdate,
+  updating,
+  updateStatus,
+}: {
+  stat: ConceptStat | null
+  onStockClick: (symbol: string, name?: string, navList?: NavItem[]) => void
+  activeSymbol: string | null
+  onUpdate?: () => void
+  updating?: boolean
+  updateStatus?: CardUpdateStatus
+}) {
   if (!stat) return null
   const stocks = [...stat.stocks].sort((a, b) => b.leaderScore - a.leaderScore).slice(0, MAX_RENDERED_STOCKS)
   const topLeaders = stocks.slice(0, 3)
+  const focusNav: NavItem[] = toNavItems(stocks)
   return (
     <section className="flex max-h-[720px] flex-col overflow-hidden rounded-2xl border border-border bg-surface">
       <div className="shrink-0 border-b border-border px-5 py-4">
@@ -707,7 +1041,11 @@ function ConceptFocus({ stat, onStockClick }: { stat: ConceptStat | null; onStoc
             <div className="flex items-center gap-3">
               <h3 className="truncate text-xl font-semibold text-foreground">{stat.key}</h3>
               <span className="rounded-full bg-blue-400/10 px-2 py-0.5 text-[10px] text-blue-700 dark:text-blue-300">强度 {stat.heatScore.toFixed(0)}</span>
+              <div className="ml-auto">
+                <CardUpdateButton onUpdate={onUpdate} updating={updating} />
+              </div>
             </div>
+            <CardUpdateStatusLine status={updateStatus} />
             <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
               <span>{stat.count} 只成分</span>
               <span className={priceColorClass(stat.avgPct)}>平均 {stat.avgPct != null ? fmtPct(stat.avgPct) : '—'}</span>
@@ -727,7 +1065,7 @@ function ConceptFocus({ stat, onStockClick }: { stat: ConceptStat | null; onStoc
       </div>
 
       <div className="grid shrink-0 gap-3 border-b border-border bg-base/25 p-4 lg:grid-cols-[1fr_1.15fr]">
-        <LeaderStage stocks={topLeaders} onStockClick={onStockClick} />
+        <LeaderStage stocks={topLeaders} activeSymbol={activeSymbol} onStockClick={(sym, name) => onStockClick(sym, name, focusNav)} />
         <ScoreExplain stock={topLeaders[0]} />
       </div>
 
@@ -747,7 +1085,7 @@ function ConceptFocus({ stat, onStockClick }: { stat: ConceptStat | null; onStoc
           </thead>
           <tbody className="divide-y divide-border/70">
             {stocks.map((s, idx) => (
-              <tr key={`${s.symbol}-${idx}`} className="hover:bg-elevated/30 cursor-pointer" onClick={() => onStockClick(s.symbol, s.name || undefined)}>
+              <tr key={`${s.symbol}-${idx}`} className={cn('cursor-pointer', s.symbol === activeSymbol ? 'bg-accent/10 hover:bg-accent/15' : 'hover:bg-elevated/30')} onClick={() => onStockClick(s.symbol, s.name || undefined, focusNav)}>
                 <td className="px-4 py-2 font-mono text-muted">{idx + 1}</td>
                 <td className="px-4 py-2">
                   <div className="font-medium text-foreground">{s.name || '—'}</div>
@@ -778,7 +1116,7 @@ function MiniStat({ label, value, cls }: { label: string; value: string; cls: st
   return <div className="rounded-lg border border-border/60 bg-base/35 px-2 py-1.5"><div className="text-[10px] text-muted">{label}</div><div className={cn('mt-0.5 truncate text-sm font-semibold', cls)}>{value}</div></div>
 }
 
-function LeaderStage({ stocks, onStockClick }: { stocks: EnrichedStock[]; onStockClick: (symbol: string, name?: string) => void }) {
+function LeaderStage({ stocks, onStockClick, activeSymbol }: { stocks: EnrichedStock[]; onStockClick: (symbol: string, name?: string) => void; activeSymbol: string | null }) {
   if (!stocks.length) return <div className="rounded-xl border border-border/60 bg-surface p-4 text-sm text-muted">暂无龙头候选</div>
   return (
     <div className="rounded-xl border border-border/60 bg-surface p-3">
@@ -788,7 +1126,7 @@ function LeaderStage({ stocks, onStockClick }: { stocks: EnrichedStock[]; onStoc
       </div>
       <div className="grid gap-2 md:grid-cols-3">
         {stocks.map((stock, idx) => (
-          <div key={stock.symbol} onClick={() => onStockClick(stock.symbol, stock.name || undefined)} className={cn('rounded-lg border p-3 cursor-pointer hover:brightness-110 transition-all', idx === 0 ? 'border-amber-400/25 bg-amber-400/[0.06]' : 'border-border/60 bg-base/35')}>
+          <div key={stock.symbol} onClick={() => onStockClick(stock.symbol, stock.name || undefined)} className={cn('rounded-lg border p-3 cursor-pointer hover:brightness-110 transition-all', idx === 0 ? 'border-amber-400/25 bg-amber-400/[0.06]' : 'border-border/60 bg-base/35', stock.symbol === activeSymbol && 'ring-1 ring-accent/60')}>
             <div className="flex items-center justify-between gap-2">
               <span className={cn('text-[10px] font-medium', idx === 0 ? 'text-amber-700 dark:text-amber-300' : 'text-muted')}>{idx === 0 ? '主龙头' : `辅龙 ${idx}`}</span>
               <span className="font-mono text-[11px] text-amber-700 dark:text-amber-300">{stock.leaderScore.toFixed(0)}</span>

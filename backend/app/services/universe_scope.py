@@ -4,7 +4,9 @@ Scopes:
   ALL     — full A-share list (instruments / CN_Equity_A)
   CSI300  — 沪深300 constituents (data/pools/CSI300.parquet)
   CSI500  — 中证500（与 CSI300 官方成分互不重叠）
-  CSI800  — 沪深300 ∪ 中证500（约 800，public 扩容推荐）
+  CSI800  — 中证800 官方成分（000906；不再只用 300∪500 近似）
+  CSI1000 — 中证1000 官方成分（000852）
+  CSI1800 — 中证800 ∪ 中证1000（约 1800）
   SSE50   — 上证50
   WATCHLIST — user watchlist only
 
@@ -27,18 +29,31 @@ SCOPE_ALL = "ALL"
 SCOPE_CSI300 = "CSI300"
 SCOPE_CSI500 = "CSI500"
 SCOPE_CSI800 = "CSI800"
+SCOPE_CSI1000 = "CSI1000"
+SCOPE_CSI1800 = "CSI1800"
 SCOPE_SSE50 = "SSE50"
 SCOPE_WATCHLIST = "WATCHLIST"
 
-VALID_SCOPES = (SCOPE_ALL, SCOPE_CSI300, SCOPE_CSI500, SCOPE_CSI800, SCOPE_SSE50, SCOPE_WATCHLIST)
-CSI_POOL_SCOPES = (SCOPE_CSI300, SCOPE_CSI500, SCOPE_SSE50)
-UNION_SCOPES = (SCOPE_CSI800,)
+VALID_SCOPES = (
+    SCOPE_ALL,
+    SCOPE_CSI300,
+    SCOPE_CSI500,
+    SCOPE_CSI800,
+    SCOPE_CSI1000,
+    SCOPE_CSI1800,
+    SCOPE_SSE50,
+    SCOPE_WATCHLIST,
+)
+CSI_POOL_SCOPES = (SCOPE_CSI300, SCOPE_CSI500, SCOPE_CSI800, SCOPE_CSI1000, SCOPE_SSE50)
+UNION_SCOPES = (SCOPE_CSI1800,)
 
 SCOPE_LABELS = {
     SCOPE_ALL: "全A",
     SCOPE_CSI300: "沪深300",
     SCOPE_CSI500: "中证500",
-    SCOPE_CSI800: "中证800(300∪500)",
+    SCOPE_CSI800: "中证800",
+    SCOPE_CSI1000: "中证1000",
+    SCOPE_CSI1800: "中证1800(800∪1000)",
     SCOPE_SSE50: "上证50",
     SCOPE_WATCHLIST: "自选",
 }
@@ -56,8 +71,10 @@ def normalize_scope(scope: str | None, *, default: str = SCOPE_ALL) -> str:
         "000905": SCOPE_CSI500,
         "ZZ800": SCOPE_CSI800,
         "000906": SCOPE_CSI800,
-        "HS300_ZZ500": SCOPE_CSI800,
-        "CSI300_CSI500": SCOPE_CSI800,
+        "ZZ1000": SCOPE_CSI1000,
+        "000852": SCOPE_CSI1000,
+        "ZZ1800": SCOPE_CSI1800,
+        "CSI800_CSI1000": SCOPE_CSI1800,
         "SH50": SCOPE_SSE50,
         "000016": SCOPE_SSE50,
         "WL": SCOPE_WATCHLIST,
@@ -128,13 +145,12 @@ def resolve_symbols(
                 out = []
         if not out:
             out = list(DEMO_SYMBOLS)
-    elif sc == SCOPE_CSI800:
-        # Official CSI300 and CSI500 are disjoint; union ≈ CSI800 coverage for public fill.
-        a = _ensure_csi_pool(SCOPE_CSI300, data_dir, refresh_if_missing=refresh_pools_if_missing)
-        b = _ensure_csi_pool(SCOPE_CSI500, data_dir, refresh_if_missing=refresh_pools_if_missing)
+    elif sc == SCOPE_CSI1800:
+        a = _ensure_csi_pool(SCOPE_CSI800, data_dir, refresh_if_missing=refresh_pools_if_missing)
+        b = _ensure_csi_pool(SCOPE_CSI1000, data_dir, refresh_if_missing=refresh_pools_if_missing)
         out = list(a) + list(b)
         if not out:
-            logger.warning("scope CSI800 empty after pool fetch")
+            logger.warning("scope CSI1800 empty after pool fetch")
     elif sc in CSI_POOL_SCOPES:
         out = _ensure_csi_pool(sc, data_dir, refresh_if_missing=refresh_pools_if_missing)
         if not out:

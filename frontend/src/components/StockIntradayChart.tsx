@@ -32,11 +32,10 @@ export function StockIntradayChart({
   })
 
   const fetchMinute = useMutation({
-    mutationFn: () => api.extendMinuteHistory(5, 'day'),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['kline-minute', symbol] })
+    mutationFn: () => api.klineMinute(symbol, date ?? undefined),
+    onSuccess: (data) => {
+      qc.setQueryData(QK.klineMinute(symbol, date ?? ''), data)
       qc.invalidateQueries({ queryKey: QK.dataStatus })
-      qc.invalidateQueries({ queryKey: QK.pipelineJobs })
       setMinuteDismissed(false)
     },
   })
@@ -61,7 +60,7 @@ export function StockIntradayChart({
           {fetchMinute.isPending ? (
             <div className="flex items-center justify-center h-full gap-2 text-xs text-accent">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              <span>正在获取最近5日分钟K…</span>
+              <span>正在读取该日分时…</span>
             </div>
           ) : sourceIsNone ? (
             // 数据源确认无此日分钟数据 (停牌/复牌延迟等): 静态提示 + 保留重试
@@ -71,7 +70,7 @@ export function StockIntradayChart({
                 onClick={() => fetchMinute.mutate()}
                 className="px-4 py-1.5 rounded-btn bg-elevated text-secondary text-xs font-medium hover:bg-elevated/80 transition-colors duration-150"
               >
-                重新获取
+                重新读取该日分时
               </button>
             </div>
           ) : minuteDismissed ? (
@@ -86,7 +85,7 @@ export function StockIntradayChart({
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center h-full gap-4">
-              <div className="text-sm text-foreground">是否立即获取最近5日分钟K？</div>
+              <div className="text-sm text-foreground">是否立即读取该日分时？</div>
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => fetchMinute.mutate()}

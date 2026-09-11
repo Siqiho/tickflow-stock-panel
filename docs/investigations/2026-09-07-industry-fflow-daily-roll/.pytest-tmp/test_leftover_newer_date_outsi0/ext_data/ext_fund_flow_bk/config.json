@@ -1,0 +1,77 @@
+{
+  "id": "ext_fund_flow_bk",
+  "label": "行业板块资金流",
+  "mode": "snapshot",
+  "fields": [
+    {
+      "name": "code",
+      "dtype": "string",
+      "label": "代码"
+    },
+    {
+      "name": "name",
+      "dtype": "string",
+      "label": "名称"
+    },
+    {
+      "name": "main_net",
+      "dtype": "float",
+      "label": "主力净流入"
+    },
+    {
+      "name": "change_pct",
+      "dtype": "float",
+      "label": "涨跌幅"
+    },
+    {
+      "name": "main_net_pct",
+      "dtype": "float",
+      "label": "主力净占比"
+    },
+    {
+      "name": "price",
+      "dtype": "float",
+      "label": "最新价"
+    },
+    {
+      "name": "leader_name",
+      "dtype": "string",
+      "label": "领涨股"
+    },
+    {
+      "name": "leader_code",
+      "dtype": "string",
+      "label": "领涨股代码"
+    },
+    {
+      "name": "rank",
+      "dtype": "int",
+      "label": "排名"
+    },
+    {
+      "name": "as_of",
+      "dtype": "string",
+      "label": "快照时间"
+    },
+    {
+      "name": "kind",
+      "dtype": "string",
+      "label": "类型"
+    },
+    {
+      "name": "source",
+      "dtype": "string",
+      "label": "来源"
+    },
+    {
+      "name": "unit_amount",
+      "dtype": "string",
+      "label": "金额单位"
+    }
+  ],
+  "description": "行业板块资金流（东财 push2 clist / bkzj 兜底，on-demand）",
+  "symbol_map": {},
+  "code_map": {},
+  "created_at": "2026-09-07T18:45:04.668190",
+  "updated_at": "2026-09-07T18:45:04.668464"
+}

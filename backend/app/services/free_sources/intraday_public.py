@@ -265,15 +265,16 @@ def public_intraday_to_minute_rows(
     if not points:
         return []
 
-    day = trade_date or date.today()
+    requested_day = trade_date
+    day = requested_day or date.today()
     if payload.get("trade_date"):
         try:
-            day = date.fromisoformat(str(payload["trade_date"]))
+            payload_day = date.fromisoformat(str(payload["trade_date"]))
+            if requested_day is not None and payload_day != requested_day:
+                return []
+            day = payload_day
         except ValueError:
             pass
-    # If caller asks a specific historical day and source only has another day,
-    # still return rows (public sources rarely keep multi-day free minute).
-    # StockIntradayChart will show whatever session arrived.
 
     sym = str(payload.get("symbol") or symbol).upper()
     rows: list[dict[str, Any]] = []

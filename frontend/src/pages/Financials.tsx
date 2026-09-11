@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { RefreshCw, Lock, Loader2, X, Search, FileText, Database, Clock, CheckCircle2, Hourglass, Lightbulb } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
+import { PageContextModule } from '@/components/PageContextModule'
+import { clearPageContext, setPageContext } from '@/lib/pageContext'
+import { buildFinancialsPageContext } from '@/lib/pageContextSnapshots'
+import { SourceTraceButton } from '@/components/SourceTraceButton'
 import { EmptyState } from '@/components/EmptyState'
 import { useCapabilities } from '@/lib/useSharedQueries'
 import { useFinancialStatus, useFinancialSync } from '@/lib/useFinancials'
@@ -11,6 +16,11 @@ import { LastStockChip } from '@/components/LastStockChip'
 import { useLastStock } from '@/lib/useLastStock'
 import { fmtBigNum } from '@/lib/format'
 import { toast } from '@/components/Toast'
+import { SOURCE_TRACE } from '@/lib/sourceTraceSubjects'
+import {
+  loadHistory as loadFinancialHistory,
+  openHistoryReport as openFinancialHistoryReport,
+} from '@/lib/aiReportStore'
 
 const TABLE_LABELS: Record<string, string> = {
   metrics: '核心指标',
@@ -29,6 +39,10 @@ const TABLE_ICON: Record<string, typeof FileText> = {
 }
 
 export function Financials() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedSymbol = (searchParams.get('symbol') ?? '').trim().toUpperCase()
+  const requestedName = (searchParams.get('name') ?? '').trim()
+  const requestedReport = (searchParams.get('report') ?? '').trim()
   const { data: caps } = useCapabilities()
   const { data: status, isLoading } = useFinancialStatus()
   // Prefer structured features.financial / status.available; fall back to capability key
@@ -59,11 +73,33 @@ export function Financials() {
     }
   }, [syncing, syncStartedAt])
   // 选中的个股(模糊搜索结果);null 时显示搜索引导
-  const [selected, setSelected] = useState<{ symbol: string; name: string } | null>(null)
+  const [selected, setSelected] = useState<{ symbol: string; name: string } | null>(() => (
+    requestedSymbol ? { symbol: requestedSymbol, name: requestedName || requestedSymbol } : null
+  ))
   const { last: lastStock, remember: rememberStock } = useLastStock('financials')
+
+  useEffect(() => {
+    if (!requestedSymbol) return
+    const nextName = requestedName || requestedSymbol
+    setSelected({ symbol: requestedSymbol, name: nextName })
+    rememberStock(requestedSymbol, nextName)
+  }, [rememberStock, requestedName, requestedSymbol])
+
+  useEffect(() => {
+    if (!requestedReport) return
+    let cancelled = false
+    loadFinancialHistory().then(() => {
+      if (!cancelled) openFinancialHistoryReport(requestedReport)
+    })
+    return () => { cancelled = true }
+  }, [requestedReport])
+
   const pick = (symbol: string, name: string) => {
-    setSelected({ symbol, name })
-    rememberStock(symbol, name)
+    const nextSymbol = symbol.trim().toUpperCase()
+    const nextName = name.trim() || nextSymbol
+    setSearchParams(new URLSearchParams({ symbol: nextSymbol, name: nextName }), { replace: true })
+    setSelected({ symbol: nextSymbol, name: nextName })
+    rememberStock(nextSymbol, nextName)
   }
 
   if (!hasFinancial) {
@@ -153,6 +189,16 @@ export function Financials() {
   const isWaitingTable = (key: string): boolean =>
     !!isFullSync && !tableDoneThisRound(key) && currentSyncingTable !== key
 
+  useEffect(() => {
+    setPageContext(buildFinancialsPageContext({
+      symbol: selected?.symbol ?? null,
+      name: selected?.name,
+      available,
+      provider: dataProvider ?? null,
+    }))
+    return () => clearPageContext('/financials')
+  }, [available, dataProvider, selected])
+
   return (
     <>
       <PageHeader
@@ -175,6 +221,7 @@ export function Financials() {
                     : '同步中…'}
               </span>
             )}
+            <SourceTraceButton subjects={SOURCE_TRACE.financials} />
             <button
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-btn bg-gradient-to-r from-accent/25 to-accent/10 border border-accent/30 text-accent text-xs font-medium hover:from-accent/35 hover:to-accent/20 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
               onClick={() => handleSync('all')}
@@ -200,7 +247,7 @@ export function Financials() {
 
         {/* 同步状态卡片 —— 始终显示,反映本地财务数据概况 */}
         {!isLoading && available && (
-          <div>
+          <PageContextModule id="status"><div>
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
               {Object.entries(TABLE_LABELS).map(([key, label]) => {
                 const info = tables[key]
@@ -265,7 +312,7 @@ export function Financials() {
                 )
               })}
             </div>
-          </div>
+          </div></PageContextModule>
         )}
 
         {isLoading ? (
@@ -281,7 +328,7 @@ export function Financials() {
         ) : (
           <>
             {/* 个股搜索区 */}
-            <div>
+            <PageContextModule id="search"><div>
               {selected ? (
                 // 已选股:紧凑搜索条 + 清除按钮(便于换股)
                 <div className="flex items-center gap-3">
@@ -310,12 +357,12 @@ export function Financials() {
                   <div className="text-[11px] text-muted">支持股票代码或名称模糊匹配，如 600000 / 浦发</div>
                 </div>
               )}
-            </div>
+            </div></PageContextModule>
 
             {/* 个股详情 / 空引导 */}
             <div className="pb-4">
               {selected ? (
-                <StockFinancialDetail symbol={selected.symbol} name={selected.name} />
+                <PageContextModule id="detail"><StockFinancialDetail symbol={selected.symbol} name={selected.name} /></PageContextModule>
               ) : (
                 <EmptyState
                   icon={Search}
@@ -326,7 +373,7 @@ export function Financials() {
             </div>
 
             {/* AI 历史分析报告 */}
-            {available && <ReportHistoryPanel />}
+            {available && <PageContextModule id="history"><ReportHistoryPanel /></PageContextModule>}
           </>
         )}
       </div>

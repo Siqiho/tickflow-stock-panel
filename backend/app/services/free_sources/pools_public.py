@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 POOL_SPECS: dict[str, dict[str, str]] = {
     "CSI300": {"index_code": "000300", "name": "沪深300", "sina_node": "hs300"},
     "CSI500": {"index_code": "000905", "name": "中证500", "sina_node": "zhishu_000905"},
+    "CSI800": {"index_code": "000906", "name": "中证800", "sina_node": "zhishu_000906"},
+    "CSI1000": {"index_code": "000852", "name": "中证1000", "sina_node": "zhishu_000852"},
     "SSE50": {"index_code": "000016", "name": "上证50", "sina_node": "zhishu_000016"},
 }
 

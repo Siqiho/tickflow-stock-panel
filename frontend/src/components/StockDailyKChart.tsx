@@ -37,9 +37,11 @@ interface Props {
   showMarkerToggle?: boolean
   showMA?: boolean
   showInfoBar?: boolean
-  visibleBars?: number
+  /** 初始可见蜡烛根数; 'all' = 适配显示全部数据 */
+  visibleBars?: number | 'all'
   linkedPrice?: number | null
   onDateClick?: (date: string) => void
+  onDateHover?: (date: string) => void
   onDataChange?: (result: StockDailyKChartResult) => void
   /** 扩展数据列参数（逗号分隔 config_id.field_name），透传给 klineDaily 接口 */
   extColumns?: string
@@ -100,12 +102,6 @@ export function getDefaultRange(): { start: string; end: string } {
   return { start, end }
 }
 
-function rangeDays(range: { start: string; end: string }): number {
-  const start = new Date(range.start)
-  const end = new Date(range.end)
-  return Math.min(Math.ceil((end.getTime() - start.getTime()) / 86400000) + 30, MAX_DAYS)
-}
-
 export function StockDailyKChart({
   symbol,
   height = 520,
@@ -122,13 +118,17 @@ export function StockDailyKChart({
   visibleBars = 60,
   linkedPrice,
   onDateClick,
+  onDateHover,
   onDataChange,
   extColumns,
 }: Props) {
   const [activeIndicators, setActiveIndicators] = useState<string[]>(['vol'])
   const [showMarkers, setShowMarkers] = useState(true)
   const dateRange = externalDateRange ?? getDefaultRange()
-  const days = useMemo(() => rangeDays(dateRange), [dateRange])
+  const days = Math.min(
+    MAX_DAYS,
+    Math.max(1, Math.round((Date.parse(dateRange.end) - Date.parse(dateRange.start)) / 86400000) + 1),
+  )
 
   // extColumns 纳入 query key：勾选/取消扩展字段时需重新请求（带 ext_columns 参数）
   const kline = useQuery({
@@ -140,6 +140,14 @@ export function StockDailyKChart({
 
   const rows = useMemo(() => toOHLC(kline.data?.rows ?? []), [kline.data?.rows])
   const stockInfo = kline.data?.stock_info
+  useEffect(() => {
+    onDataChange?.({
+      rows,
+      rawRows: kline.data?.rows ?? [],
+      stockInfo,
+      name: kline.data?.name,
+    })
+  }, [kline.data?.name, kline.data?.rows, onDataChange, rows, stockInfo])
   const limitMarkers = useMemo(() => buildLimitUpMarkers(kline.data?.rows ?? []), [kline.data?.rows])
   const allMarkers = useMemo(() => [
     ...(markers ?? []),
@@ -157,10 +165,6 @@ export function StockDailyKChart({
   activeSubDefs.forEach(def => { subExtraH += SUB_INFO_H + def.height })
   if (activeSubDefs.length > 0) subExtraH += activeSubDefs.length * SUB_GAP + 14
   const chartHeight = height + subExtraH
-
-  useEffect(() => {
-    onDataChange?.({ rows, rawRows: kline.data?.rows ?? [], stockInfo, name: kline.data?.name })
-  }, [kline.data?.name, kline.data?.rows, onDataChange, rows, stockInfo])
 
   if (!symbol) return null
 
@@ -227,6 +231,7 @@ export function StockDailyKChart({
           symbol={symbol}
           linkedPrice={linkedPrice}
           onDateClick={onDateClick}
+          onDateHover={onDateHover}
           visibleBars={visibleBars}
           activeIndicators={activeIndicators}
         />

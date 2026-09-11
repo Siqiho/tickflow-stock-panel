@@ -1,0 +1,714 @@
+[
+  {
+    "rel": "CONTRIBUTING.md",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/CONTRIBUTING.md"
+  },
+  {
+    "rel": "backend/app/api/factors.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/api/factors.py"
+  },
+  {
+    "rel": "backend/app/api/lots.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/api/lots.py"
+  },
+  {
+    "rel": "backend/app/api/news.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/api/news.py"
+  },
+  {
+    "rel": "backend/app/backtest/stats_v2.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/backtest/stats_v2.py"
+  },
+  {
+    "rel": "backend/app/factors/__init__.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/factors/__init__.py"
+  },
+  {
+    "rel": "backend/app/factors/dsl.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/factors/dsl.py"
+  },
+  {
+    "rel": "backend/app/factors/ext_factors.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/factors/ext_factors.py"
+  },
+  {
+    "rel": "backend/app/factors/registry.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/factors/registry.py"
+  },
+  {
+    "rel": "backend/app/factors/store.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/factors/store.py"
+  },
+  {
+    "rel": "backend/app/polars_guard.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/polars_guard.py"
+  },
+  {
+    "rel": "backend/app/services/auto_mining.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/auto_mining.py"
+  },
+  {
+    "rel": "backend/app/services/email_adapter.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/email_adapter.py"
+  },
+  {
+    "rel": "backend/app/services/free_sources/news_public.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/free_sources/news_public.py"
+  },
+  {
+    "rel": "backend/app/services/fs_utils.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/fs_utils.py"
+  },
+  {
+    "rel": "backend/app/services/index_const.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/index_const.py"
+  },
+  {
+    "rel": "backend/app/services/news.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/news.py"
+  },
+  {
+    "rel": "backend/app/services/news_metadata.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/news_metadata.py"
+  },
+  {
+    "rel": "backend/app/services/news_sources/.gitkeep",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/news_sources/.gitkeep"
+  },
+  {
+    "rel": "backend/app/services/news_sources/__init__.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/news_sources/__init__.py"
+  },
+  {
+    "rel": "backend/app/services/news_sources/allowlist.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/news_sources/allowlist.py"
+  },
+  {
+    "rel": "backend/app/services/news_sources/cls.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/news_sources/cls.py"
+  },
+  {
+    "rel": "backend/app/services/news_sources/foreign.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/news_sources/foreign.py"
+  },
+  {
+    "rel": "backend/app/services/news_sources/html_extract.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/news_sources/html_extract.py"
+  },
+  {
+    "rel": "backend/app/services/news_sources/policy.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/news_sources/policy.py"
+  },
+  {
+    "rel": "backend/app/services/news_sources/sentiment.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/news_sources/sentiment.py"
+  },
+  {
+    "rel": "backend/app/services/news_sources/sina.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/news_sources/sina.py"
+  },
+  {
+    "rel": "backend/app/services/strategy_run_queue.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/strategy_run_queue.py"
+  },
+  {
+    "rel": "backend/app/services/watchlist_csv.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/services/watchlist_csv.py"
+  },
+  {
+    "rel": "backend/app/strategy/builtin/active_limit_gene.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/strategy/builtin/active_limit_gene.py"
+  },
+  {
+    "rel": "backend/app/strategy/builtin/breakout_new_high_60d.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/strategy/builtin/breakout_new_high_60d.py"
+  },
+  {
+    "rel": "backend/app/strategy/builtin/long_lower_shadow_reversal.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/strategy/builtin/long_lower_shadow_reversal.py"
+  },
+  {
+    "rel": "backend/app/strategy/builtin/ma_convergence_breakout.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/strategy/builtin/ma_convergence_breakout.py"
+  },
+  {
+    "rel": "backend/app/strategy/builtin/macd_below_zero_revival.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/strategy/builtin/macd_below_zero_revival.py"
+  },
+  {
+    "rel": "backend/app/strategy/builtin/platform_consolidation_breakout.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/strategy/builtin/platform_consolidation_breakout.py"
+  },
+  {
+    "rel": "backend/app/strategy/builtin/rsi_midline_pullback.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/strategy/builtin/rsi_midline_pullback.py"
+  },
+  {
+    "rel": "backend/app/strategy/intraday_features.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/strategy/intraday_features.py"
+  },
+  {
+    "rel": "backend/app/strategy/lots.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/strategy/lots.py"
+  },
+  {
+    "rel": "backend/app/strategy/market_data.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/strategy/market_data.py"
+  },
+  {
+    "rel": "backend/app/watchdog.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/app/watchdog.py"
+  },
+  {
+    "rel": "backend/scripts/demo_ai_strategy_gate.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/scripts/demo_ai_strategy_gate.py"
+  },
+  {
+    "rel": "backend/scripts/demo_recap_push_mode.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/scripts/demo_recap_push_mode.py"
+  },
+  {
+    "rel": "backend/scripts/stress_polars_concurrency.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/scripts/stress_polars_concurrency.py"
+  },
+  {
+    "rel": "backend/tests/backtest/test_factor_default_range.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/backtest/test_factor_default_range.py"
+  },
+  {
+    "rel": "backend/tests/backtest/test_max_hold_exits.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/backtest/test_max_hold_exits.py"
+  },
+  {
+    "rel": "backend/tests/data_lab/test_calendar_extend.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/data_lab/test_calendar_extend.py"
+  },
+  {
+    "rel": "backend/tests/free_sources/test_concept_fflow_daily_roll.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/free_sources/test_concept_fflow_daily_roll.py"
+  },
+  {
+    "rel": "backend/tests/free_sources/test_industry_window_freshness.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/free_sources/test_industry_window_freshness.py"
+  },
+  {
+    "rel": "backend/tests/free_sources/test_news_public.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/free_sources/test_news_public.py"
+  },
+  {
+    "rel": "backend/tests/test_ai_analysis_focus.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_ai_analysis_focus.py"
+  },
+  {
+    "rel": "backend/tests/test_auto_mining.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_auto_mining.py"
+  },
+  {
+    "rel": "backend/tests/test_background_jobs_disabled.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_background_jobs_disabled.py"
+  },
+  {
+    "rel": "backend/tests/test_backtest_etf_panel.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_backtest_etf_panel.py"
+  },
+  {
+    "rel": "backend/tests/test_backtest_warmup.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_backtest_warmup.py"
+  },
+  {
+    "rel": "backend/tests/test_custom_batch_isolation.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_custom_batch_isolation.py"
+  },
+  {
+    "rel": "backend/tests/test_custom_depth_provider.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_custom_depth_provider.py"
+  },
+  {
+    "rel": "backend/tests/test_custom_provider_indices.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_custom_provider_indices.py"
+  },
+  {
+    "rel": "backend/tests/test_custom_signals_factor_conditions.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_custom_signals_factor_conditions.py"
+  },
+  {
+    "rel": "backend/tests/test_date_rule.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_date_rule.py"
+  },
+  {
+    "rel": "backend/tests/test_enriched_partial_partition.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_enriched_partial_partition.py"
+  },
+  {
+    "rel": "backend/tests/test_enriched_stale_price_partition.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_enriched_stale_price_partition.py"
+  },
+  {
+    "rel": "backend/tests/test_ext_backfill.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_ext_backfill.py"
+  },
+  {
+    "rel": "backend/tests/test_ext_csv_transcode_memory.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_ext_csv_transcode_memory.py"
+  },
+  {
+    "rel": "backend/tests/test_ext_csv_transcode_newline.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_ext_csv_transcode_newline.py"
+  },
+  {
+    "rel": "backend/tests/test_ext_factors.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_ext_factors.py"
+  },
+  {
+    "rel": "backend/tests/test_ext_presets_startup.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_ext_presets_startup.py"
+  },
+  {
+    "rel": "backend/tests/test_ext_pull_auth.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_ext_pull_auth.py"
+  },
+  {
+    "rel": "backend/tests/test_ext_pull_refresh.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_ext_pull_refresh.py"
+  },
+  {
+    "rel": "backend/tests/test_ext_pull_time_window.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_ext_pull_time_window.py"
+  },
+  {
+    "rel": "backend/tests/test_ext_upload_size_limit.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_ext_upload_size_limit.py"
+  },
+  {
+    "rel": "backend/tests/test_external_sources_metadata.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_external_sources_metadata.py"
+  },
+  {
+    "rel": "backend/tests/test_factor_api.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_factor_api.py"
+  },
+  {
+    "rel": "backend/tests/test_factor_attribution.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_factor_attribution.py"
+  },
+  {
+    "rel": "backend/tests/test_factor_dsl.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_factor_dsl.py"
+  },
+  {
+    "rel": "backend/tests/test_factor_expansion.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_factor_expansion.py"
+  },
+  {
+    "rel": "backend/tests/test_factor_registry.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_factor_registry.py"
+  },
+  {
+    "rel": "backend/tests/test_factor_store.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_factor_store.py"
+  },
+  {
+    "rel": "backend/tests/test_final_sync_confirmation.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_final_sync_confirmation.py"
+  },
+  {
+    "rel": "backend/tests/test_fuyao_daily_streaming_sync.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_fuyao_daily_streaming_sync.py"
+  },
+  {
+    "rel": "backend/tests/test_intraday_signals.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_intraday_signals.py"
+  },
+  {
+    "rel": "backend/tests/test_kline_daily_latest.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_kline_daily_latest.py"
+  },
+  {
+    "rel": "backend/tests/test_kline_detail_transport.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_kline_detail_transport.py"
+  },
+  {
+    "rel": "backend/tests/test_kline_read_failure.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_kline_read_failure.py"
+  },
+  {
+    "rel": "backend/tests/test_lifespan_background_disable.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_lifespan_background_disable.py"
+  },
+  {
+    "rel": "backend/tests/test_lots.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_lots.py"
+  },
+  {
+    "rel": "backend/tests/test_minute_fallback_gate_http.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_minute_fallback_gate_http.py"
+  },
+  {
+    "rel": "backend/tests/test_news_api.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_news_api.py"
+  },
+  {
+    "rel": "backend/tests/test_news_metadata.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_news_metadata.py"
+  },
+  {
+    "rel": "backend/tests/test_news_permissions.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_news_permissions.py"
+  },
+  {
+    "rel": "backend/tests/test_news_service.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_news_service.py"
+  },
+  {
+    "rel": "backend/tests/test_notification_adapters.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_notification_adapters.py"
+  },
+  {
+    "rel": "backend/tests/test_notification_settings.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_notification_settings.py"
+  },
+  {
+    "rel": "backend/tests/test_offline_margin_api.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_offline_margin_api.py"
+  },
+  {
+    "rel": "backend/tests/test_overview_scope.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_overview_scope.py"
+  },
+  {
+    "rel": "backend/tests/test_pipeline_pull_types.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_pipeline_pull_types.py"
+  },
+  {
+    "rel": "backend/tests/test_pipeline_safety.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_pipeline_safety.py"
+  },
+  {
+    "rel": "backend/tests/test_polars144_daily_enriched.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_polars144_daily_enriched.py"
+  },
+  {
+    "rel": "backend/tests/test_polars_guard.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_polars_guard.py"
+  },
+  {
+    "rel": "backend/tests/test_quote_interval_settings.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_quote_interval_settings.py"
+  },
+  {
+    "rel": "backend/tests/test_review_push_mode.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_review_push_mode.py"
+  },
+  {
+    "rel": "backend/tests/test_rps_rotation_map_cache.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_rps_rotation_map_cache.py"
+  },
+  {
+    "rel": "backend/tests/test_screener_external_access.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_screener_external_access.py"
+  },
+  {
+    "rel": "backend/tests/test_screener_jit_turnover.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_screener_jit_turnover.py"
+  },
+  {
+    "rel": "backend/tests/test_screener_run_all_progressive.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_screener_run_all_progressive.py"
+  },
+  {
+    "rel": "backend/tests/test_settings_compress_review_push.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_settings_compress_review_push.py"
+  },
+  {
+    "rel": "backend/tests/test_settings_preferences_http.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_settings_preferences_http.py"
+  },
+  {
+    "rel": "backend/tests/test_stats_v2.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_stats_v2.py"
+  },
+  {
+    "rel": "backend/tests/test_strategy_market_data.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_strategy_market_data.py"
+  },
+  {
+    "rel": "backend/tests/test_strategy_publish.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_strategy_publish.py"
+  },
+  {
+    "rel": "backend/tests/test_strategy_run_all_parallel.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_strategy_run_all_parallel.py"
+  },
+  {
+    "rel": "backend/tests/test_strategy_run_queue.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_strategy_run_queue.py"
+  },
+  {
+    "rel": "backend/tests/test_tenant_api_isolation.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_tenant_api_isolation.py"
+  },
+  {
+    "rel": "backend/tests/test_v6_runtime_isolation.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_v6_runtime_isolation.py"
+  },
+  {
+    "rel": "backend/tests/test_watchdog.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_watchdog.py"
+  },
+  {
+    "rel": "backend/tests/test_watchlist_csv.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_watchlist_csv.py"
+  },
+  {
+    "rel": "backend/tests/test_watchlist_import_http.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_watchlist_import_http.py"
+  },
+  {
+    "rel": "backend/tests/test_watchlist_upload_size_limit.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_watchlist_upload_size_limit.py"
+  },
+  {
+    "rel": "backend/tests/test_webhook_test.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_webhook_test.py"
+  },
+  {
+    "rel": "backend/tests/test_wecom_webhook_default_off.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_wecom_webhook_default_off.py"
+  },
+  {
+    "rel": "backend/tests/test_write_lock_scope.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/backend/tests/test_write_lock_scope.py"
+  },
+  {
+    "rel": "community-qr-code.jpg",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/community-qr-code.jpg"
+  },
+  {
+    "rel": "docs/configuration.md",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/docs/configuration.md"
+  },
+  {
+    "rel": "docs/deployment.md",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/docs/deployment.md"
+  },
+  {
+    "rel": "docs/factor-platform-plan.md",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/docs/factor-platform-plan.md"
+  },
+  {
+    "rel": "docs/factor-system-design.md",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/docs/factor-system-design.md"
+  },
+  {
+    "rel": "docs/navigation-consolidation-20260909/acceptance.md",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/docs/navigation-consolidation-20260909/acceptance.md"
+  },
+  {
+    "rel": "docs/navigation-consolidation-20260909/changes.json",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/docs/navigation-consolidation-20260909/changes.json"
+  },
+  {
+    "rel": "docs/navigation-consolidation-20260909/checks.log",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/docs/navigation-consolidation-20260909/checks.log"
+  },
+  {
+    "rel": "docs/navigation-consolidation-20260909/implementation.md",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/docs/navigation-consolidation-20260909/implementation.md"
+  },
+  {
+    "rel": "docs/navigation-consolidation-20260909/rollback.md",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/docs/navigation-consolidation-20260909/rollback.md"
+  },
+  {
+    "rel": "docs/strategy-iteration.md",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/docs/strategy-iteration.md"
+  },
+  {
+    "rel": "frontend/src/components/AdjFactorSyncGate.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/components/AdjFactorSyncGate.tsx"
+  },
+  {
+    "rel": "frontend/src/components/DateShortcuts.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/components/DateShortcuts.tsx"
+  },
+  {
+    "rel": "frontend/src/components/GroupPageLayout.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/components/GroupPageLayout.tsx"
+  },
+  {
+    "rel": "frontend/src/components/__tests__/GroupPageLayout.test.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/components/__tests__/GroupPageLayout.test.tsx"
+  },
+  {
+    "rel": "frontend/src/components/__tests__/SectorFundFlowPanel.industry-freshness.test.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/components/__tests__/SectorFundFlowPanel.industry-freshness.test.tsx"
+  },
+  {
+    "rel": "frontend/src/components/data/ExternalReadOnlyData.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/components/data/ExternalReadOnlyData.tsx"
+  },
+  {
+    "rel": "frontend/src/components/data/SourceDatasetDetails.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/components/data/SourceDatasetDetails.tsx"
+  },
+  {
+    "rel": "frontend/src/components/data/__tests__/ExternalReadOnlyData.test.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/components/data/__tests__/ExternalReadOnlyData.test.tsx"
+  },
+  {
+    "rel": "frontend/src/components/news/NewsColumn.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/components/news/NewsColumn.tsx"
+  },
+  {
+    "rel": "frontend/src/components/news/NewsMetadata.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/components/news/NewsMetadata.tsx"
+  },
+  {
+    "rel": "frontend/src/components/news/PolicyPanel.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/components/news/PolicyPanel.tsx"
+  },
+  {
+    "rel": "frontend/src/lib/__tests__/navGroups.test.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/__tests__/navGroups.test.ts"
+  },
+  {
+    "rel": "frontend/src/lib/__tests__/news.test.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/__tests__/news.test.ts"
+  },
+  {
+    "rel": "frontend/src/lib/dataSourceCatalog.test.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/dataSourceCatalog.test.ts"
+  },
+  {
+    "rel": "frontend/src/lib/dataSourceCatalog.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/dataSourceCatalog.ts"
+  },
+  {
+    "rel": "frontend/src/lib/dataSources.test.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/dataSources.test.ts"
+  },
+  {
+    "rel": "frontend/src/lib/dataSources.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/dataSources.ts"
+  },
+  {
+    "rel": "frontend/src/lib/kline.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/kline.ts"
+  },
+  {
+    "rel": "frontend/src/lib/minuteBatchIncremental.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/minuteBatchIncremental.ts"
+  },
+  {
+    "rel": "frontend/src/lib/navGroups.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/navGroups.ts"
+  },
+  {
+    "rel": "frontend/src/lib/neighborPrefetch.test.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/neighborPrefetch.test.ts"
+  },
+  {
+    "rel": "frontend/src/lib/neighborPrefetch.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/neighborPrefetch.ts"
+  },
+  {
+    "rel": "frontend/src/lib/news.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/news.ts"
+  },
+  {
+    "rel": "frontend/src/lib/stock-external-link.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/stock-external-link.ts"
+  },
+  {
+    "rel": "frontend/src/lib/useMediaQuery.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/useMediaQuery.ts"
+  },
+  {
+    "rel": "frontend/src/lib/weights.test.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/weights.test.ts"
+  },
+  {
+    "rel": "frontend/src/lib/weights.ts",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/lib/weights.ts"
+  },
+  {
+    "rel": "frontend/src/pages/Factors.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/Factors.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/Lots.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/Lots.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/News.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/News.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/Signals.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/Signals.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/__tests__/Dashboard.scope.test.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/__tests__/Dashboard.scope.test.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/__tests__/DataUnifiedSources.test.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/__tests__/DataUnifiedSources.test.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/__tests__/News.test.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/__tests__/News.test.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/backtest/AddFactorSignalDialog.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/backtest/AddFactorSignalDialog.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/backtest/AutoMiningDialog.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/backtest/AutoMiningDialog.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/backtest/components/PicksSymbolKlineModal.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/backtest/components/PicksSymbolKlineModal.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/factors/FactorComposite.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/factors/FactorComposite.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/factors/FactorEditor.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/factors/FactorEditor.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/factors/FactorLibrary.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/factors/FactorLibrary.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/factors/GenerateFactorStrategyDialog.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/factors/GenerateFactorStrategyDialog.tsx"
+  },
+  {
+    "rel": "frontend/src/pages/settings/__tests__/MenuSettings.test.tsx",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/src/pages/settings/__tests__/MenuSettings.test.tsx"
+  },
+  {
+    "rel": "scripts/offline_valuation_query.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/scripts/offline_valuation_query.py"
+  },
+  {
+    "rel": "scripts/test_offline_valuation_query.py",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/scripts/test_offline_valuation_query.py"
+  },
+  {
+    "rel": "操作说明书.md",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/操作说明书.md"
+  },
+  {
+    "rel": "frontend/tsconfig.tsbuildinfo",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/tsconfig.tsbuildinfo"
+  },
+  {
+    "rel": "frontend/tsconfig.node.tsbuildinfo",
+    "trash": "/Users/simon/.Trash/one-trading-restore-pre-cursor-20260911-20260911T224838/removed-source/frontend/tsconfig.node.tsbuildinfo"
+  }
+]

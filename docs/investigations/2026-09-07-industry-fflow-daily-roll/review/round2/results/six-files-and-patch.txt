@@ -1,0 +1,83 @@
+=== six target files: disk vs baseline SHA ===
+fund_flow.py match=True
+  disk     87ef39074dd2aae76f99b4c913b120c30947bf66f0ccca00722cdbce8a548e0b
+  expected 87ef39074dd2aae76f99b4c913b120c30947bf66f0ccca00722cdbce8a548e0b
+daily_pipeline.py match=True
+  disk     7003b64ca634a230a588ffca43e3ddaba89529ce32e33ccecfdb600acd0bba58
+  expected 7003b64ca634a230a588ffca43e3ddaba89529ce32e33ccecfdb600acd0bba58
+pipeline.py match=True
+  disk     af18dda3422879dfdaea4b251cd7257cd506dec6267a9e058325f6391686ed70
+  expected af18dda3422879dfdaea4b251cd7257cd506dec6267a9e058325f6391686ed70
+ext_data.py match=True
+  disk     3b0e5b43b1c54c39b62ffea9a0b5871fb5c2d318d755876ba137dbeb106a8137
+  expected 3b0e5b43b1c54c39b62ffea9a0b5871fb5c2d318d755876ba137dbeb106a8137
+SectorFundFlowPanel.tsx match=True
+  disk     4163d9f8c75e9f42d42c78e8f663de89bc351fe1945894a2e6550447343f31a8
+  expected 4163d9f8c75e9f42d42c78e8f663de89bc351fe1945894a2e6550447343f31a8
+api.ts match=True
+  disk     32055dd67d8065674d14d45554f4f1179dfcf2f8ac291fb9cbe55c2996cba957
+  expected 32055dd67d8065674d14d45554f4f1179dfcf2f8ac291fb9cbe55c2996cba957
+
+=== api-v02 (not in patch) ===
+disk==baseline True
+overlay==baseline True
+disk==overlay True
+
+=== patch markers ===
+contains 'INDUSTRY_FFLOW_WINDOW_CONTRACT': False
+contains 'pytest': False
+contains '__test__': False
+contains 'TEST_ONLY': False
+contains 'round2': False
+
+=== dry-run apply ===
+exit=0
+patching file 'backend/app/services/free_sources/fund_flow.py'
+patching file 'backend/app/jobs/daily_pipeline.py'
+patching file 'backend/app/api/pipeline.py'
+patching file 'backend/app/services/ext_data.py'
+patching file 'frontend/src/components/SectorFundFlowPanel.tsx'
+patching file 'frontend/src/lib/api.ts'
+
+=== apply on copies ===
+exit=0
+patching file 'backend/app/services/free_sources/fund_flow.py'
+patching file 'backend/app/jobs/daily_pipeline.py'
+patching file 'backend/app/api/pipeline.py'
+patching file 'backend/app/services/ext_data.py'
+patching file 'frontend/src/components/SectorFundFlowPanel.tsx'
+patching file 'frontend/src/lib/api.ts'
+
+=== patched copies vs overlay ===
+fund_flow.py patched==overlay True
+daily_pipeline.py patched==overlay True
+pipeline.py patched==overlay True
+ext_data.py patched==overlay True
+SectorFundFlowPanel.tsx patched==overlay True
+api.ts patched==overlay True
+
+=== reverse dry-run with unrelated hunk ===
+exit=0
+patching file 'backend/app/services/free_sources/fund_flow.py'
+patching file 'backend/app/jobs/daily_pipeline.py'
+patching file 'backend/app/api/pipeline.py'
+patching file 'backend/app/services/ext_data.py'
+patching file 'frontend/src/components/SectorFundFlowPanel.tsx'
+patching file 'frontend/src/lib/api.ts'
+
+=== reverse apply ===
+exit=0
+patching file 'backend/app/services/free_sources/fund_flow.py'
+patching file 'backend/app/jobs/daily_pipeline.py'
+patching file 'backend/app/api/pipeline.py'
+patching file 'backend/app/services/ext_data.py'
+patching file 'frontend/src/components/SectorFundFlowPanel.tsx'
+patching file 'frontend/src/lib/api.ts'
+
+=== after reverse: originals restored except extra hunk ===
+fund_flow.py back_to_disk True
+daily_pipeline.py back_to_disk True
+pipeline.py back_to_disk True
+ext_data.py baseline+hunk=True hunk_kept=True
+SectorFundFlowPanel.tsx back_to_disk True
+api.ts back_to_disk True

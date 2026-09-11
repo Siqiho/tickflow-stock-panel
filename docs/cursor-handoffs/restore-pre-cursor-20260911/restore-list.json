@@ -1,0 +1,1032 @@
+[
+  {
+    "rel": "README.md",
+    "origin": "A",
+    "sha256": "cc0afb4bda0fdf929280501a8f8cae4a4b18f23326627a34e07e56b61b518d29"
+  },
+  {
+    "rel": "backend/app/api/backtest.py",
+    "origin": "A",
+    "sha256": "4faa2c15b1a2cde698aa83443e826d3d19efbfa9a8f10b8e6d4cf87da0c1054f"
+  },
+  {
+    "rel": "backend/app/api/data.py",
+    "origin": "A",
+    "sha256": "79be09311be1480ecc67a260699fc409c946daed3f88bd5f606c1ec81ec11591"
+  },
+  {
+    "rel": "backend/app/api/ext_data.py",
+    "origin": "A",
+    "sha256": "413fea20e1ea45d4e19f894a7e79beef4ea4100da762adb886cfa0dfa717e2d6"
+  },
+  {
+    "rel": "backend/app/api/indices.py",
+    "origin": "A",
+    "sha256": "39fe50c1e043d2e0d21bda2f24404f0c18a4069c9b864cc546f09bcbbdb249f6"
+  },
+  {
+    "rel": "backend/app/api/kline.py",
+    "origin": "A",
+    "sha256": "d776f842b9ed4bfbebe0c8aab0352bbb24381c15f299e982a02f5f5f2b3803c6"
+  },
+  {
+    "rel": "backend/app/api/market_recap.py",
+    "origin": "A",
+    "sha256": "6684e7f4567da3f10af68b250f02498482424ac22e835b8d92593a04ed45d041"
+  },
+  {
+    "rel": "backend/app/api/mining.py",
+    "origin": "A",
+    "sha256": "ac6d09b4cae6f233f16075c401726f14f473a6748163dc15f0f2748d6a479d33"
+  },
+  {
+    "rel": "backend/app/api/monitor_rules.py",
+    "origin": "A",
+    "sha256": "de0b719ae8d8daaa42dd809392d5375e7652a1d8230b4d784ee0faa380734254"
+  },
+  {
+    "rel": "backend/app/api/overview.py",
+    "origin": "A",
+    "sha256": "14652781022c444a7cd190722d324d88e39f333be2a64612bd556c94fdf49850"
+  },
+  {
+    "rel": "backend/app/api/pipeline.py",
+    "origin": "A",
+    "sha256": "af18dda3422879dfdaea4b251cd7257cd506dec6267a9e058325f6391686ed70"
+  },
+  {
+    "rel": "backend/app/api/regime.py",
+    "origin": "A",
+    "sha256": "741ff24ee65d1018013237a32be0bcd35b02c8908630a8670d264bdef3ce87d4"
+  },
+  {
+    "rel": "backend/app/api/routes.py",
+    "origin": "A",
+    "sha256": "07c35879cf3effc2388187833ce610c06d95a30b8dbab493a6b7c6f57f9157a2"
+  },
+  {
+    "rel": "backend/app/api/screener.py",
+    "origin": "A",
+    "sha256": "b5e8bd3ff2c5908448c69b210e88e8f8cd769a2ae90ccabfa8c85337d87b7b9e"
+  },
+  {
+    "rel": "backend/app/api/settings.py",
+    "origin": "A",
+    "sha256": "175b23ab912b75e3544b6a8c15da5f3c641a329033626f5f6ce3b9a9f840d1f5"
+  },
+  {
+    "rel": "backend/app/api/signals.py",
+    "origin": "A",
+    "sha256": "9422879eaccf75423795570c69a00a517fd42cf1d1c0a3e2fe571c6c763a2dc4"
+  },
+  {
+    "rel": "backend/app/api/stock_f10.py",
+    "origin": "A",
+    "sha256": "ebc9d0719c2f6fa8979db671208d84a9280c54a18314a08a43fe735e76a4d861"
+  },
+  {
+    "rel": "backend/app/api/strategy.py",
+    "origin": "A",
+    "sha256": "f462c50f0d1098bdf78d6eb54a0a864af2eb14a30cf9728720ba9bc3de7d88e7"
+  },
+  {
+    "rel": "backend/app/api/watchlist.py",
+    "origin": "A",
+    "sha256": "944be82bd606af4b49947c07809d0c5ed03e7a1b3ac318ba567c878ecf8439ae"
+  },
+  {
+    "rel": "backend/app/backtest/engine.py",
+    "origin": "A",
+    "sha256": "745dbb5cc8a1d13e3bf6b3e3084276886824a906839b8da2fc5b1eeadc251986"
+  },
+  {
+    "rel": "backend/app/backtest/factor.py",
+    "origin": "A",
+    "sha256": "3bd9a76da189cb538fb13141c9b70479c133c01fa107b5e4d0fc51931330e4ab"
+  },
+  {
+    "rel": "backend/app/backtest/matrix.py",
+    "origin": "A",
+    "sha256": "3f22f27661e6b8a041f03c3ac80a2455909b317fc1291c0b1c6a8f51846268dd"
+  },
+  {
+    "rel": "backend/app/backtest/mining_runtime.py",
+    "origin": "A",
+    "sha256": "6402ec134795506d40bd83b42cd90e2ddb0e3586dba05fca54daa32bd999068e"
+  },
+  {
+    "rel": "backend/app/backtest/strategy.py",
+    "origin": "A",
+    "sha256": "bad696fc2b8a068d6ca362c8b8269f8a387038caa87e1d80ad8862a1c9b62fb9"
+  },
+  {
+    "rel": "backend/app/backtest/walkforward.py",
+    "origin": "A",
+    "sha256": "a7233880f5487f930e46eb884936476b042cb3161f5bf6b8d4a90651e7650959"
+  },
+  {
+    "rel": "backend/app/backtest/worker.py",
+    "origin": "A",
+    "sha256": "47a8eb8f77b1c1c380340c76b9a538a697881afe0bbff337f77cf20a66f967c9"
+  },
+  {
+    "rel": "backend/app/config.py",
+    "origin": "A",
+    "sha256": "d670598e431f365d4556318cbf1ee879867eaa01e007f16b31cceaf790ddaf5b"
+  },
+  {
+    "rel": "backend/app/data_lab/sources/__init__.py",
+    "origin": "A",
+    "sha256": "eee56163a7808ea4a8c41d8974ab59a49621c3e04370c844d04d8aa70254c8e3"
+  },
+  {
+    "rel": "backend/app/data_lab/sources/calendar_probe.py",
+    "origin": "A",
+    "sha256": "31c9cac26671575bba4a6f4b05231c6cd574b236ea68461709fd27d14e4fce1d"
+  },
+  {
+    "rel": "backend/app/data_providers/base.py",
+    "origin": "A",
+    "sha256": "8651d1fd406c46bff4ab5c644d26f7d50df6fd2718a022e123f13f4e1548178a"
+  },
+  {
+    "rel": "backend/app/data_providers/capabilities.py",
+    "origin": "A",
+    "sha256": "ae72f4f40e39eb747b5741028c720058107545543f82128aa6b568971b2b5164"
+  },
+  {
+    "rel": "backend/app/data_providers/custom/config.py",
+    "origin": "A",
+    "sha256": "c8452fdb75c7ea64c864938967580148e26bbcb4921c043232349ed47ae999c4"
+  },
+  {
+    "rel": "backend/app/data_providers/custom/loader.py",
+    "origin": "A",
+    "sha256": "3b74cc10bfc7db0e101b5f4a1668126cd5fe55462253ed6532c69c345983bd4f"
+  },
+  {
+    "rel": "backend/app/data_providers/custom/provider.py",
+    "origin": "A",
+    "sha256": "d805e2f83baa5a043405f544dc672a1affd7c54203d9c02d10bec103c439260e"
+  },
+  {
+    "rel": "backend/app/data_providers/tickflow_provider.py",
+    "origin": "A",
+    "sha256": "4dcda7a00ef8406afbe361d5e8db29e37deb068a01c4250358f659ad7b4ba725"
+  },
+  {
+    "rel": "backend/app/enriched_generation.py",
+    "origin": "A",
+    "sha256": "8b3d72367d139b3b8531d8e8a0d00a5125f13c7bfc26955635547c1418d71f73"
+  },
+  {
+    "rel": "backend/app/indicators/pipeline.py",
+    "origin": "A",
+    "sha256": "57d164c7d9a65f769217daae2969fdceab63f68b75fe134b0cffb03aaf9ee29d"
+  },
+  {
+    "rel": "backend/app/jobs/daily_pipeline.py",
+    "origin": "A",
+    "sha256": "7003b64ca634a230a588ffca43e3ddaba89529ce32e33ccecfdb600acd0bba58"
+  },
+  {
+    "rel": "backend/app/main.py",
+    "origin": "A",
+    "sha256": "199d35c2001b13a78885ae32bfeaa65309bbeabc37d8fe2834406e85ab1ec9d5"
+  },
+  {
+    "rel": "backend/app/plugins/fuyao/client.py",
+    "origin": "A",
+    "sha256": "115283420fdfc935c204d722f4285b61eba501c186f57fe6c6a747597d6dadca"
+  },
+  {
+    "rel": "backend/app/plugins/fuyao/provider.py",
+    "origin": "A",
+    "sha256": "e08e907a9e0cc11a65a283b5c8a73c0cbc8fcd75bc9ee8794df1882818df4bae"
+  },
+  {
+    "rel": "backend/app/plugins/stocksdk/bridge.mjs",
+    "origin": "A",
+    "sha256": "2dae9d3212abec800d9be7167ed45fbb2af7d0c028ecd5b6ade07f8aab532684"
+  },
+  {
+    "rel": "backend/app/plugins/stocksdk/provider.py",
+    "origin": "A",
+    "sha256": "b7d4d0caecb62abffbe33358f8aa288b43fdc8e88b47faba6f430d89c484ce69"
+  },
+  {
+    "rel": "backend/app/secrets_store.py",
+    "origin": "A",
+    "sha256": "022d49b7cdd832192111555275652a6569d2a5e316b5c3aec6d71c650bf7284d"
+  },
+  {
+    "rel": "backend/app/services/abnormal_moves.py",
+    "origin": "A",
+    "sha256": "103ecd6a1d33f40aeffc2042fcbe93c6d1510d86e6d66b2415f16131b1db9022"
+  },
+  {
+    "rel": "backend/app/services/ai_provider.py",
+    "origin": "A",
+    "sha256": "ce91c6c48438c6d05b23e10fbc0d388303bc30c5447b61994bc571f85dc70f40"
+  },
+  {
+    "rel": "backend/app/services/atomic_io.py",
+    "origin": "A",
+    "sha256": "e0993c55daf673bf7305f858470abc25eaf70b8896fc99643c88baf5b0b8ba52"
+  },
+  {
+    "rel": "backend/app/services/authorization.py",
+    "origin": "A",
+    "sha256": "68082ac813375cff2f419e5d2623ca1abefdda6c8b3394155cc58912442c75cd"
+  },
+  {
+    "rel": "backend/app/services/backtest.py",
+    "origin": "A",
+    "sha256": "dbfc71d6d73944cfb9c1966ed2ac664bbc76129028938dbd53e80424f934eb27"
+  },
+  {
+    "rel": "backend/app/services/data_integrity.py",
+    "origin": "A",
+    "sha256": "13231b0b2fb051a85e597824e9d7744647db4d47f55d313e141de52eeab0400e"
+  },
+  {
+    "rel": "backend/app/services/depth_service.py",
+    "origin": "A",
+    "sha256": "0527339fb81d720591462c389692be651a6d29567d90b91a56dc0492d58ef1d5"
+  },
+  {
+    "rel": "backend/app/services/ext_data.py",
+    "origin": "A",
+    "sha256": "3b0e5b43b1c54c39b62ffea9a0b5871fb5c2d318d755876ba137dbeb106a8137"
+  },
+  {
+    "rel": "backend/app/services/ext_presets.py",
+    "origin": "A",
+    "sha256": "b59dfac11788d3bb3dd098d1f5de5bcf924eea0dd5922db640a9e97873e7fe42"
+  },
+  {
+    "rel": "backend/app/services/ext_pull.py",
+    "origin": "A",
+    "sha256": "eafc37b6b2763196367bd611914556d62c1422f1adb9bae604957a30aea1e767"
+  },
+  {
+    "rel": "backend/app/services/financial_sync.py",
+    "origin": "A",
+    "sha256": "0ec08e7a0d322c5974d8d612da02f7a2ec11dcafa2e8be5d9bcb76a5b91c4371"
+  },
+  {
+    "rel": "backend/app/services/free_sources/fund_flow.py",
+    "origin": "A",
+    "sha256": "87ef39074dd2aae76f99b4c913b120c30947bf66f0ccca00722cdbce8a548e0b"
+  },
+  {
+    "rel": "backend/app/services/free_sources/margin_trading_public.py",
+    "origin": "A",
+    "sha256": "ff4b361b258bd85cd1f1dd530238b0e3ed2f9daef232a3959b731ddf1fb65d5e"
+  },
+  {
+    "rel": "backend/app/services/intraday_overview.py",
+    "origin": "A",
+    "sha256": "9cb50f7cfca897ed5033662e176ee186d8f77cb857fd9c3ccb46a002129a4e3a"
+  },
+  {
+    "rel": "backend/app/services/kline_sync.py",
+    "origin": "A",
+    "sha256": "8cf6e7c97fe1f006752508a2f89d9e789deaff3d987546ae7e4c711c4d01fe52"
+  },
+  {
+    "rel": "backend/app/services/market_mainline.py",
+    "origin": "A",
+    "sha256": "5fb678799cdc124e0ecd0d8a136c6c118d3192f4efb579fb797bab96c84a5a32"
+  },
+  {
+    "rel": "backend/app/services/market_overview_builder.py",
+    "origin": "A",
+    "sha256": "1b652d1057d60bb92786f0c22f0ba58f939b695e217026b4c27d58017d945947"
+  },
+  {
+    "rel": "backend/app/services/minute_refresh.py",
+    "origin": "A",
+    "sha256": "c453bdba9c9b284c512506aff4e09b4636d152b3ed391bf5b204ffd1e293d082"
+  },
+  {
+    "rel": "backend/app/services/pipeline_jobs.py",
+    "origin": "A",
+    "sha256": "85b90bddf6069f354bb8b7ea0a5fadeaea3248ec19c5a84ccd43cc45e8746ea6"
+  },
+  {
+    "rel": "backend/app/services/preferences.py",
+    "origin": "A",
+    "sha256": "f04c757aed091bfadf1e5f9081158082a65bec681b7c6130d388e033b326664d"
+  },
+  {
+    "rel": "backend/app/services/quote_service.py",
+    "origin": "A",
+    "sha256": "c144fb0d8d796b0cdabbe36557278a198e2a61860ff24e2fd72500a1bd32c033"
+  },
+  {
+    "rel": "backend/app/services/regime_builder.py",
+    "origin": "A",
+    "sha256": "1396bde171701ddb4c4fc12475f044b8422d2c48e1e6813afb72a4d3a134530f"
+  },
+  {
+    "rel": "backend/app/services/screener.py",
+    "origin": "A",
+    "sha256": "9de35b94bdfbd2dc9e092fc25b5de98b9593ff06b50ae57aa04134f47315f524"
+  },
+  {
+    "rel": "backend/app/services/sector_monitor.py",
+    "origin": "A",
+    "sha256": "b8babda486cc611f3ad3a80a690afa6fca1bc63b26df71e97fd722c8b0da4d19"
+  },
+  {
+    "rel": "backend/app/services/stock_analyzer.py",
+    "origin": "A",
+    "sha256": "fc96651c397a7b4a7a7ef63a03be3df1b71e1f4a420f36f78a7de36b6913e797"
+  },
+  {
+    "rel": "backend/app/services/strategy_cache.py",
+    "origin": "A",
+    "sha256": "796c23f17369e5ad9f791558035ee6b7ae97800ef78cb79210a0461e598f44b4"
+  },
+  {
+    "rel": "backend/app/services/user_console_data.py",
+    "origin": "A",
+    "sha256": "90d9607eeb6dd97dd6c373827dd281d42b420fb665fc499d3f6207db2fd30862"
+  },
+  {
+    "rel": "backend/app/services/watchlist.py",
+    "origin": "A",
+    "sha256": "89fa8844ed7d5680f5ba5c4d3d1d56077514b2446c762409ba6f08cea9ff23f4"
+  },
+  {
+    "rel": "backend/app/services/watchlist_ocr/pipeline.py",
+    "origin": "A",
+    "sha256": "c384e8cb3a2f9aff46ed304d7f3c06316cbcc8c9c4e9293b759c5abe3e0091f5"
+  },
+  {
+    "rel": "backend/app/services/webhook_adapter.py",
+    "origin": "A",
+    "sha256": "2aca7ac7605109d14b9cedb1d896f38bce822297b18f5f3ce21b7323b7d6e8c1"
+  },
+  {
+    "rel": "backend/app/strategy/custom_signals.py",
+    "origin": "A",
+    "sha256": "5af2000ba394ec896b94f96e3d0f12f8fb96eddb03b8a000858a467483d8f7fe"
+  },
+  {
+    "rel": "backend/app/strategy/custom_signals_ai.py",
+    "origin": "A",
+    "sha256": "cfbac419b042af38ab4eb33683d27108334151a41b3784b5e02fbc98cdb4b086"
+  },
+  {
+    "rel": "backend/app/strategy/engine.py",
+    "origin": "A",
+    "sha256": "ce6db78e45c6a7e06634be7a9eec33ca535546c3be9b87a9bddc91334ca748a5"
+  },
+  {
+    "rel": "backend/app/strategy/intraday_signals.py",
+    "origin": "A",
+    "sha256": "f3eb7298812c3e62251507b5c293703dff063193adcd9fd46c158d198d49e61f"
+  },
+  {
+    "rel": "backend/app/strategy/monitor.py",
+    "origin": "A",
+    "sha256": "422f47f9ccd66e1f7a6a64947baf929afa781f9d93b8ca58ac01b82e5adafbd2"
+  },
+  {
+    "rel": "backend/app/strategy/monitor_rules.py",
+    "origin": "A",
+    "sha256": "6246bc1547eb0aad51111837e5d2436bf25180c5c8ef07ca98af1dc941f3d0c4"
+  },
+  {
+    "rel": "backend/app/strategy/scoring.py",
+    "origin": "A",
+    "sha256": "873435b97041ad067fea953e3262dcbca7f725f8fe7a76c19e4c966241062b57"
+  },
+  {
+    "rel": "backend/app/tickflow/capabilities.py",
+    "origin": "A",
+    "sha256": "51e8a787f1cc394119d45d91e10f0506f570544f77f43e88355c2a8210ecb458"
+  },
+  {
+    "rel": "backend/app/tickflow/policy.py",
+    "origin": "A",
+    "sha256": "cf88c29911d71f4e835f9858fca1be2e33b06b2c91b49598977dd04aa6143e3c"
+  },
+  {
+    "rel": "backend/app/tickflow/rate_limits.py",
+    "origin": "A",
+    "sha256": "4b23f2d66f4cacc75a34e646e23574689d5c5e9b1ecd5b5f7be8dade5c37bbbe"
+  },
+  {
+    "rel": "backend/app/tickflow/repository.py",
+    "origin": "A",
+    "sha256": "078e48397953fec40fee02fac72e2e00af23bbf975cb87bed5fa7fb5df6eca48"
+  },
+  {
+    "rel": "backend/pyproject.toml",
+    "origin": "A",
+    "sha256": "3ffe9672e1e7b71ce731656d551696e0e325b18ac9194fa2e2a74a89ddadb02b"
+  },
+  {
+    "rel": "backend/tests/backtest/test_strategy_backtest_correctness.py",
+    "origin": "A",
+    "sha256": "73ff84ae5d1aa65029962a93b5c5e8ea044bb362c94964b20b97df98500c7427"
+  },
+  {
+    "rel": "backend/tests/backtest/test_walkforward.py",
+    "origin": "A",
+    "sha256": "64444a7023080038caf4071bc6f7ad80ac8aee658605d95741ea1ddb6b5b0030"
+  },
+  {
+    "rel": "backend/tests/data_catalog/test_lifespan.py",
+    "origin": "A",
+    "sha256": "ae99afc3e83137dd3b81ac9dffd3e1abba74ee67476f84c5130a3180d80c64a8"
+  },
+  {
+    "rel": "backend/tests/free_sources/test_fund_flow.py",
+    "origin": "A",
+    "sha256": "653ae6e1d2fdedabb0d0fbb9123af1ad08f440290b4feb78b58246f21d92763d"
+  },
+  {
+    "rel": "backend/tests/free_sources/test_margin_trading_public.py",
+    "origin": "A",
+    "sha256": "0a0dc6f9fa1731015722c456ae5944fc2fac8cf6ae4df595e12336cb7c37ee65"
+  },
+  {
+    "rel": "backend/tests/test_abnormal_moves.py",
+    "origin": "A",
+    "sha256": "e51aa08b1187d510e214546e104eb59feb7a741fd6629c273c48d9f51c44915f"
+  },
+  {
+    "rel": "backend/tests/test_capability_augment.py",
+    "origin": "A",
+    "sha256": "767a9c3039cc0c45a6f45a139c73652a75a3a047105f376dbb0e75118953bd3c"
+  },
+  {
+    "rel": "backend/tests/test_capability_matrix.py",
+    "origin": "A",
+    "sha256": "2000d87232d8a3b6ec49ee2b8608e6f35ed242f48de46c70e4c06dac3fa3d33e"
+  },
+  {
+    "rel": "backend/tests/test_custom_signals_ai.py",
+    "origin": "A",
+    "sha256": "bbf8b43c8a70c8b3f4a89d7ba2865161148fcc98df3e923bce2921c855e7cd9a"
+  },
+  {
+    "rel": "backend/tests/test_data_integrity.py",
+    "origin": "A",
+    "sha256": "ac0f59fbdba8fbe99414c6e698ad3359b00e4aed84833ce4e1f73451c212ab17"
+  },
+  {
+    "rel": "backend/tests/test_enriched_full_rebuild.py",
+    "origin": "A",
+    "sha256": "25c90bc8c2327761920ec9e3686c6a159da3d729beac8612538dc4024f47bcef"
+  },
+  {
+    "rel": "backend/tests/test_enriched_generation.py",
+    "origin": "A",
+    "sha256": "0ca993f4300f6c531dca67313a30a20370b162a881aee338239641a719a933a9"
+  },
+  {
+    "rel": "backend/tests/test_extensions.py",
+    "origin": "A",
+    "sha256": "f147f042b32131649ef1092e3c2dde3c427f4b3136b694ead193eb77ce545cc3"
+  },
+  {
+    "rel": "backend/tests/test_financial_shares.py",
+    "origin": "A",
+    "sha256": "53ee3b49c6db5b99efd7ba924d90ea2ad96f71734228dee7bebf8cf39fe63ad9"
+  },
+  {
+    "rel": "backend/tests/test_fuyao_provider.py",
+    "origin": "A",
+    "sha256": "1da9b5cb755227b62a4a1d0e33a050b063076f520bf47965dbc9025c1e932d41"
+  },
+  {
+    "rel": "backend/tests/test_get_daily_cache_reuse.py",
+    "origin": "A",
+    "sha256": "5dbbbae9f886d90e11d4b1d1c609f15dfd5da997fb776674f1ae73ce08cfd959"
+  },
+  {
+    "rel": "backend/tests/test_intraday_overview.py",
+    "origin": "A",
+    "sha256": "9f511033b19c4aefe592080760a4c40ee76da264cd82baa65600c5e935dd75b0"
+  },
+  {
+    "rel": "backend/tests/test_job_stall_and_cancel.py",
+    "origin": "A",
+    "sha256": "8b1e927f8f53c2d311c7ad1f9b7893134880fc52d8c3f44d692c503a68bd18ec"
+  },
+  {
+    "rel": "backend/tests/test_kline_minute_api.py",
+    "origin": "A",
+    "sha256": "e9483ed1c3663062f0436e00888203803f1b14778056fb2a7f26121098b29e2c"
+  },
+  {
+    "rel": "backend/tests/test_kline_minute_live.py",
+    "origin": "A",
+    "sha256": "1fe3650c1543fd9817dce0cd651e7316cf18cadf25a281a5a003d73ee6ff12cf"
+  },
+  {
+    "rel": "backend/tests/test_kline_sync_timezone.py",
+    "origin": "A",
+    "sha256": "afef306dce7efcac0d6ec239e01042e4b320a7b5e7299bd82d2f155b83d64bad"
+  },
+  {
+    "rel": "backend/tests/test_market_overview_as_of.py",
+    "origin": "A",
+    "sha256": "fbdde000290401ee9873d603fadf974312699b4a7a634aee0376509da7f8b81b"
+  },
+  {
+    "rel": "backend/tests/test_matrix_etf_share_fields.py",
+    "origin": "A",
+    "sha256": "29d10d252eb7c9372da56d73a4a8db90be65cca8deee9a0a400b5d0e2ee6c7c7"
+  },
+  {
+    "rel": "backend/tests/test_minute_refresh.py",
+    "origin": "A",
+    "sha256": "283dd7167be0e2555385455acd3ebad26a5f197ba2e968b3b93a71159af0b732"
+  },
+  {
+    "rel": "backend/tests/test_minute_routing.py",
+    "origin": "A",
+    "sha256": "440709cb6e3ca2bab69b83825f81ca152a28c5764198c5156f29bc1182299626"
+  },
+  {
+    "rel": "backend/tests/test_pipeline_and_monitor_fixes.py",
+    "origin": "A",
+    "sha256": "317732839585bc057e9167a3529d21556645512607b951d510aa0553042ad24d"
+  },
+  {
+    "rel": "backend/tests/test_preferences_cache.py",
+    "origin": "A",
+    "sha256": "b5e345af76a083478ea54d6b2b68a19cd1f01e9bd80a75eb0ce17dde81c75e23"
+  },
+  {
+    "rel": "backend/tests/test_quote_service_interval.py",
+    "origin": "A",
+    "sha256": "b820991bab902bfeeb3e21e6b344ba9c4af10142fded0d4a801d487a5ce2b984"
+  },
+  {
+    "rel": "backend/tests/test_realtime_enriched_resume.py",
+    "origin": "A",
+    "sha256": "87e7976f92d4741f4694ae2c2014ffe0c2afe0e2fcffd81c096e82112605c79c"
+  },
+  {
+    "rel": "backend/tests/test_regime_builder.py",
+    "origin": "A",
+    "sha256": "830ee79c3796e6c8ca0c7fd066008ff5d83cc07eb1d7dda1fae0b53aaa061edb"
+  },
+  {
+    "rel": "backend/tests/test_screener_builtin_params.py",
+    "origin": "A",
+    "sha256": "264d169342a7d37d63d39982fe47565afba86ca4ba389f81427baaf747910181"
+  },
+  {
+    "rel": "backend/tests/test_screener_cache_api.py",
+    "origin": "A",
+    "sha256": "73c631dc5f2b7c743b2335299f0ca6fb98cc42b680e2055a7cc3d7fbe804983d"
+  },
+  {
+    "rel": "backend/tests/test_sector_monitor.py",
+    "origin": "A",
+    "sha256": "327d54e8c47cc1813e8f8036bb20b11d82c70304cd3302680d7508e463bb7146"
+  },
+  {
+    "rel": "backend/tests/test_stocksdk_provider.py",
+    "origin": "A",
+    "sha256": "7be038c1502efbf4cefa9f8f677c0c07958de1c2b4e3efdb721f49688d5f2790"
+  },
+  {
+    "rel": "backend/tests/test_trading_day.py",
+    "origin": "A",
+    "sha256": "48d3a041b7749265a519a8ea74b52f065876944c4220bae4809e49e26d1a11d0"
+  },
+  {
+    "rel": "backend/uv.lock",
+    "origin": "A",
+    "sha256": "dafb3f631b4099638863744ed0da8a17e322c9c55ea8fdd2756202e8774b0d49"
+  },
+  {
+    "rel": "docs/custom-data-source.md",
+    "origin": "A",
+    "sha256": "20cd4dd6655fa528b2141ddb6b0176d98a3943c3bc8ec522d1d074d3cd9d173a"
+  },
+  {
+    "rel": "docs/features.md",
+    "origin": "A",
+    "sha256": "7c5428141e5748d96ce99bc23f8f9094ae0dfe0f6a06376efcf8ccfe1fe86884"
+  },
+  {
+    "rel": "docs/plugin-development.md",
+    "origin": "A",
+    "sha256": "f1c251f4791002e036e7870a6fb3f3cf22b36b6847d971c17f586dbcc8cc5fc2"
+  },
+  {
+    "rel": "docs/secondary-development.md",
+    "origin": "A",
+    "sha256": "4279ed7f2c291d141dc3ecaa27def55bc2e26b25359fcf63817024dd2bbc50fe"
+  },
+  {
+    "rel": "docs/strategy.md",
+    "origin": "A",
+    "sha256": "6539d41184a9ffb59f6c21653d99fb4d615f91a1c3b5bc87717f0afedd6f5c26"
+  },
+  {
+    "rel": "frontend/src/components/DimensionMembersDialog.tsx",
+    "origin": "A",
+    "sha256": "16b83d3e6b54d2e5d05c95b05fe1974706928efc08a50dcb22afc4982dd4ac54"
+  },
+  {
+    "rel": "frontend/src/components/EChartsCandlestick.tsx",
+    "origin": "A",
+    "sha256": "815338199f1395cf77ec1ee3e0f0fb8504801815408d1280b7bca3bc1da7997e"
+  },
+  {
+    "rel": "frontend/src/components/EChartsIntraday.tsx",
+    "origin": "A",
+    "sha256": "979773ada8d0b699a296c1cab9a74095e438fd7abe51e63c2700d725d94a4def"
+  },
+  {
+    "rel": "frontend/src/components/EChartsMultiDayIntraday.tsx",
+    "origin": "A",
+    "sha256": "e6322dca3e305f54fa0cecbb5710e96cbdd417c12f5398512096072b84bc5c7e"
+  },
+  {
+    "rel": "frontend/src/components/Layout.tsx",
+    "origin": "A",
+    "sha256": "e2f3b87a6c0a542452b84701a8d76611f72871edcb446f0affb2bce27ba23dcf"
+  },
+  {
+    "rel": "frontend/src/components/ListColumnCustomizer.tsx",
+    "origin": "A",
+    "sha256": "06458ae8eb80a487a8150597c1fe0918d42ed9947df2472fe9a48c822be7b0cd"
+  },
+  {
+    "rel": "frontend/src/components/MarketPulsePanel.tsx",
+    "origin": "A",
+    "sha256": "37f9c67d13f14a929129bc160ef0f67f3d51348df588484739cda9d769c00ad4"
+  },
+  {
+    "rel": "frontend/src/components/SectorFundFlowPanel.tsx",
+    "origin": "A",
+    "sha256": "4163d9f8c75e9f42d42c78e8f663de89bc351fe1945894a2e6550447343f31a8"
+  },
+  {
+    "rel": "frontend/src/components/StockDailyKChart.tsx",
+    "origin": "A",
+    "sha256": "0bb5ca4dc58cf3614012dd5f66ead6164b73d203a272feaef3c8dd09e86e98b6"
+  },
+  {
+    "rel": "frontend/src/components/StockInfoBar.tsx",
+    "origin": "A",
+    "sha256": "9eb2e425613a19ef7032fbeec968f0636816cf8b6922ae02b29201dfc65a15eb"
+  },
+  {
+    "rel": "frontend/src/components/StockMultiDayIntradayChart.tsx",
+    "origin": "A",
+    "sha256": "bd134b03cd062cdc4db77bfc53d9454ed720e69fb22a2b3186c2fcc0e09c1ca3"
+  },
+  {
+    "rel": "frontend/src/components/StockPanel.tsx",
+    "origin": "A",
+    "sha256": "898c74bbca1025ffb196661dd23a659f0c027fa6cc0b1194e08fdadfb3841cbc"
+  },
+  {
+    "rel": "frontend/src/components/StockPreviewDialog.tsx",
+    "origin": "A",
+    "sha256": "eb0b2072e9ea75663573c0dc3d8762404bb7fa6a534ac6d054f5331021242f59"
+  },
+  {
+    "rel": "frontend/src/components/WatchlistImportDialog.tsx",
+    "origin": "A",
+    "sha256": "6e0e39f29cd4c8c7cb3fd5dc22315c3e11f6f27d280245edd358331a0046c38d"
+  },
+  {
+    "rel": "frontend/src/components/__tests__/Layout.mobile.test.tsx",
+    "origin": "A",
+    "sha256": "059d664761d0bde0802555fdc3cdee1c5c4aefe94196540495d3df600dc6b74d"
+  },
+  {
+    "rel": "frontend/src/components/__tests__/SectorFundFlowPanel.history.test.tsx",
+    "origin": "A",
+    "sha256": "fd16442083473be464eb396418b7fab7006accfa8a0ae5a4bb3da7b2031f846c"
+  },
+  {
+    "rel": "frontend/src/components/data/ActiveJobCard.tsx",
+    "origin": "B",
+    "sha256": "ada0b7d194af81adf2420fdb11a5982ae7c93a369c46956a3d44562f2fb12684"
+  },
+  {
+    "rel": "frontend/src/components/data/ControlPlaneSummary.tsx",
+    "origin": "B",
+    "sha256": "ff4a184338c4f9b5413aa09e74ce3e4c502ad651ac2fbeb57cafb4c92b3c26a0"
+  },
+  {
+    "rel": "frontend/src/components/data/DataCatalogSection.tsx",
+    "origin": "B",
+    "sha256": "30dbe24c3de60b95b3700a9ca261e9691cc06575997404f253b3b261bbedd31c"
+  },
+  {
+    "rel": "frontend/src/components/data/DatasetCatalogCard.tsx",
+    "origin": "B",
+    "sha256": "8a09818ae6015bbb457253ffdccc228181118740ca0ab4390eef054711cecc2d"
+  },
+  {
+    "rel": "frontend/src/components/data/DatasetDetailDrawer.tsx",
+    "origin": "B",
+    "sha256": "d5a3fcd71b5cbfc44157c4720bdeaef093f86d534485a64cae8a1114aac8adeb"
+  },
+  {
+    "rel": "frontend/src/components/data/PipelineScopeConfig.tsx",
+    "origin": "B",
+    "sha256": "d869e4200d855f1580ac4ceb0c6f25ba17d86511bd22e75c1719009b3a5f9959"
+  },
+  {
+    "rel": "frontend/src/components/data/SettingsModal.tsx",
+    "origin": "B",
+    "sha256": "062e86e5a60c032bda76400f0c87fc910a1ff96aebc1d16afa227c8d34969b00"
+  },
+  {
+    "rel": "frontend/src/components/data/__tests__/DataCatalogSection.test.tsx",
+    "origin": "B",
+    "sha256": "2f30cec9fe940f9132b98f1b0d7ac9253e96209037a6282157ab061f9dc99efc"
+  },
+  {
+    "rel": "frontend/src/components/data/__tests__/DatasetDetailDrawer.test.tsx",
+    "origin": "B",
+    "sha256": "9c9c963d25bea83363a1ae65f6e1a07e2b555f50b8cf2933914dc512f5ff1417"
+  },
+  {
+    "rel": "frontend/src/components/ext-data/EditExtDialog.tsx",
+    "origin": "A",
+    "sha256": "fabc19ae3ecda4b242f6c0abcba71cfc3ba2b24c27c42d4856ae86fd5e096708"
+  },
+  {
+    "rel": "frontend/src/components/ext-data/ExtDataPullPanel.tsx",
+    "origin": "A",
+    "sha256": "ced4f22d618abaeab0c90485fbf9eff6e9ca0aefc1af9f9e8fffba3f9ff0c8cd"
+  },
+  {
+    "rel": "frontend/src/components/ext-data/ExtDataStatCard.tsx",
+    "origin": "A",
+    "sha256": "1a15dd1f7ad5363ac96f6ca848dd8356f7216dd81fc6dcc5746ce74559da852d"
+  },
+  {
+    "rel": "frontend/src/components/monitor/RuleEditor.tsx",
+    "origin": "A",
+    "sha256": "da0b979db3a88313acb49a6b8270c9664a558036d6d0b767c1c55ee578b42add"
+  },
+  {
+    "rel": "frontend/src/components/screener/CompositeStrategyDialog.tsx",
+    "origin": "A",
+    "sha256": "a77b802c67bdd4c6a226bb965443345bf90cd100819551c872d55f0e5d6c13b7"
+  },
+  {
+    "rel": "frontend/src/components/screener/ScreenerTable.tsx",
+    "origin": "A",
+    "sha256": "9453da582128b45361c608b3abe678377ef9b9baa3346b186237fb9f92594f16"
+  },
+  {
+    "rel": "frontend/src/components/screener/SignalPicker.tsx",
+    "origin": "A",
+    "sha256": "0f66812741a21e5bc0e617a5f7c3e7538d48d5d6041ccb7b36e670231255a79c"
+  },
+  {
+    "rel": "frontend/src/components/screener/StrategyBuilderDialog.tsx",
+    "origin": "A",
+    "sha256": "c63f4b8b5544f1c98c8b94432b57a2ada0e5c02501569364f71270a9ec61a69a"
+  },
+  {
+    "rel": "frontend/src/components/screener/StrategyCard.tsx",
+    "origin": "A",
+    "sha256": "8cde140d0a1ba17f6b20415411c6d2eadc1ef76cac81720b18212cd38b987bdf"
+  },
+  {
+    "rel": "frontend/src/components/screener/StrategyPoolDialog.tsx",
+    "origin": "A",
+    "sha256": "6f41add00e41dac7d07e1193483b65f900e73749eb33b7acf6e0b1f1c9a14ef9"
+  },
+  {
+    "rel": "frontend/src/components/screener/StrategySettingsDialog.tsx",
+    "origin": "A",
+    "sha256": "124c04d5cc7766e4a4799a2a2417fabfc0debcd68d0fc33c14a31d75bf61d455"
+  },
+  {
+    "rel": "frontend/src/components/signals/CustomSignalDialog.tsx",
+    "origin": "A",
+    "sha256": "2cef6f5e0b4080e95b640996dae88fabe5c0762ed0f952c4bc5ecedcfcde0df8"
+  },
+  {
+    "rel": "frontend/src/components/signals/SignalTriggerActions.tsx",
+    "origin": "A",
+    "sha256": "31748d5f74b86d54a88807d9697c90623216a4e3c6c2d61bbfb531eae5093eba"
+  },
+  {
+    "rel": "frontend/src/components/stock-analysis/PriceAlertDialog.tsx",
+    "origin": "A",
+    "sha256": "6c435005c94b28a5bed9734c89eec70e1bd4d872a235d91c6159f93c4217b12b"
+  },
+  {
+    "rel": "frontend/src/lib/api-v02.ts",
+    "origin": "A",
+    "sha256": "f0aaabfcafcaaa11eb6a6c714398c707800f9e542b097018ecc8904cc46dc977"
+  },
+  {
+    "rel": "frontend/src/lib/api.ts",
+    "origin": "A",
+    "sha256": "32055dd67d8065674d14d45554f4f1179dfcf2f8ac291fb9cbe55c2996cba957"
+  },
+  {
+    "rel": "frontend/src/lib/intraday-chart.ts",
+    "origin": "A",
+    "sha256": "61abc29463aaec9e185542c2b1824994bf75015398a211dad652949eca0cb8f2"
+  },
+  {
+    "rel": "frontend/src/lib/miningTask.ts",
+    "origin": "A",
+    "sha256": "75190c51842a2571307a7e9b1aa1d3b83beffa6dace488c66c429c364edbecc4"
+  },
+  {
+    "rel": "frontend/src/lib/queryKeys.ts",
+    "origin": "A",
+    "sha256": "5dcca0ee86d52050a11bc8faee16ccd0947cf876fc5417e21e02a0c05afbeb83"
+  },
+  {
+    "rel": "frontend/src/lib/storage.ts",
+    "origin": "A",
+    "sha256": "ef1480d3315c06b6b62051dbbf3f80e568b836a50861ada8a789cabfef7e9557"
+  },
+  {
+    "rel": "frontend/src/lib/useFinancials.ts",
+    "origin": "A",
+    "sha256": "3e35eb6fbc3ef00e6f08e735698721a83d09250dc0e480bf928edf8b3bced87a"
+  },
+  {
+    "rel": "frontend/src/lib/useSharedMutations.ts",
+    "origin": "A",
+    "sha256": "3b174bec3fe66402a0bb37d66debda0fc4d73f40d88a1df238fbda10ee2cfaea"
+  },
+  {
+    "rel": "frontend/src/pages/AbnormalMoves.tsx",
+    "origin": "A",
+    "sha256": "f3f5e06ec50fc594c80cc5553caf5fa43fe5e2c7c2baffd7fbeb46f33d9c4534"
+  },
+  {
+    "rel": "frontend/src/pages/Backtest.tsx",
+    "origin": "A",
+    "sha256": "e289b259cf7aae39cd9a9062a1cfe63949fc3d8e507fe47b2c565ca0035e98bc"
+  },
+  {
+    "rel": "frontend/src/pages/ConceptAnalysis.tsx",
+    "origin": "A",
+    "sha256": "0dcd4a049278b771a5ecae32f8033e6215ed019fe95c92d57951debcedb14261"
+  },
+  {
+    "rel": "frontend/src/pages/Dashboard.tsx",
+    "origin": "A",
+    "sha256": "819f4f0dbe10adc4640f20678f5d602d6069f86cad132cd298e150443ffc32e4"
+  },
+  {
+    "rel": "frontend/src/pages/Data.tsx",
+    "origin": "A",
+    "sha256": "38dc3d21a418bfb5ee45d98570173eabcc04a073a4df2ccb58dd82daaa46a05d"
+  },
+  {
+    "rel": "frontend/src/pages/Indices.tsx",
+    "origin": "A",
+    "sha256": "4a789aff67f0db2c5f241f18dee67737c2f14c31dc2d86512aab87d2fd136ce8"
+  },
+  {
+    "rel": "frontend/src/pages/IndustryAnalysis.tsx",
+    "origin": "A",
+    "sha256": "a8df53dcb1ba2c41893fd95cb0f1cafd69ffb9af2723e7289c6b7fdb862a4fc8"
+  },
+  {
+    "rel": "frontend/src/pages/LimitUpLadder.tsx",
+    "origin": "A",
+    "sha256": "27bd56b3d167c18aefcfae18f5e05445fc9f227867dd795a1cfa6b0905efb5ee"
+  },
+  {
+    "rel": "frontend/src/pages/Monitor.tsx",
+    "origin": "A",
+    "sha256": "922839b0852be3dbcf997e38e94465a5b961f2a296910d0125d71c4667bfe9cb"
+  },
+  {
+    "rel": "frontend/src/pages/Review.tsx",
+    "origin": "A",
+    "sha256": "a82b9471f25a94ee2cd94acd3c8afedf8c437e7de77bc87266ea3daad4b6e966"
+  },
+  {
+    "rel": "frontend/src/pages/Screener.tsx",
+    "origin": "A",
+    "sha256": "0afbdd6620267f977bab0e83628a8677c80a51f452b639f997b5a5648bf35749"
+  },
+  {
+    "rel": "frontend/src/pages/Settings.tsx",
+    "origin": "A",
+    "sha256": "b6ea1ff4c56305a090021fbebcb001da79043ea6b4cff42d3c172cc9e774776c"
+  },
+  {
+    "rel": "frontend/src/pages/Watchlist.tsx",
+    "origin": "A",
+    "sha256": "248352442585c3cb5f938649bac9009fc4147df0684f9a5b7b04e1376c1dfe55"
+  },
+  {
+    "rel": "frontend/src/pages/__tests__/Dashboard.multiuser.test.tsx",
+    "origin": "A",
+    "sha256": "d119bb77db6db5c87fbf242e86fcda0ced26a03a286d57fc994829a2001b009f"
+  },
+  {
+    "rel": "frontend/src/pages/__tests__/Data.test.tsx",
+    "origin": "A",
+    "sha256": "0f2a4c4d36f6e4574f8a87d7d19349a4fd1b7aae7312a998de9a9c94c56b8516"
+  },
+  {
+    "rel": "frontend/src/pages/__tests__/ReviewStockContext.test.tsx",
+    "origin": "A",
+    "sha256": "cf0d005b5ef3ec2bb124c22e753a760a0f3614a05fb2f08024f3340a437f0698"
+  },
+  {
+    "rel": "frontend/src/pages/__tests__/Watchlist.test.tsx",
+    "origin": "A",
+    "sha256": "dcf1e33ad329e901f557a8d67b2d44a2f705893428315f55047b7f74d44ffc4f"
+  },
+  {
+    "rel": "frontend/src/pages/backtest/FactorBacktest.tsx",
+    "origin": "A",
+    "sha256": "77dd6de5e874e074848da5d7ccd06fa4a0d81d0cb29f170b8628af00d9083cd6"
+  },
+  {
+    "rel": "frontend/src/pages/backtest/FactorDiscovery.tsx",
+    "origin": "A",
+    "sha256": "e812df9bbda210539bada0eb9ab6b7e9d83ea4b3683bf7462dc673c5e717ac20"
+  },
+  {
+    "rel": "frontend/src/pages/backtest/MiningWorkbench.tsx",
+    "origin": "A",
+    "sha256": "236912a51b78bf166ebe8ea82ad3dad01c81c6e11a5a3c0b4a251232d19b7d9f"
+  },
+  {
+    "rel": "frontend/src/pages/backtest/StrategyBacktest.tsx",
+    "origin": "A",
+    "sha256": "060295f1776b1bbac1dd26b08fe89d302512802f9b50dd245e5affe53a6e7f6b"
+  },
+  {
+    "rel": "frontend/src/pages/settings/DataSourceEditor.tsx",
+    "origin": "A",
+    "sha256": "b447f883c4976455f40961f53691f8d4af125d7cfc0584a5d15cd5c33520f93b"
+  },
+  {
+    "rel": "frontend/src/pages/settings/DataSources.tsx",
+    "origin": "A",
+    "sha256": "16655f223ed5430d735eaec5b10d0e2ad1783819aabb244a61f7f633460254c4"
+  },
+  {
+    "rel": "frontend/src/pages/settings/JobTimeoutCard.tsx",
+    "origin": "A",
+    "sha256": "65c7b8a43259ff1ef3d428959655c0c8d8e1823f28719336532880f7256ea58f"
+  },
+  {
+    "rel": "frontend/src/pages/settings/Keys.tsx",
+    "origin": "A",
+    "sha256": "acc4075c6dcf511171e5b62eca10db7a52efa8950f582a245f2ff36eb912136f"
+  },
+  {
+    "rel": "frontend/src/pages/settings/MenuSettings.tsx",
+    "origin": "A",
+    "sha256": "1414f6d2d01fa9f50b69f41e5675fd3030f3a74f68eed66b3ed1e3e6ad3341c1"
+  },
+  {
+    "rel": "frontend/src/pages/settings/Monitoring.tsx",
+    "origin": "A",
+    "sha256": "4a2037eee7d16eb7895f0b70ec6a485e8fb570452c5e5381a6b94228e69e4100"
+  },
+  {
+    "rel": "frontend/src/pages/settings/System.tsx",
+    "origin": "A",
+    "sha256": "a834991dbc5cb35762d4b38e3b87cdb5c48b4ec82e175b9df6941ec462e679b4"
+  },
+  {
+    "rel": "frontend/src/router.tsx",
+    "origin": "A",
+    "sha256": "5bdd4b99dc5eaf224105e4985cc05fadaee76102684c76aba545880e85a1cbe4"
+  },
+  {
+    "rel": "frontend/vite.config.d.ts",
+    "origin": "A",
+    "sha256": "4b96dd19fd2949d28ce80e913412b0026dc421e5bf6c31d87c7b5eb11b5753b4"
+  },
+  {
+    "rel": "frontend/vite.config.js",
+    "origin": "A",
+    "sha256": "8de90c56c23d3b1f88e12baa0129322296d276801918d7e6a7bf29781ea7710d"
+  },
+  {
+    "rel": "frontend/vite.config.ts",
+    "origin": "A",
+    "sha256": "b23fa87152848361cbc78e84c8a78e80ee2753aaf630341c934f3e73f7e376e2"
+  }
+]

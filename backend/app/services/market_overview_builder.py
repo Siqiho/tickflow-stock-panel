@@ -14,24 +14,21 @@ from __future__ import annotations
 import math
 import re
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import polars as pl
 
 from app.services.ext_data import ExtConfig, ExtConfigStore
+from app.services.free_sources.hithink_finance import load_limit_pool_for_date, summarize_limit_pool_kpi
+from app.services.index_const import CORE_INDEX_NAMES, CORE_INDEX_SYMBOLS
+from app.services.intraday_overview import apply_intraday_snapshot_overlay, load_official_trend_overlay
+from app.services.market_snapshot import _quote_volume_baselines
 from app.services.screener import ScreenerService
 
 # ================================================================
-# 常量(与 overview.py 保持同步;复盘复盘仅 A 股核心指数)
+# 常量(核心指数清单单一权威: app.services.index_const)
 # ================================================================
-
-CORE_INDEX_NAMES = {
-    "000001.SH": "上证指数",
-    "399001.SZ": "深证成指",
-    "399006.SZ": "创业板指",
-    "000680.SH": "科创综指",
-}
-CORE_INDEX_SYMBOLS = tuple(CORE_INDEX_NAMES.keys())
 
 _DIMENSION_SEP = re.compile(r"[、,，;；|/\s]+")
 
@@ -80,6 +77,156 @@ def _score(value: float, low: float, high: float) -> int:
     return max(0, min(100, round((value - low) / (high - low) * 100)))
 
 
+def _as_date(value: Any) -> date | None:
+    if isinstance(value, date) and not hasattr(value, 'hour'):
+        return value
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _latest_partition_date(root: Path) -> date | None:
+    if not root.exists():
+        return None
+    latest: date | None = None
+    for child in root.iterdir():
+        if not child.name.startswith('date='):
+            continue
+        parsed = _as_date(child.name.removeprefix('date='))
+        if parsed is None:
+            continue
+        if (child / 'part.parquet').exists() and (latest is None or parsed > latest):
+            latest = parsed
+    return latest
+
+
+def latest_official_enriched_date(repo) -> date | None:
+    """Disk official enriched date. Live cache must not stand in for a written day."""
+    if repo is None:
+        return None
+    return _latest_partition_date(Path(repo.store.data_dir) / 'kline_daily_enriched')
+
+
+def latest_quote_snapshot_date(repo) -> date | None:
+    if repo is None:
+        return None
+    return _latest_partition_date(Path(repo.store.data_dir) / 'quote_snapshot' / 'asset_type=stock')
+
+
+def _live_enriched_date(repo) -> date | None:
+    if repo is None or not hasattr(repo, 'get_enriched_latest'):
+        return None
+    try:
+        cache, cache_date = repo.get_enriched_latest()
+    except Exception:
+        return None
+    if cache is None:
+        return None
+    try:
+        empty = cache.is_empty()
+    except Exception:
+        empty = not bool(cache)
+    if empty:
+        return None
+    return _as_date(cache_date)
+
+
+def resolve_overview_as_of(
+    repo,
+    as_of: date | None,
+    *,
+    default_to_live: bool = False,
+    today: date | None = None,
+) -> dict[str, date | None]:
+    """Resolve the dashboard/recap date without writing snapshots as official bars."""
+    official = latest_official_enriched_date(repo)
+    snapshot = latest_quote_snapshot_date(repo)
+    live = _live_enriched_date(repo)
+    today = today or date.today()
+    resolved = as_of
+    if resolved is None:
+        if default_to_live and today in {live, snapshot}:
+            resolved = today
+        else:
+            resolved = official
+    available_dates = [value for value in (official, snapshot) if value is not None]
+    return {
+        'as_of': resolved,
+        'official_as_of': official,
+        'snapshot_as_of': snapshot,
+        'live_as_of': live,
+        'available_as_of': max(available_dates) if available_dates else resolved,
+        'today': today,
+    }
+
+
+def _has_official_enriched(repo, target: date | None) -> bool:
+    if repo is None or target is None:
+        return False
+    path = Path(repo.store.data_dir) / 'kline_daily_enriched' / f'date={target.isoformat()}' / 'part.parquet'
+    return path.exists()
+
+
+def _instrument_shares(repo) -> dict[str, dict[str, float | str | None]]:
+    try:
+        frame = repo.get_instruments()
+    except Exception:
+        return {}
+    if frame is None or getattr(frame, 'is_empty', lambda: True)():
+        return {}
+    out: dict[str, dict[str, float | str | None]] = {}
+    for raw in frame.to_dicts():
+        symbol = str(raw.get('symbol') or '').strip()
+        if not symbol:
+            continue
+        out[symbol] = {
+            'name': raw.get('name'),
+            'float_shares': _finite(raw.get('float_shares')),
+            'total_shares': _finite(raw.get('total_shares')),
+        }
+    return out
+
+
+def _derive_snapshot_turnover(row: dict, instrument: dict[str, float | str | None] | None) -> float | None:
+    existing = _finite(row.get('turnover_rate'))
+    if existing is not None:
+        return existing
+    volume = _finite(row.get('volume'))
+    float_shares = _finite((instrument or {}).get('float_shares'))
+    if volume is None or volume <= 0 or not float_shares or float_shares <= 0:
+        return None
+    # snapshot volume uses lots; one lot is 100 shares. UI turnover is percent points.
+    return volume * 10_000.0 / float_shares
+
+
+def _snapshot_rows_for_date(repo, target: date) -> list[dict]:
+    path = Path(repo.store.data_dir) / 'quote_snapshot' / 'asset_type=stock' / f'date={target.isoformat()}' / 'part.parquet'
+    if not path.exists():
+        return []
+    try:
+        df = pl.read_parquet(path)
+    except Exception:
+        return []
+    if df.is_empty() or 'symbol' not in df.columns:
+        return []
+    instruments = _instrument_shares(repo)
+    rows: list[dict] = []
+    for raw in df.to_dicts():
+        row = dict(raw)
+        symbol = str(row.get('symbol') or '').strip()
+        instrument = instruments.get(symbol)
+        pct = _finite(row.get('change_pct'))
+        row['change_pct'] = None if pct is None else pct / 100.0
+        if instrument and not row.get('name'):
+            row['name'] = instrument.get('name')
+        row['turnover_rate'] = _derive_snapshot_turnover(row, instrument)
+        rows.append(row)
+    return rows
+
+
 # ================================================================
 # 指数行情(实时 quote_service 优先,回退 kline_index_daily SQL)
 # ================================================================
@@ -93,7 +240,8 @@ def _quote_status(quote_service) -> dict:
 
 def _index_quotes(repo, quote_service, as_of: date | None = None) -> list[dict]:
     rows: list[dict] = []
-    if quote_service and as_of is None:
+    use_live_index = quote_service is not None and (as_of is None or as_of == date.today())
+    if use_live_index:
         df = quote_service.get_index_quotes(list(CORE_INDEX_SYMBOLS))
         if not df.is_empty():
             rows = df.to_dicts()
@@ -357,6 +505,8 @@ def build_market_overview(
     quote_service=None,
     depth_service=None,
     as_of: date | None = None,
+    *,
+    default_to_live: bool = False,
 ) -> dict:
     """装配市场总览(与原 overview._build_overview 行为一致)。
 
@@ -364,27 +514,50 @@ def build_market_overview(
         repo: KlineRepository(必填)。
         quote_service: QuoteService(可选;实时指数行情来源)。
         depth_service: DepthService(可选;五档封板修正)。
-        as_of: 指定日期,None 则取最新有数据日。
+        as_of: 指定日期。None 且 default_to_live 时按“现在”选日；
+            复盘等调用方保持 default_to_live=False，只认正式 enriched。
     """
     svc = ScreenerService(repo)
-    as_of = as_of or svc.latest_date()
+    selection = resolve_overview_as_of(repo, as_of, default_to_live=default_to_live)
+    as_of = selection["as_of"]
+    official_as_of = selection["official_as_of"]
+    snapshot_as_of = selection["snapshot_as_of"]
+    live_as_of = selection["live_as_of"]
+    available_as_of = selection["available_as_of"]
+    today = selection["today"]
     status = _quote_status(quote_service)
     indices = _index_quotes(repo, quote_service, as_of)
 
+    def _meta_fields(
+        data_mode: str | None = None,
+        *,
+        indicators_source: str | None = None,
+        indicators_approx: bool = False,
+    ) -> dict[str, Any]:
+        return {
+            "as_of": str(as_of) if as_of else None,
+            "data_mode": data_mode,
+            "official_as_of": str(official_as_of) if official_as_of else None,
+            "snapshot_as_of": str(snapshot_as_of) if snapshot_as_of else None,
+            "available_as_of": str(available_as_of) if available_as_of else None,
+            "indicators_source": indicators_source,
+            "indicators_approx": indicators_approx,
+        }
+
     if not as_of:
         return {
-            "as_of": None,
+            **_meta_fields(None),
             "quote_status": status,
             "indices": indices,
             "breadth": {"total": 0, "up": 0, "down": 0, "flat": 0, "up_pct": 0, "down_pct": 0},
             "amount": {"total": 0, "avg": 0},
             "boards": [],
-            "limit": {"limit_up": 0, "broken": 0, "failed": 0, "limit_down": 0, "max_boards": 0, "tiers": []},
+            "limit": {"limit_up": 0, "broken": 0, "failed": 0, "limit_down": 0, "max_boards": 0, "tiers": [], "seal_rate": None, "ready": False, "source": None, "source_as_of": None},
             "distribution": [],
-            "trend": {"above_ma5": 0, "above_ma20": 0, "above_ma60": 0, "above_ma5_pct": 0, "above_ma20_pct": 0, "above_ma60_pct": 0, "new_high": 0, "new_low": 0},
-            "activity": {"avg_turnover": 0, "high_turnover": 0, "high_vol_ratio": 0, "vol_ratio": 1},
+            "trend": {"above_ma5": 0, "above_ma20": 0, "above_ma60": 0, "above_ma5_pct": 0, "above_ma20_pct": 0, "above_ma60_pct": 0, "new_high": 0, "new_low": 0, "ready": False, "extremes_ready": False},
+            "activity": {"avg_turnover": 0, "high_turnover": 0, "high_vol_ratio": None, "vol_ratio": None, "vol_ready": False},
             "radar": [],
-            "emotion": {"score": 50, "label": "暂无"},
+            "emotion": {"score": 50, "label": "暂无", "partial": True, "ready_count": 0, "note": None},
             "top_gainers": [],
             "top_losers": [],
             "turnover_leaders": [],
@@ -393,10 +566,24 @@ def build_market_overview(
             "industry_rank": {"leading": [], "lagging": []},
         }
 
-    df = svc._load_enriched_for_date(as_of)
-    if df.is_empty():
-        rows: list[dict] = []
-    else:
+    has_official = _has_official_enriched(repo, as_of)
+    use_snapshot = (
+        not has_official
+        and as_of == today
+        and snapshot_as_of == as_of
+    )
+    data_mode = "official" if has_official else (
+        "intraday_snapshot" if as_of == today and (live_as_of == as_of or snapshot_as_of == as_of) else "official"
+    )
+
+    rows: list[dict] = []
+    df = pl.DataFrame()
+    if not use_snapshot:
+        df = svc._load_enriched_for_date(as_of)
+    if (df is None or df.is_empty()) and (use_snapshot or (not has_official and snapshot_as_of == as_of)):
+        rows = _snapshot_rows_for_date(repo, as_of)
+        data_mode = "intraday_snapshot"
+    elif df is not None and not df.is_empty():
         cols = [
             "symbol", "name", "close", "change_pct", "amount", "turnover_rate", "volume",
             "vol_ratio_5d", "consecutive_limit_ups", "signal_limit_up", "signal_broken_limit_up", "signal_limit_down",
@@ -404,12 +591,30 @@ def build_market_overview(
         ]
         df = df.select([c for c in cols if c in df.columns])
         rows = df.to_dicts()
+        if not has_official and as_of == today:
+            data_mode = "intraday_snapshot"
 
     # 过滤真停牌（volume=0 且 change_pct=0），保留有涨跌幅的浮点误差股以对齐同花顺口径
     if rows and "volume" in rows[0]:
         rows = [r for r in rows
                 if (_finite(r.get("volume")) or 0) > 0
                 or (_finite(r.get("change_pct")) or 0) != 0]
+
+    indicators_approx = False
+    if data_mode == "intraday_snapshot" and rows:
+        data_dir = Path(repo.store.data_dir)
+        official_overlay = (
+            load_official_trend_overlay(data_dir, official_as_of)
+            if official_as_of is not None
+            else {}
+        )
+        volume_baselines = _quote_volume_baselines(data_dir, as_of) if as_of is not None else {}
+        apply_intraday_snapshot_overlay(
+            rows,
+            official_overlay=official_overlay,
+            volume_baselines=volume_baselines,
+        )
+        indicators_approx = True
 
     total = len(rows)
     up = sum(1 for r in rows if (_finite(r.get("change_pct")) or 0) > 0)
@@ -429,10 +634,18 @@ def build_market_overview(
     strong_up = sum(1 for v in pct_values if v >= 0.03)
     strong_down = sum(1 for v in pct_values if v <= -0.03)
 
-    limit_up = sum(1 for r in rows if bool(r.get("signal_limit_up")) or (_finite(r.get("consecutive_limit_ups")) or 0) > 0)
-    broken = sum(1 for r in rows if bool(r.get("signal_broken_limit_up")))
-    limit_down = sum(1 for r in rows if bool(r.get("signal_limit_down")))
-    max_boards = max([int(_finite(r.get("consecutive_limit_ups")) or 0) for r in rows], default=0)
+    indicators_ready = data_mode == "official"
+    use_limit_trend = indicators_ready or indicators_approx
+    indicators_source = (
+        "official" if indicators_ready else ("intraday_approx" if indicators_approx else None)
+    )
+    if use_limit_trend:
+        limit_up = sum(1 for r in rows if bool(r.get("signal_limit_up")) or (_finite(r.get("consecutive_limit_ups")) or 0) > 0)
+        broken = sum(1 for r in rows if bool(r.get("signal_broken_limit_up")))
+        limit_down = sum(1 for r in rows if bool(r.get("signal_limit_down")))
+        max_boards = max([int(_finite(r.get("consecutive_limit_ups")) or 0) for r in rows], default=0)
+    else:
+        limit_up = broken = limit_down = max_boards = 0
 
     # 五档 sealed 修正: 假涨停/假跌停不计入(需 Pro+ depth5.batch 能力)
     sealed_ready = False
@@ -446,7 +659,27 @@ def build_market_overview(
             fake_up = sum(1 for v in up_map.values() if v.get("sealed") is False)
         if down_map:
             fake_down = sum(1 for v in down_map.values() if v.get("sealed") is False)
-    if sealed_ready:
+
+    limit_source = "official" if indicators_ready else ("intraday_approx" if indicators_approx else None)
+    limit_source_as_of = None
+    pool_kpi: dict[str, Any] | None = None
+    same_day_pool = (
+        load_limit_pool_for_date(Path(repo.store.data_dir), as_of)
+        if data_mode == "intraday_snapshot" and as_of is not None
+        else None
+    )
+    if same_day_pool is not None:
+        pool_kpi = summarize_limit_pool_kpi(same_day_pool)
+        limit_up = pool_kpi["limit_up"]
+        broken = pool_kpi["broken"]
+        limit_down = pool_kpi["limit_down"]
+        max_boards = pool_kpi["max_boards"]
+        limit_source = "hithink_official_pool"
+        limit_source_as_of = as_of.isoformat()
+        sealed_ready = False
+        fake_up = 0
+        fake_down = 0
+    elif indicators_ready and sealed_ready:
         limit_up = max(0, limit_up - fake_up)
         limit_down = max(0, limit_down - fake_down)
 
@@ -455,11 +688,14 @@ def build_market_overview(
     def above_ma_count(ma_key: str) -> int:
         return sum(1 for r in rows if (_finite(r.get("close")) is not None and _finite(r.get(ma_key)) is not None and (_finite(r.get("close")) or 0) >= (_finite(r.get(ma_key)) or 0)))
 
-    above_ma5 = above_ma_count("ma5")
-    above_ma20 = above_ma_count("ma20")
-    above_ma60 = above_ma_count("ma60")
-    new_high = sum(1 for r in rows if bool(r.get("signal_n_day_high")) or (_finite(r.get("close")) is not None and _finite(r.get("high_60d")) is not None and (_finite(r.get("close")) or 0) >= (_finite(r.get("high_60d")) or 0)))
-    new_low = sum(1 for r in rows if bool(r.get("signal_n_day_low")) or (_finite(r.get("close")) is not None and _finite(r.get("low_60d")) is not None and (_finite(r.get("close")) or 0) <= (_finite(r.get("low_60d")) or 0)))
+    if use_limit_trend:
+        above_ma5 = above_ma_count("ma5")
+        above_ma20 = above_ma_count("ma20")
+        above_ma60 = above_ma_count("ma60")
+        new_high = sum(1 for r in rows if bool(r.get("signal_n_day_high")) or (_finite(r.get("close")) is not None and _finite(r.get("high_60d")) is not None and (_finite(r.get("close")) or 0) >= (_finite(r.get("high_60d")) or 0)))
+        new_low = sum(1 for r in rows if bool(r.get("signal_n_day_low")) or (_finite(r.get("close")) is not None and _finite(r.get("low_60d")) is not None and (_finite(r.get("close")) or 0) <= (_finite(r.get("low_60d")) or 0)))
+    else:
+        above_ma5 = above_ma20 = above_ma60 = new_high = new_low = 0
 
     turnovers = [_finite(r.get("turnover_rate")) for r in rows]
     turnovers = [v for v in turnovers if v is not None]
@@ -482,26 +718,31 @@ def build_market_overview(
         count = b["count"] or 1
         b["up_pct"] = b["up"] / count * 100
 
-    tiers_map: dict[int, int] = {}
-    for r in rows:
-        n = int(_finite(r.get("consecutive_limit_ups")) or 0)
-        if n > 0:
-            tiers_map[n] = tiers_map.get(n, 0) + 1
-    tiers = [{"boards": k, "count": v} for k, v in sorted(tiers_map.items(), key=lambda item: -item[0])]
+    if pool_kpi is not None:
+        tiers = list(pool_kpi["tiers"])
+    else:
+        tiers_map: dict[int, int] = {}
+        if use_limit_trend:
+            for r in rows:
+                n = int(_finite(r.get("consecutive_limit_ups")) or 0)
+                if n > 0:
+                    tiers_map[n] = tiers_map.get(n, 0) + 1
+        tiers = [{"boards": k, "count": v} for k, v in sorted(tiers_map.items(), key=lambda item: -item[0])]
 
     index_changes = [_finite(r.get("change_pct")) for r in indices]
     index_changes = [v for v in index_changes if v is not None]
     avg_index_pct = sum(index_changes) / len(index_changes) if index_changes else 0
     vol_ratios = [_finite(r.get("vol_ratio_5d")) for r in rows]
     vol_ratios = [v for v in vol_ratios if v is not None]
-    avg_vol_ratio = sum(vol_ratios) / len(vol_ratios) if vol_ratios else 1
-    high_vol_ratio = sum(1 for v in vol_ratios if v >= 1.5)
+    vol_ready = bool(vol_ratios)
+    avg_vol_ratio = sum(vol_ratios) / len(vol_ratios) if vol_ready else None
+    high_vol_ratio = sum(1 for v in vol_ratios if v >= 1.5) if vol_ready else 0
 
     concept_rank = _dimension_rank(rows, repo, "concept")
     industry_rank = _dimension_rank(rows, repo, "industry", level=2)
 
     strong_diff_pct = (strong_up - strong_down) / total * 100 if total else 0
-    high_vol_pct = high_vol_ratio / total * 100 if total else 0
+    high_vol_pct = high_vol_ratio / total * 100 if vol_ready and total else None
     strong_down_pct = strong_down / total * 100 if total else 0
     tier2_count = sum(t["count"] for t in tiers if t["boards"] >= 2)
     mainline_items = [*concept_rank["leading"][:3], *industry_rank["leading"][:3]]
@@ -509,16 +750,53 @@ def build_market_overview(
     mainline_cover_pct = max([(_finite(item.get("count")) or 0) / total * 100 for item in mainline_items], default=0) if total else 0
     mainline_score = round(_score(mainline_avg, -0.005, 0.03) * 0.65 + _score(mainline_cover_pct, 1, 12) * 0.35) if mainline_items else 50
 
+    ma_sample = sum(1 for r in rows if _finite(r.get("ma5")) is not None)
+    extreme_sample = sum(
+        1
+        for r in rows
+        if _finite(r.get("high_60d")) is not None and _finite(r.get("low_60d")) is not None
+    )
+    trend_ready = use_limit_trend and ma_sample > 0
+    extremes_ready = use_limit_trend and extreme_sample > 0
+    limit_ready = use_limit_trend
+    seal_rate_value = seal_rate if (limit_up + broken) > 0 else None
+
+    def _radar_item(key: str, label: str, value: int, ready: bool) -> dict[str, Any]:
+        return {"key": key, "label": label, "value": value if ready else None, "ready": ready}
+
     radar = [
-        {"key": "index", "label": "指数", "value": _score(avg_index_pct, -2.5, 2.5)},
-        {"key": "profit", "label": "赚钱", "value": round(_score(up_pct, 20, 80) * 0.45 + _score(avg_pct, -0.02, 0.02) * 0.25 + _score(median_pct, -0.02, 0.02) * 0.20 + _score(strong_diff_pct, -8, 8) * 0.10)},
-        {"key": "money", "label": "量能", "value": round(_score(avg_vol_ratio, 0.6, 1.8) * 0.70 + _score(high_vol_pct, 2, 12) * 0.30)},
-        {"key": "speculation", "label": "投机", "value": round(_score(limit_up, 5, 90) * 0.25 + _score(seal_rate, 30, 85) * 0.35 + _score(max_boards, 1, 8) * 0.25 + _score(tier2_count, 0, 30) * 0.15)},
-        {"key": "resilience", "label": "抗跌", "value": 100 - round(_score(down_pct, 20, 80) * 0.55 + _score(strong_down_pct, 1, 12) * 0.45)},
-        {"key": "mainline", "label": "主线", "value": mainline_score},
+        _radar_item("index", "指数", _score(avg_index_pct, -2.5, 2.5), bool(index_changes)),
+        _radar_item(
+            "profit",
+            "赚钱",
+            round(_score(up_pct, 20, 80) * 0.45 + _score(avg_pct, -0.02, 0.02) * 0.25 + _score(median_pct, -0.02, 0.02) * 0.20 + _score(strong_diff_pct, -8, 8) * 0.10),
+            total > 0,
+        ),
+        _radar_item(
+            "money",
+            "量能",
+            round(_score(avg_vol_ratio or 0, 0.6, 1.8) * 0.70 + _score(high_vol_pct or 0, 2, 12) * 0.30),
+            vol_ready,
+        ),
+        _radar_item(
+            "speculation",
+            "投机",
+            round(_score(limit_up, 5, 90) * 0.25 + _score(seal_rate or 0, 30, 85) * 0.35 + _score(max_boards, 1, 8) * 0.25 + _score(tier2_count, 0, 30) * 0.15),
+            limit_ready,
+        ),
+        _radar_item(
+            "resilience",
+            "抗跌",
+            100 - round(_score(down_pct, 20, 80) * 0.55 + _score(strong_down_pct, 1, 12) * 0.45),
+            total > 0,
+        ),
+        _radar_item("mainline", "主线", mainline_score, bool(mainline_items)),
     ]
-    emotion_score = round(sum(r["value"] for r in radar) / len(radar)) if radar else 50
-    if emotion_score >= 70:
+    ready_scores = [item["value"] for item in radar if item.get("ready") and item.get("value") is not None]
+    emotion_score = round(sum(ready_scores) / len(ready_scores)) if ready_scores else None
+    if emotion_score is None:
+        emotion_label = "暂无"
+    elif emotion_score >= 70:
         emotion_label = "强势"
     elif emotion_score >= 55:
         emotion_label = "偏暖"
@@ -528,9 +806,20 @@ def build_market_overview(
         emotion_label = "偏冷"
     else:
         emotion_label = "冰点"
+    radar_partial = len(ready_scores) < len(radar)
+    if data_mode == "intraday_snapshot" and radar_partial:
+        emotion_note = "盘中部分维度不可用"
+    elif data_mode == "intraday_snapshot":
+        emotion_note = "盘中近似"
+    else:
+        emotion_note = None
 
     return _json_safe({
-        "as_of": str(as_of),
+        **_meta_fields(
+            data_mode,
+            indicators_source=indicators_source,
+            indicators_approx=indicators_approx,
+        ),
         "quote_status": status,
         "indices": indices,
         "breadth": {
@@ -547,7 +836,21 @@ def build_market_overview(
         },
         "amount": {"total": total_amount, "avg": avg_amount},
         "boards": boards,
-        "limit": {"limit_up": limit_up, "broken": broken, "failed": 0, "limit_down": limit_down, "max_boards": max_boards, "seal_rate": seal_rate, "tiers": tiers, "sealed_ready": sealed_ready, "fake_up": fake_up, "fake_down": fake_down},
+        "limit": {
+            "limit_up": limit_up,
+            "broken": broken,
+            "failed": 0,
+            "limit_down": limit_down,
+            "max_boards": max_boards,
+            "seal_rate": seal_rate_value,
+            "tiers": tiers,
+            "sealed_ready": sealed_ready,
+            "fake_up": fake_up,
+            "fake_down": fake_down,
+            "ready": limit_ready,
+            "source": limit_source,
+            "source_as_of": limit_source_as_of,
+        },
         "distribution": _pct_band_rows(pct_values),
         "trend": {
             "above_ma5": above_ma5,
@@ -558,15 +861,24 @@ def build_market_overview(
             "above_ma60_pct": above_ma60 / total * 100 if total else 0,
             "new_high": new_high,
             "new_low": new_low,
+            "ready": trend_ready,
+            "extremes_ready": extremes_ready,
         },
         "activity": {
             "avg_turnover": avg_turnover,
             "high_turnover": high_turnover,
             "high_vol_ratio": high_vol_pct,
             "vol_ratio": avg_vol_ratio,
+            "vol_ready": vol_ready,
         },
         "radar": radar,
-        "emotion": {"score": emotion_score, "label": emotion_label},
+        "emotion": {
+            "score": emotion_score if emotion_score is not None else 50,
+            "label": emotion_label,
+            "partial": radar_partial,
+            "ready_count": len(ready_scores),
+            "note": emotion_note,
+        },
         "top_gainers": _top_rows(rows, "change_pct", True),
         "top_losers": _top_rows(rows, "change_pct", False),
         "turnover_leaders": _top_rows(rows, "amount", True),

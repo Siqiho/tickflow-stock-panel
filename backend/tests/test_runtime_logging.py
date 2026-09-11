@@ -66,6 +66,34 @@ def test_setup_and_query(tmp_path: Path):
     assert rl.query_events(limit=10)  # lifecycle clear event remains
 
 
+def test_runtime_jsonl_rotation(tmp_path: Path, monkeypatch):
+    from app.services import runtime_logging as rl
+
+    rl.reset_for_tests()
+    log_dir = rl.setup_runtime_logging("INFO", tmp_path)
+    jsonl = log_dir / "runtime.jsonl"
+
+    # 阈值调小以便触发滚动, 策略与 app.log 一致: 超限即切换到 .1
+    monkeypatch.setattr(rl, "_MAX_FILE_BYTES", 2048)
+    for i in range(50):
+        rl.emit_event(
+            source="backend",
+            level="INFO",
+            category="data",
+            message=f"rotation probe {i} " + "x" * 120,
+            mirror_std_log=False,
+        )
+
+    rotated = jsonl.with_name("runtime.jsonl.1")
+    assert rotated.exists(), "超过阈值后应产生 runtime.jsonl.1"
+    assert jsonl.exists() and jsonl.stat().st_size <= 2048 + 1024
+    # 备份数量受 _BACKUP_COUNT 限制
+    backups = sorted(p.name for p in log_dir.glob("runtime.jsonl.*"))
+    assert len(backups) <= rl._BACKUP_COUNT
+    # 事件仍完整可查: 缓冲不受滚动影响
+    assert any("rotation probe 49" in e["message"] for e in rl.query_events(limit=5))
+
+
 def test_runtime_logs_api(tmp_path: Path):
     from app.api.runtime_logs import router
     from app.services import runtime_logging as rl

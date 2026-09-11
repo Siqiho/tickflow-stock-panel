@@ -13,6 +13,9 @@ interface Props {
   onSaved?: (signal: CustomSignal) => void
 }
 
+// 字符串运算符的中文标签 (数值运算符直接显示符号)
+const OP_LABELS: Record<string, string> = { contains: '包含' }
+
 const emptySignal = (kind: CustomSignal['kind'] = 'exit'): CustomSignal => ({
   id: '', name: '', kind, enabled: true,
   conditions: [{ left: 'close', op: '>', right: 'field:ma20' }],
@@ -27,6 +30,8 @@ export function CustomSignalDialog({ open, signal, defaultKind = 'exit', onClose
 
   const fields = options.data?.fields ?? []
   const operators = options.data?.operators ?? ['>', '>=', '<', '<=', '==', '!=']
+  const stringFields = options.data?.stringFields ?? []
+  const stringOperators = options.data?.stringOperators ?? ['contains', '==', '!=']
   const editing = !!signal
 
   useEffect(() => {
@@ -132,7 +137,9 @@ export function CustomSignalDialog({ open, signal, defaultKind = 'exit', onClose
                         {fields.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
                       </select>
                       <select value={c.op} onChange={e => updateCond(i, { op: e.target.value })} className="w-12 h-7 px-1 rounded bg-base border border-border text-[11px] font-mono text-foreground text-center focus:outline-none focus:border-accent/50">
-                        {operators.map(op => <option key={op} value={op}>{op}</option>)}
+                        {(stringFields.includes(c.left) ? stringOperators : operators).map(op => (
+                          <option key={op} value={op}>{OP_LABELS[op] ?? op}</option>
+                        ))}
                       </select>
                       <RightValueInput cond={c} fields={fields} onChange={v => updateCond(i, { right: v })} />
                       {draft.conditions.length > 1 && (

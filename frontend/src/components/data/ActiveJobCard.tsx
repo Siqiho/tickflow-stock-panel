@@ -1,6 +1,6 @@
 import { useRef, useMemo, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Loader2, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react'
+import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import { formatDuration, formatLogTime } from '@/lib/format'
 import { Pill } from './StatCard'
 import type { PipelineJob } from '@/lib/api'
@@ -17,7 +17,6 @@ export const STAGE_LABELS: Record<string, string> = {
   extend_minute: '扩展分钟K历史',
   rebuild_enriched: '全量计算',
   refresh_views: '刷新视图',
-  quality: '质量门禁',
   done: '完成',
 }
 
@@ -64,12 +63,12 @@ export function ActiveJobCard({ job }: { job: PipelineJob }) {
     running:   { icon: Loader2,     color: 'text-accent',   label: '运行中', spinning: true,  border: 'border-accent/40', bg: 'bg-accent/5' },
     pending:   { icon: Loader2,     color: 'text-muted',    label: '排队中', spinning: true,  border: 'border-border',    bg: 'bg-surface' },
     succeeded: { icon: CheckCircle2, color: 'text-bear',     label: '完成',   spinning: false, border: 'border-bear/30',   bg: 'bg-bear/5' },
-    degraded:  { icon: AlertTriangle, color: 'text-warning', label: '质量降级', spinning: false, border: 'border-warning/40', bg: 'bg-warning/5' },
     failed:    { icon: XCircle,     color: 'text-danger',   label: '失败',   spinning: false, border: 'border-danger/40', bg: 'bg-danger/5' },
+    degraded:  { icon: XCircle,     color: 'text-warning',  label: '降级',   spinning: false, border: 'border-warning/40', bg: 'bg-warning/5' },
   } as const
   const meta = statusMap[job.status]
   const Icon = meta.icon
-  const isDone = job.status === 'succeeded' || job.status === 'degraded' || job.status === 'failed'
+  const isDone = job.status === 'succeeded' || job.status === 'failed'
   const stageLabel = isDone ? meta.label : (STAGE_LABELS[job.stage] ?? job.stage)
 
   return (
@@ -113,7 +112,7 @@ export function ActiveJobCard({ job }: { job: PipelineJob }) {
 
       <LogViewer log={job.log} />
 
-      {(job.status === 'succeeded' || job.status === 'degraded') && job.result && (() => {
+      {job.status === 'succeeded' && job.result && (() => {
         const skipped = new Set(job.result.skipped_stages ?? [])
         const cell = (stage: string | null, v: string) =>
           stage && skipped.has(stage) ? '跳过' : v
@@ -123,37 +122,19 @@ export function ActiveJobCard({ job }: { job: PipelineJob }) {
             <Pill label="日 K" value={cell(null, `${job.result.daily_days ?? 0} 天`)} />
             <Pill label="除权因子" value={cell('sync_adj', `${job.result.adj_factor_symbols ?? 0} 只`)} />
             <Pill label="enriched" value={cell(null, `${job.result.enriched_days ?? 0} 行`)} />
-            <Pill
-              label="分钟K"
-              value={cell(
-                'sync_minute',
-                job.result.minute_sync?.status === 'synced'
-                  ? `${job.result.minute_rows ?? 0} 行`
-                  : job.result.minute_sync?.reason
-                    ? `跳过：${job.result.minute_sync.reason}`
-                    : (job.result.skipped_stages ?? []).includes('sync_minute')
-                      ? '已跳过'
-                      : `${job.result.minute_rows ?? 0} 行`,
-              )}
-            />
+            <Pill label="分钟K" value={cell('sync_minute', `${job.result.minute_rows ?? 0} 行`)} />
           </div>
         )
       })()}
-      {job.status === 'degraded' && job.result?.quality && (
-        <div className="mt-3 rounded-btn border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-warning">
-          <div className="font-medium">
-            质量门禁未通过 · {job.result.quality.issues?.length ?? 0} 项问题
-          </div>
-          {(job.result.quality.issues ?? []).slice(0, 3).map((issue, index) => (
-            <div key={`${issue.code}-${index}`} className="mt-1 text-warning/80">
-              {issue.code}{issue.message ? `：${issue.message}` : ''}
-            </div>
-          ))}
-        </div>
-      )}
       {job.status === 'failed' && job.error && (
         <div className="mt-3 rounded-btn border border-danger/40 bg-danger/5 px-3 py-2 text-xs text-danger">
           {job.error}
+          {job.error.includes('超时自动取消') && (
+            <div className="mt-1 text-[10px] text-muted">
+              判定依据是「无进度」而非总时长, 任务只要仍在推进就不会被中断;
+              若网络环境较慢可在 设置 → 网络设置 中调大停滞阈值。
+            </div>
+          )}
         </div>
       )}
     </div>

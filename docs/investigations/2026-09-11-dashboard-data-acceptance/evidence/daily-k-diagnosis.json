@@ -1,0 +1,41 @@
+{
+  "job_id": "f7864b8bdd",
+  "job_path": "/Users/simon/Trading/one-trading/data/job_store/f7864b8bdd.json",
+  "status": "succeeded",
+  "started_at": "2026-09-10T07:30:00Z",
+  "finished_at": "2026-09-10T07:35:31Z",
+  "daily_days": 0,
+  "daily_source": "tickflow_batch",
+  "quality_ok": true,
+  "quality_date": "2026-09-09",
+  "kline_daily_max_now": "2026-09-09",
+  "kline_partitions": 1744,
+  "kline_latest_rows": 5468,
+  "has_date_2026_09_10": false,
+  "industry_h5_max": "2026-09-10",
+  "concept_h5_max": "2026-09-10",
+  "job_log": [
+    "获取日K [2026-09-09 ~ 2026-09-10]…",
+    "日K batch 完成,新增 0 个交易日分区",
+    "今日日K仍缺(latest=2026-09-09); realtime provider=tickflow,跳过 public 合成"
+  ],
+  "code": {
+    "gap_fill_branch": "backend/app/jobs/daily_pipeline.py:400-425",
+    "public_eod_gate": "backend/app/jobs/daily_pipeline.py:450-490",
+    "quality_uses_latest_partition": "backend/app/services/free_sources/daily_quality.py:37",
+    "schedule_default": "backend/app/services/preferences.py:419-422",
+    "header_comment_1535": "backend/app/jobs/daily_pipeline.py:5-6,1397"
+  },
+  "runtime_reason": "TickFlow batch from latest=2026-09-09 to today=2026-09-10 wrote 0 new partitions at 15:30:00 CST. want_public_eod is true (today missing, weekday) but realtime_data_provider=tickflow skips public quote synthesis. Quality then checks latest existing partition 2026-09-09 and passes. Job succeeded does not mean daily-K reached 2026-09-10.",
+  "dependencies_to_have_910_daily_k": [
+    "TickFlow daily-batch must already contain the just-closed session at cron time",
+    "or realtime_data_provider=public to enable public EOD synthesis",
+    "or a later schedule (header comment cites 15:35 vendor buffer). Not authorized this round."
+  ],
+  "not_authorized": [
+    "no schedule change",
+    "no POST /api/pipeline/run",
+    "no full-day K / refresh",
+    "no official DATA_DIR write"
+  ]
+}

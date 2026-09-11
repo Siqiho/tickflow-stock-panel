@@ -36,7 +36,8 @@ _CACHE_FILENAME = "strategy_cache.json"
 
 
 def _cache_path(data_dir: Path) -> Path:
-    return data_dir / "user_data" / _CACHE_FILENAME
+    from app.services.user_context import user_data_dir
+    return user_data_dir(data_dir) / _CACHE_FILENAME
 
 
 def _enriched_parquet_path(data_dir: Path, as_of: str) -> Path:
@@ -75,6 +76,16 @@ def read_cache(data_dir: Path) -> dict | None:
         return None
 
     return cached
+
+
+def clear_cache(data_dir: Path) -> None:
+    """Delete the strategy result cache after a code reload."""
+    path = _cache_path(data_dir)
+    if path.exists():
+        path.unlink()
+    tmp = path.with_name(path.name + ".tmp")
+    if tmp.exists():
+        tmp.unlink()
 
 
 def _rows_to_symbol_map(rows: list[dict]) -> dict[str, dict]:

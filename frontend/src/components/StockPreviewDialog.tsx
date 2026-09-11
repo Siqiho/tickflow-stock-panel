@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, RefreshCw, Clock, ChartColumn } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { X, RefreshCw, Clock, ChartColumn, Sparkles } from 'lucide-react'
 import { api } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { cnSignal } from '@/lib/signals'
@@ -13,6 +14,8 @@ interface Props {
   symbol: string | null
   name?: string
   onClose: () => void
+  /** 是否显示前往 AI 功能目录的入口 */
+  showAnalysisAction?: boolean
   /** 触发信息 (来自监控触发记录, 有值时在顶栏下方显示) */
   triggerInfo?: {
     price?: number | null
@@ -21,15 +24,77 @@ interface Props {
     signals?: string[]
     message?: string
   } | null
+  /** 有序候选列表: 提供后支持左右键/顶栏按钮切股, 标题栏显示 n/N */
+  navList?: NavItem[]
+  /** 切股回调: 收到目标 symbol/name, 由调用方更新预览状态 */
+  onNavigate?: (symbol: string, name?: string) => void
+}
+
+/** 切股导航列表项 */
+export interface NavItem { symbol: string; name?: string }
+
+/** 把 symbol+name 的列表转成切股导航列表项 (统一 name 归一化为 undefined, 免去各处重复 map + as 断言) */
+export function toNavItems<T extends { symbol: string; name?: string | null }>(xs: T[]): NavItem[] {
+  return xs.map(x => ({ symbol: x.symbol, name: x.name ?? undefined }))
+}
+
+/** 首↔尾循环的索引换算: go(delta) 与 邻近预取 共用, 保证换行规则单源 */
+function wrapNavIndex(navIdx: number, delta: number, navTotal: number): number {
+  return (navIdx + delta + navTotal) % navTotal
+}
+
+/** 榜单里同一标的可能多次出现 (多概念/行业 leader、监控重复触发), 去重以免切股/计数空跳; 保留首次出现。 */
+function uniqueNavItems(xs: NavItem[]): NavItem[] {
+  const seen = new Set<string>()
+  const out: NavItem[] = []
+  for (const n of xs) {
+    if (seen.has(n.symbol)) continue
+    seen.add(n.symbol)
+    out.push(n)
+  }
+  return out
 }
 
 // ===== 板块标识（与 Screener 列表一致）=====
 
-// 预设快捷范围（只保留半年和1年）
-const PRESETS: { label: string; months: number }[] = [
+// 日 K 历史查看范围。周/月/季/年 K 属于另一类数据契约，不能用日期范围冒充。
+const ALL_HISTORY_START = '1990-01-01'
+const PRESETS: { label: string; months?: number; start?: string }[] = [
+  { label: '1月', months: 1 },
+  { label: '3月', months: 3 },
   { label: '半年', months: 6 },
   { label: '1年', months: 12 },
+  { label: '3年', months: 36 },
+  { label: '5年', months: 60 },
+  { label: '全部', start: ALL_HISTORY_START },
 ]
+
+function localDateString(value: Date): string {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function presetRange(preset: typeof PRESETS[number], now = new Date()) {
+  const end = localDateString(now)
+  if (preset.start) return { start: preset.start, end }
+
+  const targetMonth = now.getMonth() - (preset.months ?? 0)
+  const start = new Date(now.getFullYear(), targetMonth, 1)
+  const lastDay = new Date(now.getFullYear(), targetMonth + 1, 0).getDate()
+  start.setDate(Math.min(now.getDate(), lastDay))
+  return { start: localDateString(start), end }
+}
+
+function visibleBarsForRange(range: { start: string; end: string }): number {
+  const calendarDays = Math.max(
+    1,
+    Math.ceil((new Date(range.end).getTime() - new Date(range.start).getTime()) / 86400000),
+  )
+  // 用自然日估算交易日；实际数据不足时 ECharts 会自动显示全部可用 K 线。
+  return Math.max(10, Math.ceil(calendarDays * 5 / 7) + 5)
+}
 
 function boardTag(symbol: string): { label: string; color: string } | null {
   if (/^(300|301)/.test(symbol)) return { label: '创', color: 'text-orange-700 dark:text-[#f97316] bg-orange-500/12 border-orange-500/25' }
@@ -38,12 +103,15 @@ function boardTag(symbol: string): { label: string; color: string } | null {
   return null
 }
 
-export function StockPreviewDialog({ symbol, name, onClose, triggerInfo }: Props) {
+export function StockPreviewDialog({ symbol, name, onClose, triggerInfo, showAnalysisAction = false, navList: navListSource, onNavigate }: Props) {
   const [showIntraday, setShowIntraday] = useState(false)
   const [showChips, setShowChips] = useState(false)
   const [dateRange, setDateRange] = useState(getDefaultRange)
   const [showMonitorEditor, setShowMonitorEditor] = useState(false)
   const qc = useQueryClient()
+  const aiHref = symbol
+    ? `/ai?${new URLSearchParams({ symbol, name: name?.trim() || symbol }).toString()}`
+    : '/ai'
 
   const watchlist = useQuery({
     queryKey: QK.watchlist,
@@ -60,15 +128,66 @@ export function StockPreviewDialog({ symbol, name, onClose, triggerInfo }: Props
     },
   })
 
-  // ESC 关闭
+  // ===== 切股导航 =====
+  const navList = useMemo(() => uniqueNavItems(navListSource ?? []), [navListSource])
+
+  // 当前 symbol 在 navList 中的位置 (不在列表则为 -1, 此时不显示计数/按钮)
+  const navIdx = navList.findIndex(n => n.symbol === symbol)
+  const navTotal = navList.length
+  const navEnabled = navTotal >= 2 && navIdx >= 0
+
+  // 首↔尾循环的弱提示 (自显 ~1.5s, 不引全局 Toast)
+  const [wrapMsg, setWrapMsg] = useState<string | null>(null)
+  const wrapTimer = useRef<number | null>(null)
+  useEffect(() => {
+    return () => { if (wrapTimer.current) window.clearTimeout(wrapTimer.current) }
+  }, [])
+
+  // 父级 onNavigate/onClose 多为内联 lambda, 用最新值 ref 承接, 避免每次父渲染重建 go/键盘监听
+  const onNavigateRef = useRef(onNavigate)
+  onNavigateRef.current = onNavigate
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  // 前后切股: 返回是否真正导航 (供键盘判断是否要 preventDefault)
+  const go = useCallback((delta: 1 | -1): boolean => {
+    if (!navEnabled) return false
+    const nextIdx = wrapNavIndex(navIdx, delta, navTotal)
+    const wrapped = nextIdx === (delta === 1 ? 0 : navTotal - 1)
+    if (wrapped) {
+      // 提示词描述切股后的落点 (而非起点)
+      setWrapMsg(delta === 1 ? '已到榜首' : '已到末尾')
+      if (wrapTimer.current) window.clearTimeout(wrapTimer.current)
+      wrapTimer.current = window.setTimeout(() => setWrapMsg(null), 1500)
+    }
+    const next = navList[nextIdx]
+    onNavigateRef.current?.(next.symbol, next.name)
+    return true
+  }, [navList, navIdx, navTotal])
+
+  // 邻近预取目标: 当前股左右相邻两只 (首↔尾循环), 交由 StockPanel 提前拉取日K/财务/分时缓存
+  const prefetchSymbols = useMemo(() => {
+    if (!navEnabled) return []
+    return [
+      navList[wrapNavIndex(navIdx, -1, navTotal)].symbol,
+      navList[wrapNavIndex(navIdx, 1, navTotal)].symbol,
+    ]
+  }, [navEnabled, navIdx, navTotal, navList])
+
+  // ESC 关闭 + 左右键切股
   useEffect(() => {
     if (!symbol) return
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        onCloseRef.current()
+        return
+      }
+      if (e.key === 'ArrowLeft' && go(-1)) e.preventDefault()
+      if (e.key === 'ArrowRight' && go(1)) e.preventDefault()
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [symbol, onClose])
+  }, [symbol, go])
 
   const handleRefresh = () => {
     if (!symbol) return
@@ -116,35 +235,44 @@ export function StockPreviewDialog({ symbol, name, onClose, triggerInfo }: Props
                 })()}
                 <span className="font-mono text-sm font-medium text-foreground">{symbol}</span>
                 {name && <span className="text-xs text-muted">{name}</span>}
+                {showAnalysisAction && (
+                  <Link
+                    to={aiHref}
+                    onClick={onClose}
+                    className="ml-2 inline-flex h-6 items-center gap-1 rounded-md border border-sky-400/30 bg-sky-500/10 px-2.5 text-[11px] font-medium text-sky-700 transition-colors hover:bg-sky-500/20 dark:text-sky-300"
+                    title="前往 AI 功能目录"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    AI 分析
+                  </Link>
+                )}
               </div>
 
               <div className="flex items-center gap-1.5">
                 {/* 日期范围快捷 */}
-                {PRESETS.map(p => {
-                  const now = new Date()
-                  const s = new Date(now)
-                  s.setMonth(s.getMonth() - p.months)
-                  const expected = s.toISOString().slice(0, 10)
-                  const isActive = dateRange.start === expected
-                  return (
-                    <button
-                      key={p.label}
-                      onClick={() => {
-                        const end = new Date().toISOString().slice(0, 10)
-                        const ns = new Date()
-                        ns.setMonth(ns.getMonth() - p.months)
-                        setDateRange({ start: ns.toISOString().slice(0, 10), end })
-                      }}
-                      className={`h-6 px-1.5 rounded text-[11px] transition-colors cursor-pointer
-                        ${isActive
-                          ? 'bg-accent/20 text-accent font-medium border border-accent/30'
-                          : 'text-muted hover:text-foreground hover:bg-elevated border border-transparent'
-                        }`}
-                    >
-                      {p.label}
-                    </button>
-                  )
-                })}
+                <div className="flex items-center gap-0.5" role="group" aria-label="K线历史范围">
+                  <span className="mr-0.5 text-[10px] text-muted">范围</span>
+                  {PRESETS.map(p => {
+                    const range = presetRange(p)
+                    const isActive = dateRange.start === range.start && dateRange.end === range.end
+                    return (
+                      <button
+                        key={p.label}
+                        type="button"
+                        aria-pressed={isActive}
+                        title={p.label === '全部' ? '查看本地最早可用日K至今' : `查看最近${p.label}日K`}
+                        onClick={() => setDateRange(range)}
+                        className={`h-6 px-1.5 rounded text-[11px] transition-colors cursor-pointer
+                          ${isActive
+                            ? 'bg-accent/20 text-accent font-medium border border-accent/30'
+                            : 'text-muted hover:text-foreground hover:bg-elevated border border-transparent'
+                          }`}
+                      >
+                        {p.label}
+                      </button>
+                    )
+                  })}
+                </div>
                 <DatePicker
                   value={dateRange.start}
                   onChange={(v) => setDateRange(prev => ({ ...prev, start: v }))}
@@ -256,6 +384,8 @@ export function StockPreviewDialog({ symbol, name, onClose, triggerInfo }: Props
                 showChips={showChips}
                 onSelectDate={() => { if (!showIntraday) setShowIntraday(true) }}
                 dateRange={dateRange}
+                visibleBars={visibleBarsForRange(dateRange)}
+                prefetchSymbols={prefetchSymbols}
                 onMonitor={() => setShowMonitorEditor(true)}
                 inWatchlist={inWatchlist}
                 onToggleWatchlist={() => toggleWatchlist.mutate()}
@@ -286,6 +416,21 @@ export function StockPreviewDialog({ symbol, name, onClose, triggerInfo }: Props
                       onSaved={() => setShowMonitorEditor(false)}
                     />
                   </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* 首↔尾循环弱提示 */}
+            <AnimatePresence>
+              {wrapMsg && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 8 }}
+                  transition={{ duration: 0.2 }}
+                  className="pointer-events-none absolute bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-full border border-border bg-surface/95 px-3 py-1.5 text-[11px] text-secondary shadow-lg backdrop-blur"
+                >
+                  {wrapMsg}
                 </motion.div>
               )}
             </AnimatePresence>

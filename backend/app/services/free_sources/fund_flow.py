@@ -21,12 +21,17 @@ Intraday minute series map:
 """
 from __future__ import annotations
 
+import fcntl
 import os
 import sqlite3
-from datetime import date, datetime
+import threading
+import time
+from collections.abc import Callable
+from datetime import date, datetime, time as dt_time
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 import polars as pl
 
@@ -42,6 +47,8 @@ _EM_HEADERS = {
     "Referer": "https://data.eastmoney.com/",
 }
 
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
+_EM_H5_HISTORY_HOST = "https://emdatah5.eastmoney.com/dc/ZJLX/getDBHistoryData"
 _EM_UT = "8dec03ba335b81bf4ebdf7b29ec27d15"
 _EM_UT_FFLOW = "fa5fd1943c7b386f172d6893dbfba10b"
 _EM_UT_DAY = "b2884a393a59ad64002292a3e90d46a5"
@@ -162,7 +169,6 @@ def fetch_stock_fund_flow(
     """
     client = client or get_shared_client()
     secid = _secid(symbol)
-    url = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
     params = {
         "lmt": str(limit),
         "klt": "101",
@@ -172,44 +178,65 @@ def fetch_stock_fund_flow(
         "ut": _EM_UT_DAY,
     }
     q = urlencode(params)
-    full = f"{url}?{q}"
-    res = client.get_json(
-        full,
-        source_key="eastmoney_fflow",
-        headers={**_EM_HEADERS, "Referer": "https://quote.eastmoney.com/"},
-        timeout=15.0,
-    )
-    if not res.ok:
-        raise RuntimeError(res.error or "fund flow fetch failed")
-    data = res.data or {}
-    klines = (((data.get("data") or {}).get("klines")) if isinstance(data, dict) else None) or []
-    rows: list[dict] = []
-    for line in klines:
-        parts = str(line).split(",")
-        if len(parts) < 6:
-            continue
-
-        def f(i: int) -> float | None:
-            try:
-                return float(parts[i])
-            except (IndexError, ValueError):
-                return None
-
-        rows.append(
-            {
-                "symbol": symbol.upper() if "." in symbol else _symbol_from_sec_parts(symbol),
-                "date": parts[0],
-                "main_net": f(1),
-                "small_net": f(2),
-                "med_net": f(3),
-                "large_net": f(4),
-                "super_net": f(5),
-                "main_net_pct": f(6) if len(parts) > 6 else None,
-                "source": "eastmoney_fflow",
-                "unit_amount": "yuan",
-            }
+    hosts = [
+        (
+            "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get",
+            "https://quote.eastmoney.com/",
+        ),
+        (
+            "https://emdatah5.eastmoney.com/dc/ZJLX/getDBHistoryData",
+            f"https://emdatah5.eastmoney.com/dc/zjlx/stock?fc={secid}",
+        ),
+        (
+            "https://push2delay.eastmoney.com/api/qt/stock/fflow/daykline/get",
+            "https://quote.eastmoney.com/",
+        ),
+        (
+            "https://push2.eastmoney.com/api/qt/stock/fflow/daykline/get",
+            "https://quote.eastmoney.com/",
+        ),
+    ]
+    last_err: str | None = None
+    for i, (host, referer) in enumerate(hosts):
+        res = client.get_json(
+            f"{host}?{q}",
+            source_key=f"eastmoney_stock_fflow_{i}",
+            headers={**_EM_HEADERS, "Referer": referer},
+            timeout=5.0,
+            cooldown_on_error=5.0,
         )
-    return rows
+        if not res.ok:
+            last_err = res.error or f"{host} failed"
+            continue
+        data = res.data or {}
+        klines = (((data.get("data") or {}).get("klines")) if isinstance(data, dict) else None) or []
+        if not klines:
+            last_err = f"{host} returned empty klines"
+            continue
+        rows: list[dict] = []
+        for line in klines:
+            parts = str(line).split(",")
+            if len(parts) < 6:
+                continue
+            rows.append(
+                {
+                    "symbol": symbol.upper() if "." in symbol else _symbol_from_sec_parts(symbol),
+                    "date": parts[0],
+                    "main_net": _fnum(parts[1]),
+                    "small_net": _fnum(parts[2]),
+                    "med_net": _fnum(parts[3]),
+                    "large_net": _fnum(parts[4]),
+                    "super_net": _fnum(parts[5]),
+                    "main_net_pct": _fnum(parts[6]) if len(parts) > 6 else None,
+                    "source": "eastmoney_fflow",
+                    "unit_amount": "yuan",
+                }
+            )
+        if rows:
+            return rows
+        last_err = f"{host} returned no valid rows"
+    detail = f": {last_err}" if last_err else ""
+    raise RuntimeError(f"东方财富个股资金流暂时不可用{detail}")
 
 
 def _parse_bkzj_payload(data: Any, *, kind: str) -> list[dict]:
@@ -622,20 +649,24 @@ def fetch_board_daily_history(
     *,
     limit: int = 120,
     kind: Literal["board", "concept"] = "board",
+    allow_local_fallback: bool = False,
+    prefer_h5: bool = False,
+    h5_only: bool = False,
 ) -> list[dict]:
     """Fetch board/concept daily main-net history.
 
-    Priority:
-      1) Eastmoney daykline multi-host (push2his/push2delay/push2)
-      2) Local go-stock snapshot DB aggregated by day
+    Default is Eastmoney only. Local go-stock `stock.db` is opt-in via
+    ``allow_local_fallback=True`` and must not be the refresh/empty-cache path.
     """
     client = client or get_shared_client()
     board = str(code or "").strip().upper()
     if not board:
         return []
-    # Prefer local go-stock snapshots first in this environment: EM daykline hosts are often
-    # TLS-blocked and a single failure trips cooldown for the whole batch.
-    local = _fetch_board_daily_history_from_go_stock(board, kind=kind, limit=limit)
+    local = (
+        _fetch_board_daily_history_from_go_stock(board, kind=kind, limit=limit)
+        if allow_local_fallback
+        else []
+    )
     env_pref = (os.environ.get("FUND_FLOW_HISTORY_PREFER_LOCAL") or "").strip().lower()
     if env_pref in {"1", "true", "yes"}:
         prefer_local = True
@@ -644,7 +675,7 @@ def fetch_board_daily_history(
     else:
         # auto: if local go-stock history exists for this code, use it first (current network often blocks EM daykline)
         prefer_local = bool(local)
-    if prefer_local and local:
+    if allow_local_fallback and prefer_local and local:
         return local
 
     params = {
@@ -656,27 +687,42 @@ def fetch_board_daily_history(
         "ut": _EM_UT_DAY,
     }
     q = urlencode(params)
+    secid = _board_secid(board)
     hosts = [
-        "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get",
-        "https://push2delay.eastmoney.com/api/qt/stock/fflow/daykline/get",
-        "https://push2.eastmoney.com/api/qt/stock/fflow/daykline/get",
+        (
+            "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get",
+            "https://data.eastmoney.com/",
+        ),
+        (
+            "https://emdatah5.eastmoney.com/dc/ZJLX/getDBHistoryData",
+            f"https://emdatah5.eastmoney.com/dc/zjlx/stock?fc={secid}",
+        ),
+        (
+            "https://push2delay.eastmoney.com/api/qt/stock/fflow/daykline/get",
+            "https://data.eastmoney.com/",
+        ),
+        (
+            "https://push2.eastmoney.com/api/qt/stock/fflow/daykline/get",
+            "https://data.eastmoney.com/",
+        ),
     ]
+    if h5_only:
+        hosts = [item for item in hosts if item[0] == _EM_H5_HISTORY_HOST]
+    elif prefer_h5:
+        hosts = [hosts[1], hosts[0], hosts[2], hosts[3]]
     last_err: str | None = None
-    for i, host in enumerate(hosts):
+    for i, (host, referer) in enumerate(hosts):
         url = f"{host}?{q}"
         # separate cooldown keys so one dead host does not freeze the whole batch
         res = client.get_json(
             url,
             source_key=f"eastmoney_board_fflow_day_{i}",
-            headers=_EM_HEADERS,
-            timeout=3.5,
+            headers={**_EM_HEADERS, "Referer": referer},
+            timeout=8.0,
             cooldown_on_error=5.0,
         )
         if not res.ok:
             last_err = res.error or f"{host} failed"
-            # on hard network failure, skip remaining hosts quickly if local available
-            if local and ("EOF" in str(last_err) or "timeout" in str(last_err).lower() or "SSL" in str(last_err)):
-                return local
             continue
         data = (res.data or {}).get("data") if isinstance(res.data, dict) else None
         data = data or {}
@@ -706,9 +752,12 @@ def fetch_board_daily_history(
                 }
             )
         if rows:
+            rows.sort(key=lambda r: str(r.get("date") or ""))
+            if int(limit) > 0:
+                rows = rows[-int(limit):]
             return rows
 
-    if local:
+    if allow_local_fallback and local:
         return local
     raise RuntimeError(last_err or f"daily fund flow history failed for {board}")
 
@@ -893,9 +942,12 @@ def persist_board_daily_history(
     rows: list[dict],
     *,
     kind: Literal["board", "concept"] = "board",
+    atomic: bool = False,
 ) -> int:
+    """Merge daily rows by date+code. Never replace a date partition wholesale."""
     if not rows:
         return 0
+    _ = str(code or "").strip()
     store = ExtConfigStore(data_dir)
     cfg = _ensure_board_daily_config(store, kind)
     by_date: dict[str, list[dict]] = {}
@@ -911,9 +963,717 @@ def persist_board_daily_history(
             cfg,
             data_dir,
             snapshot_date=date.fromisoformat(d),
+            atomic=atomic,
         )
         n += len(group)
     return n
+
+
+def load_board_snapshot_items(
+    data_dir: Path,
+    *,
+    kind: Literal["board", "concept"] = "board",
+) -> list[dict]:
+    snapshot_id = "ext_fund_flow_bk" if kind == "board" else "ext_fund_flow_concept"
+    path = Path(data_dir) / "ext_data" / snapshot_id / "part.parquet"
+    if not path.exists():
+        return []
+    try:
+        return pl.read_parquet(path).to_dicts()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def backfill_industry_daily_from_h5(
+    data_dir: Path,
+    *,
+    client: ResilientHttpClient | None = None,
+    codes: list[str] | None = None,
+    limit: int = 120,
+    batch_size: int = 8,
+    pause_s: float = 0.35,
+    pause_code_s: float = 0.0,
+    min_days: int = 63,
+    kind: Literal["board", "concept"] = "board",
+) -> dict:
+    """Backfill current industry or concept snapshot from Eastmoney H5 only.
+
+    Writes `ext_fund_flow_bk_daily` / `ext_fund_flow_concept_daily` by date+code
+    merge. Does not refresh the ranking snapshot, and does not persist
+    go-stock / TickFlow / stockdb rows.
+    """
+    client = client or get_shared_client()
+    kind = "concept" if kind == "concept" else "board"
+    snapshot = load_board_snapshot_items(data_dir, kind=kind)
+    names = {
+        str(row.get("code") or "").upper(): row.get("name")
+        for row in snapshot
+        if str(row.get("code") or "").strip()
+    }
+    if codes:
+        selected = [str(c).strip().upper() for c in codes if str(c).strip()]
+    else:
+        selected = [str(row.get("code") or "").upper() for row in snapshot if str(row.get("code") or "").strip()]
+    seen: set[str] = set()
+    universe: list[str] = []
+    for code in selected:
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        universe.append(code)
+
+    ok_codes: list[str] = []
+    short_codes: list[dict] = []
+    failed: list[dict] = []
+    total_points = 0
+    date_min: str | None = None
+    date_max: str | None = None
+    step = max(1, int(batch_size))
+    for i in range(0, len(universe), step):
+        batch = universe[i : i + step]
+        batch_rows: list[dict] = []
+        for code in batch:
+            try:
+                hist = fetch_board_daily_history(
+                    code,
+                    client=client,
+                    limit=limit,
+                    kind=kind,
+                    allow_local_fallback=False,
+                    prefer_h5=True,
+                )
+            except Exception as e:  # noqa: BLE001
+                failed.append({"code": code, "error": str(e)})
+                continue
+            hist = [row for row in hist if str(row.get("source")) == "eastmoney_fflow_day"]
+            for row in hist:
+                if not row.get("name"):
+                    row["name"] = names.get(code) or code
+            if not hist:
+                failed.append({"code": code, "error": "empty eastmoney history"})
+                continue
+            dates = [str(row.get("date") or "")[:10] for row in hist if row.get("date")]
+            if dates:
+                lo, hi = min(dates), max(dates)
+                date_min = lo if date_min is None else min(date_min, lo)
+                date_max = hi if date_max is None else max(date_max, hi)
+            if len(hist) < int(min_days):
+                short_codes.append({"code": code, "days": len(hist), "start": dates[0] if dates else None, "end": dates[-1] if dates else None})
+            batch_rows.extend(hist)
+            ok_codes.append(code)
+            if pause_code_s > 0:
+                time.sleep(float(pause_code_s))
+        if batch_rows:
+            total_points += persist_board_daily_history(data_dir, batch[0], batch_rows, kind=kind)
+        if pause_s > 0 and i + step < len(universe):
+            time.sleep(float(pause_s))
+
+    return {
+        "ok": bool(ok_codes) and not failed,
+        "kind": kind,
+        "selected": len(universe),
+        "history_codes": ok_codes,
+        "history_points": total_points,
+        "short": short_codes,
+        "failed": failed,
+        "source": "eastmoney_fflow_day",
+        "limit": int(limit),
+        "min_days": int(min_days),
+        "start": date_min,
+        "end": date_max,
+        "note": (
+            "东财 H5/daykline 概念日线回补，按 date+code 合并，不写 go-stock"
+            if kind == "concept"
+            else "东财 H5/daykline 行业日线回补，按 date+code 合并，不写 go-stock"
+        ),
+    }
+
+
+_INDUSTRY_ROLL_THREAD_LOCK = threading.Lock()
+_INDUSTRY_ROLL_LOCK_NAME = ".industry_daily_roll.lock"
+_CONCEPT_ROLL_THREAD_LOCK = threading.Lock()
+_CONCEPT_ROLL_LOCK_NAME = ".concept_daily_roll.lock"
+
+
+def _as_iso_day(value: object) -> str | None:
+    if value is None:
+        return None
+    iso = getattr(value, "isoformat", None)
+    if callable(iso):
+        try:
+            text = str(iso())
+        except Exception:
+            return None
+        return text[:10] if len(text) >= 10 else None
+    text = str(value).strip()
+    return text[:10] if len(text) >= 10 else None
+
+
+def _is_open_flag(value: object) -> bool:
+    if value is True or value == 1:
+        return True
+    if value is False or value == 0 or value is None:
+        return False
+    return str(value).strip().lower() in {"true", "1", "yes"}
+
+
+def _load_local_trading_calendar(data_dir: Path) -> pl.DataFrame | None:
+    path = Path(data_dir) / "reference" / "trading_calendar" / "calendar.parquet"
+    if not path.exists():
+        return None
+    try:
+        frame = pl.read_parquet(path)
+    except Exception:
+        return None
+    if frame.is_empty():
+        return None
+    return frame
+
+
+def _parse_close_time(value: object) -> dt_time:
+    text = str(value or "").strip()
+    if len(text) >= 5 and text[2] == ":":
+        try:
+            return dt_time(int(text[:2]), int(text[3:5]))
+        except ValueError:
+            pass
+    return dt_time(15, 0)
+
+
+def assess_industry_window_freshness(
+    data_dir: Path,
+    *,
+    data_as_of: str | None,
+    as_of_today: date | None = None,
+    as_of_now: datetime | None = None,
+) -> dict[str, Any]:
+    """Judge industry window freshness from the local trading calendar only.
+
+    Expected day is the latest completed Shanghai cash session. A date-only
+    as_of_today is treated as that day's end. Missing calendar coverage is
+    unknown; kline dates are never used as a legal calendar.
+    """
+    if as_of_now is not None:
+        now = as_of_now if as_of_now.tzinfo else as_of_now.replace(tzinfo=_SHANGHAI)
+        now = now.astimezone(_SHANGHAI)
+    elif as_of_today is not None:
+        now = datetime.combine(as_of_today, dt_time(23, 59, 59), tzinfo=_SHANGHAI)
+    else:
+        now = datetime.now(_SHANGHAI)
+    today = as_of_today or now.date()
+    today_s = today.isoformat()
+    payload = {
+        "data_as_of": data_as_of,
+        "freshness_status": "unknown",
+        "freshness_note": "无法确定",
+        "expected_trading_day": None,
+        "calendar_covers": False,
+    }
+    calendar = _load_local_trading_calendar(data_dir)
+    if calendar is None:
+        payload["freshness_note"] = "无法确定（交易日历缺失或无法读取）"
+        return payload
+    date_col = "trade_date" if "trade_date" in calendar.columns else (
+        "date" if "date" in calendar.columns else None
+    )
+    if date_col is None:
+        payload["freshness_note"] = "无法确定（交易日历缺少日期列）"
+        return payload
+    all_days: list[str] = []
+    open_days: list[str] = []
+    close_by_day: dict[str, dt_time] = {}
+    open_set: set[str] = set()
+    for row in calendar.to_dicts():
+        day = _as_iso_day(row.get(date_col))
+        if not day:
+            continue
+        all_days.append(day)
+        close_by_day[day] = _parse_close_time(row.get("close_time"))
+        if _is_open_flag(row.get("is_open")):
+            open_days.append(day)
+            open_set.add(day)
+    if not all_days:
+        payload["freshness_note"] = "无法确定（交易日历无日期）"
+        return payload
+    if max(all_days) < today_s:
+        payload["freshness_note"] = "无法确定（交易日历未覆盖到当日）"
+        return payload
+    payload["calendar_covers"] = True
+    prior_open = max((day for day in open_days if day < today_s), default=None)
+    if today_s in open_set and now.timetz().replace(tzinfo=None) < close_by_day.get(today_s, dt_time(15, 0)):
+        expected = prior_open
+    else:
+        expected = max((day for day in open_days if day <= today_s), default=None)
+    payload["expected_trading_day"] = expected
+    if not data_as_of or not expected:
+        payload["freshness_note"] = "无法确定"
+        return payload
+    if data_as_of == expected:
+        payload["freshness_status"] = "fresh"
+        payload["freshness_note"] = "足够新"
+        return payload
+    if data_as_of < expected:
+        payload["freshness_status"] = "stale"
+        payload["freshness_note"] = "已陈旧"
+        return payload
+    payload["freshness_note"] = "无法确定（数据截止日超出日历可判定范围）"
+    return payload
+
+
+def _attach_industry_freshness(
+    payload: dict[str, Any],
+    data_dir: Path,
+    *,
+    as_of_today: date | None = None,
+    as_of_now: datetime | None = None,
+) -> dict[str, Any]:
+    if payload.get("kind") != "board":
+        return payload
+    payload.update(
+        assess_industry_window_freshness(
+            data_dir,
+            data_as_of=payload.get("end"),
+            as_of_today=as_of_today,
+            as_of_now=as_of_now,
+        )
+    )
+    return payload
+
+
+def _board_daily_id(kind: Literal["board", "concept"]) -> str:
+    return "ext_fund_flow_bk_daily" if kind == "board" else "ext_fund_flow_concept_daily"
+
+
+def _industry_h5_latest_coverage(
+    data_dir: Path,
+    snapshot_codes: list[str],
+    *,
+    kind: Literal["board", "concept"] = "board",
+) -> tuple[str | None, bool, int]:
+    daily_root = Path(data_dir) / "ext_data" / _board_daily_id(kind) / "timeseries"
+    wanted = {str(code).strip().upper() for code in snapshot_codes if str(code).strip()}
+    if not daily_root.exists() or not wanted:
+        return None, False, 0
+    frames: list[pl.DataFrame] = []
+    for path in daily_root.rglob("*.parquet"):
+        try:
+            frames.append(pl.read_parquet(path))
+        except Exception:
+            continue
+    if not frames:
+        return None, False, 0
+    daily = pl.concat(frames, how="diagonal_relaxed")
+    if daily.is_empty() or "date" not in daily.columns or "code" not in daily.columns:
+        return None, False, 0
+    daily = daily.with_columns(
+        pl.col("code").cast(pl.Utf8).str.to_uppercase().alias("code"),
+        pl.col("date").cast(pl.Utf8).str.slice(0, 10).alias("date"),
+    )
+    daily = daily.filter(pl.col("code").is_in(list(wanted)))
+    if "source" in daily.columns:
+        daily = daily.filter(pl.col("source") == "eastmoney_fflow_day")
+    if daily.is_empty():
+        return None, False, 0
+    latest = max(str(value) for value in daily["date"].to_list() if value)
+    have = {
+        str(value)
+        for value in daily.filter(pl.col("date") == latest)["code"].to_list()
+        if value
+    }
+    covered = len(wanted & have)
+    return latest, bool(wanted) and wanted <= have, covered
+
+
+def _industry_local_h5_dates(
+    data_dir: Path,
+    codes: list[str],
+    *,
+    kind: Literal["board", "concept"] = "board",
+) -> dict[str, set[str]]:
+    """Local eastmoney_fflow_day dates per snapshot code. This is the resume cursor."""
+    wanted = {str(code).strip().upper() for code in codes if str(code).strip()}
+    out: dict[str, set[str]] = {code: set() for code in wanted}
+    daily_root = Path(data_dir) / "ext_data" / _board_daily_id(kind) / "timeseries"
+    if not daily_root.exists() or not wanted:
+        return out
+    frames: list[pl.DataFrame] = []
+    for path in daily_root.rglob("*.parquet"):
+        try:
+            frames.append(pl.read_parquet(path))
+        except Exception:
+            continue
+    if not frames:
+        return out
+    daily = pl.concat(frames, how="diagonal_relaxed")
+    if daily.is_empty() or "date" not in daily.columns or "code" not in daily.columns:
+        return out
+    daily = daily.with_columns(
+        pl.col("code").cast(pl.Utf8).str.to_uppercase().alias("code"),
+        pl.col("date").cast(pl.Utf8).str.slice(0, 10).alias("date"),
+    )
+    daily = daily.filter(pl.col("code").is_in(list(wanted)))
+    if "source" in daily.columns:
+        daily = daily.filter(pl.col("source") == "eastmoney_fflow_day")
+    if daily.is_empty():
+        return out
+    for row in daily.select(["code", "date"]).unique().to_dicts():
+        code = str(row.get("code") or "")
+        day = str(row.get("date") or "")[:10]
+        if code and day:
+            out.setdefault(code, set()).add(day)
+    return out
+
+
+def _acquire_industry_roll_lock(
+    data_dir: Path,
+    *,
+    kind: Literal["board", "concept"] = "board",
+):
+    lock_dir = Path(data_dir) / "ext_data" / _board_daily_id(kind)
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_name = _INDUSTRY_ROLL_LOCK_NAME if kind == "board" else _CONCEPT_ROLL_LOCK_NAME
+    handle = open(lock_dir / lock_name, "a+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        return None
+    return handle
+
+
+def _release_industry_roll_lock(handle) -> None:
+    if handle is None:
+        return
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
+def _industry_roll_busy_result(*, kind: Literal["board", "concept"] = "board") -> dict[str, Any]:
+    label = "行业" if kind == "board" else "概念"
+    return {
+        "ok": False,
+        "kind": kind,
+        "status": "busy",
+        "skipped_lock": True,
+        "selected": 0,
+        "history_codes": [],
+        "failed": [],
+        "latest_data_date": None,
+        "latest_day_complete": False,
+        "source": "eastmoney_fflow_day",
+        "note": f"已有{label}日线续更在进行，跳过本次",
+    }
+
+
+def _emit_roll_progress(
+    on_progress: Callable[..., None] | None,
+    *,
+    kind: Literal["board", "concept"],
+    done: int,
+    total: int,
+    extra: str = "",
+) -> None:
+    if on_progress is None:
+        return
+    stage = "industry_fund_flow" if kind == "board" else "concept_fund_flow"
+    pct = 98 if kind == "board" else 99
+    label = "行业" if kind == "board" else "概念"
+    suffix = f" {extra}" if extra else ""
+    on_progress(stage, pct, f"{label}日线续更 {done}/{total}{suffix}")
+
+
+def _roll_should_stop(
+    cancel_event: threading.Event | None,
+    deadline_monotonic: float | None,
+) -> bool:
+    if cancel_event is not None and cancel_event.is_set():
+        return True
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        return True
+    return False
+
+
+def _roll_industry_daily_from_h5_unlocked(
+    data_dir: Path,
+    *,
+    client: ResilientHttpClient | None,
+    limit: int,
+    batch_size: int,
+    pause_s: float,
+    pause_code_s: float,
+    cancel_event: threading.Event | None = None,
+    deadline_monotonic: float | None = None,
+    kind: Literal["board", "concept"] = "board",
+    on_progress: Callable[..., None] | None = None,
+) -> dict[str, Any]:
+    kind = "concept" if kind == "concept" else "board"
+    label = "行业" if kind == "board" else "概念"
+    snapshot = load_board_snapshot_items(data_dir, kind=kind)
+    names = {
+        str(row.get("code") or "").upper(): row.get("name")
+        for row in snapshot
+        if str(row.get("code") or "").strip()
+    }
+    universe: list[str] = []
+    seen: set[str] = set()
+    for row in snapshot:
+        code = str(row.get("code") or "").strip().upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        universe.append(code)
+    if not universe:
+        return {
+            "ok": False,
+            "kind": kind,
+            "status": "no_snapshot",
+            "selected": 0,
+            "history_codes": [],
+            "failed": [],
+            "latest_data_date": None,
+            "latest_day_complete": False,
+            "source": "eastmoney_fflow_day",
+            "note": f"本地{label}快照为空，未联网补目录",
+        }
+
+    client = client or get_shared_client()
+    local_dates = _industry_local_h5_dates(data_dir, universe, kind=kind)
+    local_max = None
+    present_dates = [max(days) for days in local_dates.values() if days]
+    if present_dates:
+        local_max = max(present_dates)
+    stable_codes = [
+        code for code in universe if local_max and local_max in local_dates.get(code, set())
+    ]
+    # Resume: work codes missing the current local max first so a cutoff
+    # cannot keep re-fetching the head and starve the tail.
+    if local_max:
+        pending = [code for code in universe if local_max not in local_dates.get(code, set())]
+        if pending:
+            pending_set = set(pending)
+            universe_work = pending + [code for code in universe if code not in pending_set]
+        else:
+            universe_work = list(universe)
+    else:
+        universe_work = list(universe)
+
+    ok_codes: list[str] = []
+    skipped_already_current: list[str] = []
+    failed: list[dict] = []
+    total_points = 0
+    date_min: str | None = None
+    date_max: str | None = None
+    h5_max: str | None = None
+    timed_out = False
+    step = max(1, int(batch_size))
+    processed = 0
+    _emit_roll_progress(on_progress, kind=kind, done=0, total=len(universe_work), extra="开始")
+    for i in range(0, len(universe_work), step):
+        if _roll_should_stop(cancel_event, deadline_monotonic):
+            timed_out = True
+            break
+        batch = universe_work[i : i + step]
+        batch_rows: list[dict] = []
+        for code in batch:
+            if _roll_should_stop(cancel_event, deadline_monotonic):
+                timed_out = True
+                break
+            if h5_max and h5_max in local_dates.get(code, set()):
+                skipped_already_current.append(code)
+                processed += 1
+                continue
+            try:
+                hist = fetch_board_daily_history(
+                    code,
+                    client=client,
+                    limit=limit,
+                    kind=kind,
+                    allow_local_fallback=False,
+                    prefer_h5=True,
+                    h5_only=True,
+                )
+            except Exception as e:  # noqa: BLE001
+                failed.append({"code": code, "error": str(e)})
+                processed += 1
+                continue
+            hist = [row for row in hist if str(row.get("source")) == "eastmoney_fflow_day"]
+            for row in hist:
+                if not row.get("name"):
+                    row["name"] = names.get(code) or code
+            if not hist:
+                failed.append({"code": code, "error": "empty eastmoney history"})
+                processed += 1
+                continue
+            dates = [str(row.get("date") or "")[:10] for row in hist if row.get("date")]
+            if dates:
+                lo, hi = min(dates), max(dates)
+                date_min = lo if date_min is None else min(date_min, lo)
+                date_max = hi if date_max is None else max(date_max, hi)
+                h5_max = hi if h5_max is None else max(h5_max, hi)
+                local_dates.setdefault(code, set()).update(dates)
+            batch_rows.extend(hist)
+            ok_codes.append(code)
+            processed += 1
+            if pause_code_s > 0:
+                time.sleep(float(pause_code_s))
+        if batch_rows:
+            total_points += persist_board_daily_history(
+                data_dir,
+                batch[0],
+                batch_rows,
+                kind=kind,
+                atomic=True,
+            )
+        _emit_roll_progress(on_progress, kind=kind, done=processed, total=len(universe_work))
+        if timed_out:
+            break
+        if pause_s > 0 and i + step < len(universe_work):
+            time.sleep(float(pause_s))
+
+    latest_data_date, all_complete, latest_day_covered = _industry_h5_latest_coverage(
+        data_dir,
+        universe,
+        kind=kind,
+    )
+    if kind == "concept" and stable_codes:
+        latest_data_date, latest_day_complete, latest_day_covered = _industry_h5_latest_coverage(
+            data_dir,
+            stable_codes,
+            kind=kind,
+        )
+        blocking_failed = [item for item in failed if item.get("code") in set(stable_codes)]
+    else:
+        latest_day_complete = all_complete
+        blocking_failed = failed
+    cancelled = bool(cancel_event is not None and cancel_event.is_set())
+    status = "ok"
+    if cancelled:
+        status = "cancelled"
+    elif timed_out:
+        status = "timeout"
+    elif failed and (ok_codes or skipped_already_current):
+        status = "partial"
+    elif failed:
+        status = "failed"
+    elif not latest_day_complete:
+        status = "incomplete_latest_day"
+    return {
+        "ok": (
+            len(universe) > 0
+            and not blocking_failed
+            and latest_day_complete
+            and not timed_out
+            and not cancelled
+        ),
+        "kind": kind,
+        "status": status,
+        "selected": len(universe),
+        "stable_selected": len(stable_codes),
+        "history_codes": ok_codes,
+        "skipped_already_current": skipped_already_current,
+        "history_points": total_points,
+        "failed": failed,
+        "latest_data_date": latest_data_date,
+        "latest_day_complete": latest_day_complete,
+        "latest_day_covered": latest_day_covered,
+        "h5_max_date": h5_max,
+        "source": "eastmoney_fflow_day",
+        "limit": int(limit),
+        "start": date_min,
+        "end": date_max,
+        "cancelled": cancelled or timed_out,
+        "note": f"东财 H5 {label}日线续更，按本地快照全集、date+code 合并，不写 go-stock",
+    }
+
+
+def roll_industry_daily_from_h5(
+    data_dir: Path,
+    *,
+    client: ResilientHttpClient | None = None,
+    limit: int = 120,
+    batch_size: int = 8,
+    pause_s: float = 0.35,
+    pause_code_s: float = 0.0,
+    cancel_event: threading.Event | None = None,
+    time_limit_s: float | None = None,
+    on_progress: Callable[..., None] | None = None,
+) -> dict:
+    """Continue industry daily history for the local snapshot universe.
+
+    Uses Eastmoney H5 only. Does not refresh the ranking snapshot, does not
+    call the Top20 history helper, and does not persist stock.db rows.
+    """
+    if not _INDUSTRY_ROLL_THREAD_LOCK.acquire(blocking=False):
+        return _industry_roll_busy_result(kind="board")
+    handle = None
+    if time_limit_s is None:
+        time_limit_s = 180.0
+    deadline = time.monotonic() + float(time_limit_s)
+    try:
+        handle = _acquire_industry_roll_lock(data_dir, kind="board")
+        if handle is None:
+            return _industry_roll_busy_result(kind="board")
+        return _roll_industry_daily_from_h5_unlocked(
+            data_dir,
+            client=client,
+            limit=limit,
+            batch_size=batch_size,
+            pause_s=pause_s,
+            pause_code_s=pause_code_s,
+            cancel_event=cancel_event,
+            deadline_monotonic=deadline,
+            kind="board",
+            on_progress=on_progress,
+        )
+    finally:
+        _release_industry_roll_lock(handle)
+        _INDUSTRY_ROLL_THREAD_LOCK.release()
+
+
+def roll_concept_daily_from_h5(
+    data_dir: Path,
+    *,
+    client: ResilientHttpClient | None = None,
+    limit: int = 120,
+    batch_size: int = 8,
+    pause_s: float = 0.35,
+    pause_code_s: float = 0.0,
+    cancel_event: threading.Event | None = None,
+    time_limit_s: float | None = None,
+    on_progress: Callable[..., None] | None = None,
+) -> dict:
+    """Continue concept daily history for the local snapshot universe.
+
+    Uses Eastmoney H5 only. Completeness is the stable set that already had
+    the previous local max, not 504/504. Does not refresh the ranking snapshot.
+    """
+    if not _CONCEPT_ROLL_THREAD_LOCK.acquire(blocking=False):
+        return _industry_roll_busy_result(kind="concept")
+    handle = None
+    if time_limit_s is None:
+        time_limit_s = 720.0
+    deadline = time.monotonic() + float(time_limit_s)
+    try:
+        handle = _acquire_industry_roll_lock(data_dir, kind="concept")
+        if handle is None:
+            return _industry_roll_busy_result(kind="concept")
+        return _roll_industry_daily_from_h5_unlocked(
+            data_dir,
+            client=client,
+            limit=limit,
+            batch_size=batch_size,
+            pause_s=pause_s,
+            pause_code_s=pause_code_s,
+            cancel_event=cancel_event,
+            deadline_monotonic=deadline,
+            kind="concept",
+            on_progress=on_progress,
+        )
+    finally:
+        _release_industry_roll_lock(handle)
+        _CONCEPT_ROLL_THREAD_LOCK.release()
 
 
 def persist_board_intraday(
@@ -1038,10 +1798,10 @@ def refresh_top_boards_daily_history(
     limit: int = 60,
     client: ResilientHttpClient | None = None,
 ) -> dict:
-    """Refresh ranking snapshot + daily history for top inflow/outflow boards.
+    """Refresh ranking snapshot + daily history for selected boards.
 
-    This is the practical "近N日" path: daykline can backfill without having run
-    a minute collector on each historical trading day.
+    Industry window ranking needs the current snapshot universe, not just today's
+    inflow/outflow TOP20. Concept callers can keep the older TOP-N path.
     """
     client = client or get_shared_client()
     ranking = fetch_board_ranking("board" if kind == "board" else "concept", client=client)
@@ -1050,14 +1810,18 @@ def refresh_top_boards_daily_history(
     else:
         persist_concept_snapshot(data_dir, ranking)
 
-    inflow = [r for r in ranking if (r.get("main_net") or 0) > 0][: max(1, top_n)]
-    outflow = sorted(
-        [r for r in ranking if (r.get("main_net") or 0) < 0],
-        key=lambda r: r.get("main_net") or 0,
-    )[: max(1, top_n)]
     selected: list[dict] = []
     seen: set[str] = set()
-    for r in inflow + outflow:
+    if kind == "board" and int(top_n) >= 100:
+        source_rows = ranking
+    else:
+        inflow = [r for r in ranking if (r.get("main_net") or 0) > 0][: max(1, top_n)]
+        outflow = sorted(
+            [r for r in ranking if (r.get("main_net") or 0) < 0],
+            key=lambda r: r.get("main_net") or 0,
+        )[: max(1, top_n)]
+        source_rows = inflow + outflow
+    for r in source_rows:
         c = str(r.get("code") or "").upper()
         if not c or c in seen:
             continue
@@ -1076,10 +1840,22 @@ def refresh_top_boards_daily_history(
     else:
         # auto-enable local batch mode when go-stock db is present
         force_local = any(p.exists() for p in _go_stock_db_candidates())
+    if kind in {"board", "concept"}:
+        # Window ranks stay on Eastmoney daily bars only.
+        force_local = False
     for item in selected:
         code = str(item.get("code") or "").upper()
         try:
-            if force_local:
+            if kind in {"board", "concept"}:
+                hist = fetch_board_daily_history(
+                    code,
+                    client=client,
+                    limit=limit,
+                    kind=kind,
+                    allow_local_fallback=False,
+                    prefer_h5=True,
+                )
+            elif force_local:
                 hist = _fetch_board_daily_history_from_go_stock(code, kind=kind, limit=limit)
                 if not hist:
                     # still try remote once if local empty for this code
@@ -1095,16 +1871,18 @@ def refresh_top_boards_daily_history(
             if not hist:
                 failed.append({"code": code, "error": "empty history"})
                 continue
-            # If remote daykline is broken, subsequent boards use local-only to avoid N*timeout.
-            if any(str(r.get("source")) == "go_stock_local_snapshot" for r in hist):
-                force_local = True
+            if kind in {"board", "concept"}:
+                hist = [row for row in hist if str(row.get("source")) == "eastmoney_fflow_day"]
+                if not hist:
+                    failed.append({"code": code, "error": "refused non-eastmoney daily"})
+                    continue
             n = persist_board_daily_history(data_dir, code, hist, kind=kind)
             total_points += n
             ok_codes.append(code)
         except Exception as e:  # noqa: BLE001
             err = str(e)
             failed.append({"code": code, "error": err})
-            if any(x in err for x in ("SSL", "EOF", "timeout", "Timeout", "cooldown")):
+            if kind not in {"board", "concept"} and any(x in err for x in ("SSL", "EOF", "timeout", "Timeout", "cooldown")):
                 force_local = True
 
     source = "+".join(sorted(sources)) if sources else "eastmoney_daykline|go_stock_local"
@@ -1123,3 +1901,239 @@ def refresh_top_boards_daily_history(
             else ""
         ),
     }
+
+
+def _window_rank_items(items: list[dict], top: int) -> list[dict]:
+    """Keep both ranking heads for the two-column panel.
+
+    ``top`` is the column length, not a high-side-only slice. A quarter window
+    may have fewer than ``top`` positive sums; the inflow column still needs
+    the next-highest cumulative names.
+    """
+    if not items:
+        return []
+    if not top or int(top) <= 0:
+        return items
+    n = max(1, int(top))
+
+    def _net(row: dict) -> float:
+        value = row.get("main_net")
+        return float(value) if isinstance(value, (int, float)) else 0.0
+
+    ranked = [row for row in items if str(row.get("code") or "").strip()]
+    high = sorted(ranked, key=_net, reverse=True)[:n]
+    high_codes = {str(row.get("code") or "").upper() for row in high}
+    low = [row for row in sorted(ranked, key=_net) if str(row.get("code") or "").upper() not in high_codes][:n]
+    seen: set[str] = set()
+    out: list[dict] = []
+    for row in high + low:
+        code = str(row.get("code") or "").upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        out.append(row)
+    return out
+
+
+def aggregate_board_window(
+    data_dir: Path,
+    *,
+    kind: Literal["board", "concept"] = "board",
+    days: int = 63,
+    top: int = 8,
+    as_of_today: date | None = None,
+    as_of_now: datetime | None = None,
+) -> dict[str, Any]:
+    """Rank boards by summed main_net over the latest ``days`` trading dates.
+
+    Missing daily history is returned as coverage, never silently treated as 0.
+    """
+    snapshot_id = "ext_fund_flow_bk" if kind == "board" else "ext_fund_flow_concept"
+    daily_id = "ext_fund_flow_bk_daily" if kind == "board" else "ext_fund_flow_concept_daily"
+    snap_path = Path(data_dir) / "ext_data" / snapshot_id / "part.parquet"
+    daily_root = Path(data_dir) / "ext_data" / daily_id / "timeseries"
+    snapshot_rows = 0
+    snapshot_items: list[dict] = []
+    if snap_path.exists():
+        snap = pl.read_parquet(snap_path)
+        snapshot_rows = snap.height
+        snapshot_items = snap.to_dicts()
+    files = sorted(daily_root.rglob("*.parquet")) if daily_root.exists() else []
+    daily = pl.DataFrame()
+    if files:
+        frames = []
+        for path in files:
+            try:
+                frames.append(pl.read_parquet(path))
+            except Exception:
+                continue
+        if frames:
+            daily = pl.concat(frames, how="diagonal_relaxed")
+    if daily.is_empty() or "date" not in daily.columns or "code" not in daily.columns:
+        missing = [
+            {
+                "code": str(row.get("code") or "").upper(),
+                "name": row.get("name"),
+                "days": 0,
+            }
+            for row in snapshot_items
+            if str(row.get("code") or "").strip()
+        ]
+        empty = {
+            "ok": True,
+            "kind": kind,
+            "window_days": int(days),
+            "requested_days": int(days),
+            "window_complete": False,
+            "window_label": f"近{int(days)}个交易日累计",
+            "trading_days": 0,
+            "start": None,
+            "end": None,
+            "prior_start": None,
+            "prior_end": None,
+            "snapshot_count": snapshot_rows,
+            "covered_count": 0,
+            "full_count": 0,
+            "missing_count": len(missing),
+            "coverage_pct": 0.0,
+            "items": [],
+            "missing": missing,
+            "short": missing,
+            "prior_available": False,
+            "prior_note": "窗口外数据不足",
+            "window_note": "窗口数据不足",
+            "source": daily_id,
+        }
+        return _attach_industry_freshness(
+            empty, data_dir, as_of_today=as_of_today, as_of_now=as_of_now
+        )
+    daily = daily.with_columns(
+        pl.col("code").cast(pl.Utf8).str.to_uppercase().alias("code"),
+        pl.col("date").cast(pl.Utf8).str.slice(0, 10).alias("date"),
+    )
+    dates = sorted({str(v) for v in daily["date"].to_list() if v})
+    ranked = daily
+    if "source" in daily.columns:
+        em_dates = sorted({
+            str(v) for v in daily.filter(pl.col("source") == "eastmoney_fflow_day")["date"].to_list() if v
+        })
+        if em_dates:
+            # Latest completed Eastmoney bar is the window end. Count only H5
+            # trading days so go-stock weekend leftovers cannot steal a slot.
+            dates = em_dates
+            ranked = daily.filter(pl.col("source") == "eastmoney_fflow_day")
+    window_dates = dates[-max(1, int(days)):]
+    window = ranked.filter(pl.col("date").is_in(window_dates))
+    names = {}
+    if "name" in daily.columns:
+        for row in daily.select(["code", "name"]).unique(subset=["code"], keep="last").to_dicts():
+            names[str(row.get("code") or "").upper()] = row.get("name")
+    for row in snapshot_items:
+        code = str(row.get("code") or "").upper()
+        if code and code not in names:
+            names[code] = row.get("name")
+    grouped = (
+        window.group_by("code")
+        .agg(
+            pl.col("main_net").sum().alias("main_net"),
+            pl.col("date").n_unique().alias("days"),
+            pl.col("date").max().alias("as_of"),
+        )
+        .sort("main_net", descending=True, nulls_last=True)
+    )
+    items = []
+    covered_codes = set()
+    for row in grouped.to_dicts():
+        code = str(row.get("code") or "").upper()
+        if not code:
+            continue
+        covered_codes.add(code)
+        items.append(
+            {
+                "code": code,
+                "name": names.get(code) or code,
+                "main_net": row.get("main_net"),
+                "days": int(row.get("days") or 0),
+                "window_days": len(window_dates),
+                "coverage_pct": round(100.0 * int(row.get("days") or 0) / max(1, len(window_dates)), 1),
+                "as_of": row.get("as_of"),
+                "kind": kind,
+                "source": daily_id,
+                "unit_amount": "yuan",
+            }
+        )
+    missing = []
+    snapshot_codes: list[str] = []
+    for row in snapshot_items:
+        code = str(row.get("code") or "").upper()
+        if not code:
+            continue
+        snapshot_codes.append(code)
+        if code not in covered_codes:
+            missing.append({"code": code, "name": row.get("name"), "days": 0})
+    days_by_code = {str(item.get("code") or "").upper(): int(item.get("days") or 0) for item in items}
+    short = []
+    seen_short: set[str] = set()
+    for row in snapshot_items:
+        code = str(row.get("code") or "").upper()
+        if not code:
+            continue
+        have = days_by_code.get(code, 0)
+        if have < int(days) and code not in seen_short:
+            seen_short.add(code)
+            short.append({"code": code, "name": names.get(code) or row.get("name"), "days": have})
+    if not snapshot_codes:
+        for item in items:
+            code = str(item.get("code") or "").upper()
+            have = int(item.get("days") or 0)
+            if code and have < int(days) and code not in seen_short:
+                seen_short.add(code)
+                short.append({"code": code, "name": item.get("name"), "days": have})
+    full_count = sum(1 for code in snapshot_codes if days_by_code.get(code, 0) >= int(days))
+    if snapshot_codes:
+        if kind == "concept":
+            # New or sparse themes cannot fill a longer window. Rank only full
+            # codes; open the window when they cover at least 90% of the snapshot.
+            items = [item for item in items if int(item.get("days") or 0) >= int(days)]
+            window_complete = (
+                len(window_dates) >= int(days)
+                and full_count >= max(20, int(0.9 * len(snapshot_codes)))
+                and full_count == len(items)
+            )
+        else:
+            window_complete = len(window_dates) >= int(days) and full_count == len(snapshot_codes)
+    else:
+        window_complete = bool(items) and len(window_dates) >= int(days) and all(
+            int(item.get("days") or 0) >= int(days) for item in items
+        )
+    prior_dates = dates[: max(0, len(dates) - len(window_dates))]
+    prior_available = len(prior_dates) >= max(5, int(days) // 2) and grouped.height >= max(20, snapshot_rows // 2)
+    payload = {
+        "ok": True,
+        "kind": kind,
+        "window_days": len(window_dates),
+        "requested_days": int(days),
+        "window_complete": window_complete,
+        "window_label": f"近{len(window_dates)}个交易日累计",
+        "trading_days": len(window_dates),
+        "start": window_dates[0] if window_dates else None,
+        "end": window_dates[-1] if window_dates else None,
+        "prior_start": prior_dates[0] if prior_dates else None,
+        "prior_end": prior_dates[-1] if prior_dates else None,
+        "snapshot_count": snapshot_rows,
+        "covered_count": len(covered_codes),
+        "full_count": full_count,
+        "missing_count": len(missing),
+        "coverage_pct": round(100.0 * len(covered_codes) / max(1, snapshot_rows), 1),
+        "items": _window_rank_items(items, top),
+        "missing": missing,
+        "short": short,
+        "prior_available": prior_available,
+        "prior_note": None if prior_available else "窗口外数据不足",
+        "window_note": None if window_complete else "窗口数据不足",
+        "source": daily_id,
+    }
+    return _attach_industry_freshness(
+        payload, data_dir, as_of_today=as_of_today, as_of_now=as_of_now
+    )
+

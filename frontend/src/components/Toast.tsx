@@ -9,7 +9,11 @@ let _queue: ToastItem[] = []
 function _emit() { _listeners.forEach(fn => fn([..._queue])) }
 
 function toast(msg: string, kind: 'error' | 'success' = 'error') {
-  const item = { id: ++_id, msg, kind }
+  // 运行时护栏: 非字符串(如后端错误 detail 对象)直接进 JSX 会击穿整个路由树
+  const text = typeof msg === 'string' ? msg : (() => {
+    try { return JSON.stringify(msg) } catch { return String(msg) }
+  })()
+  const item = { id: ++_id, msg: text, kind }
   _queue = [..._queue, item]
   _emit()
   setTimeout(() => { _queue = _queue.filter(t => t.id !== item.id); _emit() }, 4000)

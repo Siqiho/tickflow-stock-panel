@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import threading
+import time
+from contextvars import copy_context
 from dataclasses import asdict
 from datetime import date, timedelta
 from typing import Literal
@@ -39,6 +42,52 @@ def _get_engine(request: Request):
         engine = BacktestEngine(request.app.state.repo)
         request.app.state.backtest_engine = engine
     return engine
+
+
+def _strategy_catalog(request: Request, owner_user_id: str | None = None):
+    from app.services.user_strategies import (
+        UserStrategyCatalog,
+        UserStrategyError,
+        UserStrategyWorkspace,
+        resolve_strategy_owner,
+    )
+
+    actor = getattr(request.state, "user", None)
+    try:
+        owner = resolve_strategy_owner(actor, owner_user_id)
+    except UserStrategyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    shared = getattr(request.app.state, "strategy_engine", None)
+    if shared is None:
+        raise HTTPException(status_code=503, detail="策略引擎未初始化")
+    return (
+        UserStrategyCatalog(
+            shared,
+            UserStrategyWorkspace(request.app.state.repo.store.data_dir, owner),
+            include_global_custom=(
+                actor.get("role") == "admin" and owner.get("id") == actor.get("id")
+            ),
+        ),
+        owner,
+    )
+
+
+def _save_strategy_history(
+    request: Request,
+    result,
+    *,
+    strategy_owner_user_id: str,
+) -> None:
+    from app.services.backtest_history import BacktestHistoryStore
+
+    actor = getattr(request.state, "user", None)
+    BacktestHistoryStore(
+        request.app.state.repo.store.data_dir,
+        actor,
+    ).save(
+        asdict(result),
+        strategy_owner_user_id=strategy_owner_user_id,
+    )
 
 
 def _resolve_start(req: BaseModel, end: date, default_days: int) -> date:
@@ -123,9 +172,9 @@ class FactorColumnsResponse(BaseModel):
 
 @router.get("/factor/columns")
 def factor_columns():
-    """返回可用的因子列列表。"""
-    from app.backtest.factor import FACTOR_COLUMNS
-    return {"columns": FACTOR_COLUMNS}
+    """返回可用的因子列列表 (含运行期注册的自定义/复合因子)。"""
+    from app.factors.registry import factor_columns_view
+    return {"columns": factor_columns_view()}
 
 
 class FactorBacktestRequest(BaseModel):
@@ -149,7 +198,7 @@ def factor_run(req: FactorBacktestRequest, request: Request):
     svc = FactorBacktestService(engine)
 
     end = req.end or date.today()
-    start = _resolve_start(req, end, STRATEGY_DEFAULT_DAYS)
+    start = _resolve_start(req, end, FACTOR_DEFAULT_DAYS)
     _guard_server_backtest_range(start, end)
     symbols = req.symbols if req.symbols else None
     if symbols is not None and len(symbols) > FACTOR_MAX_SYMBOLS:
@@ -173,12 +222,136 @@ def factor_run(req: FactorBacktestRequest, request: Request):
     return asdict(result)
 
 
+class FactorBatchRequest(BaseModel):
+    factor_names: list[str]
+    symbols: list[str] | None = None
+    start: date | None = None
+    end: date | None = None
+    n_groups: int = 5
+    rebalance: Literal["daily", "weekly", "monthly"] = "monthly"
+    weight: Literal["equal", "factor_weight"] = "equal"
+    fees_pct: float = 0.0002
+    slippage_bps: float = 5.0
+    asset_type: Literal["stock", "etf", "index"] = "stock"
+
+
+@router.post("/factor/batch")
+def factor_batch(req: FactorBatchRequest, request: Request):
+    from app.backtest.factor import FactorBacktestService, FactorBatchConfig
+    from app.factors.registry import factor_columns_view
+
+    factor_names = list(dict.fromkeys(req.factor_names))
+    allowed = {item["id"] for item in factor_columns_view()}
+    invalid = [name for name in factor_names if name not in allowed]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"不支持的因子: {', '.join(invalid)}")
+
+    end = req.end or date.today()
+    start = _resolve_start(req, end, FACTOR_DEFAULT_DAYS)
+    _guard_server_backtest_range(start, end)
+    symbols = req.symbols if req.symbols else None
+    if symbols is not None and len(symbols) > FACTOR_MAX_SYMBOLS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"指定标的最多支持 {FACTOR_MAX_SYMBOLS} 只, 请缩小标的范围。",
+        )
+
+    svc = FactorBacktestService(_get_engine(request))
+    result = svc.run_batch(FactorBatchConfig(
+        factor_names=factor_names,
+        symbols=symbols,
+        start=start,
+        end=end,
+        n_groups=req.n_groups,
+        rebalance=req.rebalance,
+        weight=req.weight,
+        fees_pct=req.fees_pct,
+        slippage_bps=req.slippage_bps,
+        asset_type=req.asset_type,
+    ))
+    return asdict(result)
+
+
+class CandidateCreateRequest(BaseModel):
+    kind: Literal["factor", "strategy"]
+    name: str = Field(..., min_length=1, max_length=80)
+    source_id: str = Field(..., min_length=1, max_length=120)
+    config: dict = Field(default_factory=dict)
+    metrics: dict = Field(default_factory=dict)
+    data_as_of: date | None = None
+    status: Literal["pending", "validated", "rejected"] = "pending"
+
+
+class CandidateUpdateRequest(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=80)
+    status: Literal["pending", "validated", "rejected"] | None = None
+
+
+def _candidate_store():
+    from app.backtest.candidates import CandidateStore
+    return CandidateStore(settings.data_dir)
+
+
+def _raise_candidate_error(exc: Exception) -> None:
+    from app.backtest.candidates import CandidateValidationError
+    status_code = 400 if isinstance(exc, CandidateValidationError) else 500
+    raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+
+@router.get("/candidates")
+def candidates_list():
+    try:
+        return {"items": _candidate_store().list()}
+    except Exception as exc:
+        _raise_candidate_error(exc)
+
+
+@router.post("/candidates")
+def candidate_create(req: CandidateCreateRequest):
+    try:
+        return _candidate_store().create(
+            kind=req.kind,
+            name=req.name,
+            source_id=req.source_id,
+            config=req.config,
+            metrics=req.metrics,
+            data_as_of=req.data_as_of.isoformat() if req.data_as_of else None,
+            status=req.status,
+        )
+    except Exception as exc:
+        _raise_candidate_error(exc)
+
+
+@router.patch("/candidates/{candidate_id}")
+def candidate_update(candidate_id: str, req: CandidateUpdateRequest):
+    if req.name is None and req.status is None:
+        raise HTTPException(status_code=400, detail="至少提供一个需要更新的字段")
+    try:
+        return _candidate_store().update(candidate_id, name=req.name, status=req.status)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="候选方案不存在") from exc
+    except Exception as exc:
+        _raise_candidate_error(exc)
+
+
+@router.delete("/candidates/{candidate_id}")
+def candidate_delete(candidate_id: str):
+    try:
+        _candidate_store().delete(candidate_id)
+        return {"ok": True}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="候选方案不存在") from exc
+    except Exception as exc:
+        _raise_candidate_error(exc)
+
+
 # ================================================================
 # 策略回测
 # ================================================================
 
 class StrategyBacktestRequest(BaseModel):
     strategy_id: str
+    strategy_owner_user_id: str | None = None
     symbols: list[str] | None = None
     start: date | None = None
     end: date | None = None
@@ -196,15 +369,19 @@ class StrategyBacktestRequest(BaseModel):
     position_sizing: Literal["equal", "score_weight"] = "equal"
     mode: Literal["position", "full"] = "position"
     holding_days: int = 5
+    asset_type: Literal["stock", "etf"] = "stock"
 
 
 @router.post("/strategy/run")
 def strategy_run(req: StrategyBacktestRequest, request: Request):
     """策略回测 — 复用 StrategyDef 体系做全周期回测。"""
-    from app.backtest.strategy import StrategyBacktestService, StrategyBacktestConfig
+    from app.backtest.strategy import StrategyBacktestConfig, StrategyBacktestService
 
     engine = _get_engine(request)
-    strategy_engine = request.app.state.strategy_engine
+    strategy_engine, strategy_owner = _strategy_catalog(
+        request,
+        req.strategy_owner_user_id,
+    )
     svc = StrategyBacktestService(engine, strategy_engine)
 
     end = req.end or date.today()
@@ -229,23 +406,67 @@ def strategy_run(req: StrategyBacktestRequest, request: Request):
         position_sizing=req.position_sizing,
         mode=req.mode,
         holding_days=req.holding_days,
+        asset_type=req.asset_type,
     )
     result = svc.run(cfg)
+    _save_strategy_history(
+        request,
+        result,
+        strategy_owner_user_id=str(strategy_owner["id"]),
+    )
     return asdict(result)
+
+
+@router.get("/strategy/history")
+def strategy_history(request: Request, limit: int = 30):
+    from app.services.backtest_history import BacktestHistoryStore
+
+    actor = getattr(request.state, "user", None)
+    store = BacktestHistoryStore(request.app.state.repo.store.data_dir, actor)
+    return {"runs": store.list(limit=max(1, min(100, int(limit))))}
+
+
+@router.get("/strategy/history/{run_id}")
+def strategy_history_detail(run_id: str, request: Request):
+    from app.services.backtest_history import BacktestHistoryError, BacktestHistoryStore
+
+    actor = getattr(request.state, "user", None)
+    try:
+        return BacktestHistoryStore(request.app.state.repo.store.data_dir, actor).get(run_id)
+    except BacktestHistoryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.delete("/strategy/history/{run_id}")
+def strategy_history_delete(run_id: str, request: Request):
+    from app.services.backtest_history import BacktestHistoryError, BacktestHistoryStore
+
+    actor = getattr(request.state, "user", None)
+    try:
+        BacktestHistoryStore(request.app.state.repo.store.data_dir, actor).delete(run_id)
+    except BacktestHistoryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return {"ok": True}
 
 
 # ── SSE 流式回测 (实时进度 + 可取消 + 支持重连) ───────────────────
 
-import time
-import hashlib
-
-
 class _BacktestJob:
     """单个回测任务的状态, 存模块级供重连使用。"""
-    __slots__ = ("key", "cancel_event", "progress", "result", "error", "done", "finish_ts")
+    __slots__ = (
+        "cancel_event",
+        "done",
+        "error",
+        "finish_ts",
+        "key",
+        "owner_user_id",
+        "progress",
+        "result",
+    )
 
-    def __init__(self, key: str):
+    def __init__(self, key: str, owner_user_id: str):
         self.key = key
+        self.owner_user_id = owner_user_id
         self.cancel_event = threading.Event()
         self.progress: list[dict] = []   # 进度历史 (新连接可回放)
         self.result = None               # 完成后的结果
@@ -269,14 +490,18 @@ def _cleanup_stale_jobs():
 
 
 def _make_job_key(
+    user_id: str,
     strategy_id: str, symbols: str | None, start: str | None, end: str | None,
     matching: str, entry_fill: str | None, exit_fill: str | None,
     fees_pct: float, slippage_bps: float,
     max_positions: int, max_exposure_pct: float, initial_capital: float, position_sizing: str,
     params: str | None, overrides: str | None,
     mode: str = "position", holding_days: int = 5,
+    strategy_owner_user_id: str | None = None,
+    asset_type: str = "stock",
 ) -> str:
-    raw = f"{strategy_id}|{symbols}|{start}|{end}|{matching}|{entry_fill}|{exit_fill}|{fees_pct}|{slippage_bps}|{max_positions}|{max_exposure_pct}|{initial_capital}|{position_sizing}|{params}|{overrides}|{mode}|{holding_days}"
+    owner_id = strategy_owner_user_id or user_id
+    raw = f"{user_id}|{owner_id}|{strategy_id}|{symbols}|{start}|{end}|{matching}|{entry_fill}|{exit_fill}|{fees_pct}|{slippage_bps}|{max_positions}|{max_exposure_pct}|{initial_capital}|{position_sizing}|{params}|{overrides}|{mode}|{holding_days}|{asset_type}"
     return hashlib.md5(raw.encode()).hexdigest()[:12]
 
 
@@ -284,6 +509,7 @@ def _make_job_key(
 async def strategy_stream(
     request: Request,
     strategy_id: str,
+    strategy_owner_user_id: str | None = None,
     symbols: str | None = None,
     start: str | None = None,
     end: str | None = None,
@@ -300,6 +526,7 @@ async def strategy_stream(
     overrides: str | None = None,
     mode: str = "position",
     holding_days: int = 5,
+    asset_type: Literal["stock", "etf"] = "stock",
 ):
     """SSE 流式策略回测: 实时推送进度, 完成后推送结果, 支持重连 (刷新/切页后恢复)。
 
@@ -312,10 +539,13 @@ async def strategy_stream(
       - done: {result} (完整回测结果)
       - error: {message}
     """
-    from app.backtest.strategy import StrategyBacktestService, StrategyBacktestConfig
+    from app.backtest.strategy import StrategyBacktestConfig, StrategyBacktestService
 
     engine = _get_engine(request)
-    strategy_engine = request.app.state.strategy_engine
+    strategy_engine, strategy_owner = _strategy_catalog(
+        request,
+        strategy_owner_user_id,
+    )
     svc = StrategyBacktestService(engine, strategy_engine)
 
     end_date = date.fromisoformat(end) if end else date.today()
@@ -333,12 +563,18 @@ async def strategy_stream(
         if days > BACKTEST_MAX_SERVER_DAYS:
             guard_violated = True
 
+    user_id = str(getattr(request.state, "user", {}).get("id") or "")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="回测任务缺少用户身份")
     job_key = _make_job_key(
+        user_id,
         strategy_id, symbols, start, end,
         matching, entry_fill, exit_fill,
         fees_pct, slippage_bps, max_positions, max_exposure_pct, initial_capital, position_sizing,
         params, overrides,
         mode, holding_days,
+        strategy_owner_user_id=str(strategy_owner["id"]),
+        asset_type=asset_type,
     )
 
     _cleanup_stale_jobs()
@@ -347,10 +583,12 @@ async def strategy_stream(
     with _jobs_lock:
         job = _running_jobs.get(job_key)
         if job is None:
-            job = _BacktestJob(job_key)
+            job = _BacktestJob(job_key, user_id)
             _running_jobs[job_key] = job
             is_new = True
         else:
+            if job.owner_user_id != user_id:
+                raise HTTPException(status_code=403, detail="无权访问其他用户的回测任务")
             is_new = False
 
     async def event_generator():
@@ -379,11 +617,17 @@ async def strategy_stream(
                 position_sizing=position_sizing,
                 mode=mode,
                 holding_days=int(holding_days),
+                asset_type=asset_type,
             )
 
             def _run_backtest():
                 try:
                     result = svc.run(cfg, lambda d: job.progress.append(d), job.cancel_event)
+                    _save_strategy_history(
+                        request,
+                        result,
+                        strategy_owner_user_id=str(strategy_owner["id"]),
+                    )
                     job.result = result
                     job.done = True
                     job.finish_ts = time.time()
@@ -393,7 +637,8 @@ async def strategy_stream(
                     job.finish_ts = time.time()
 
             # 启动后台线程 (不阻塞事件循环)
-            threading.Thread(target=_run_backtest, daemon=True).start()
+            tenant_context = copy_context()
+            threading.Thread(target=tenant_context.run, args=(_run_backtest,), daemon=True).start()
 
         # 订阅进度: 用读指针读 job.progress 列表 (多连接互不干扰)
         cursor = 0
@@ -445,7 +690,11 @@ async def strategy_cancel(request: Request):
     p = parse_qs(qs)
     def _get(key: str, default: str = "") -> str:
         return p.get(key, [default])[0]
+    user_id = str(getattr(request.state, "user", {}).get("id") or "")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="回测任务缺少用户身份")
     job_key = _make_job_key(
+        user_id,
         _get("strategy_id"),
         _get("symbols") or None,
         _get("start") or None,
@@ -463,10 +712,48 @@ async def strategy_cancel(request: Request):
         _get("overrides") or None,
         _get("mode", "position"),
         int(_get("holding_days", "5")),
+        strategy_owner_user_id=_get("strategy_owner_user_id") or user_id,
+        asset_type=_get("asset_type", "stock") or "stock",
     )
     job = _running_jobs.get(job_key)
+    if job and job.owner_user_id != user_id:
+        raise HTTPException(status_code=403, detail="无权取消其他用户的回测任务")
     if job and not job.done:
         job.cancel_event.set()
         return {"ok": True}
     return {"ok": False, "message": "任务不存在或已完成"}
+
+
+class WalkForwardIn(BaseModel):
+    start: str
+    end: str
+    train_days: int = 120
+    test_days: int = 20
+    step_days: int = 20
+
+
+@router.post("/walkforward")
+def walkforward_preview(req: WalkForwardIn):
+    from datetime import date as date_cls
+    from app.backtest.walkforward import generate_folds
+    folds = generate_folds(
+        date_cls.fromisoformat(req.start),
+        date_cls.fromisoformat(req.end),
+        req.train_days,
+        req.test_days,
+        req.step_days,
+    )
+    return {
+        "ok": True,
+        "folds": [
+            {
+                "index": f.index,
+                "train_start": str(f.train_start),
+                "train_end": str(f.train_end),
+                "test_start": str(f.test_start),
+                "test_end": str(f.test_end),
+            }
+            for f in folds
+        ],
+    }
 

@@ -9,6 +9,7 @@ import { Settings2, Trash2, RefreshCw, Bell, Volume2, Info, Moon, Sun } from 'lu
 import { useTheme } from '@/lib/theme'
 import { usePreferences, useVersion } from '@/lib/useSharedQueries'
 import { api } from '@/lib/api'
+import { storage } from '@/lib/storage'
 import { QK } from '@/lib/queryKeys'
 import { PageHeader } from '@/components/PageHeader'
 import { refreshAlertToastConfig } from '@/components/AlertToast'
@@ -22,6 +23,9 @@ export function SettingsSystemPanel() {
   const [saving, setSaving] = useState(false)
 
   const screenerAutoRun = prefs?.screener_auto_run ?? true
+  const [extTpl, setExtTpl] = useState(() => storage.stockExternalTemplate.get(''))
+  void extTpl
+  void setExtTpl
   const [clearing, setClearing] = useState(false)
   const [toastEnabled, setToastEnabled] = useState(() => {
     try { return localStorage.getItem('alert_toast_enabled') !== '0' } catch { return true }

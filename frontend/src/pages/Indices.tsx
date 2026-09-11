@@ -12,6 +12,11 @@ import { QK } from '@/lib/queryKeys'
 import { useCapabilities } from '@/lib/useSharedQueries'
 import { EChartsCandlestick, type OHLC } from '@/components/EChartsCandlestick'
 import { EChartsIntraday } from '@/components/EChartsIntraday'
+import { SourceTraceButton } from '@/components/SourceTraceButton'
+import { PageContextModule } from '@/components/PageContextModule'
+import { clearPageContext, setPageContext } from '@/lib/pageContext'
+import { buildIndicesPageContext } from '@/lib/pageContextSnapshots'
+import { SOURCE_TRACE } from '@/lib/sourceTraceSubjects'
 
 function defaultRange() {
   const now = new Date()
@@ -191,7 +196,7 @@ export function Indices() {
   const selectedQuotePct = selectedQuote?.change_pct ?? selectedQuote?.pct
 
   const chartRows = useMemo(() => toOHLC(daily.data?.rows ?? []), [daily.data?.rows])
-  const selectedInfo = [...topRows, ...listRows].find(r => r.symbol === selectedSymbol) || daily.data?.index_info
+  const selectedInfo = topRows.find(r => r.symbol === selectedSymbol) || daily.data?.index_info
   const minuteRows: MinuteKlineRow[] = minute.data?.rows ?? []
   const selectedIdx = selectedDate ? chartRows.findIndex(r => r.date === selectedDate) : -1
   const prevClose = selectedIdx > 0
@@ -242,11 +247,29 @@ export function Indices() {
     )
   }
 
+  useEffect(() => {
+    setPageContext(buildIndicesPageContext({
+      selectedSymbol,
+      selectedName: selectedInfo?.name ?? null,
+      selectedPct: selectedQuotePct ?? null,
+      selectedPrice: selectedQuoteValue ?? null,
+      quoteCount: quotes.data?.count,
+      source: quotes.data?.source ?? null,
+      rangeStart: range.start,
+      rangeEnd: range.end,
+      dailyCount: chartRows.length,
+    }))
+    return () => clearPageContext('/indices')
+  }, [chartRows.length, quotes.data?.count, quotes.data?.source, range.end, range.start, selectedInfo?.name, selectedQuotePct, selectedQuoteValue, selectedSymbol])
+
   return (
     <div className="h-full overflow-auto bg-base p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-foreground">指数</h1>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-lg font-semibold text-foreground">指数</h1>
+            <SourceTraceButton subjects={SOURCE_TRACE.indices} />
+          </div>
           <p className="mt-1 text-xs text-muted">
             指数使用独立 kline_index_* parquet，不进入股票选股和策略链路。
           </p>
@@ -255,7 +278,7 @@ export function Indices() {
           <button
             onClick={() => syncInstruments.mutate()}
             disabled={syncInstruments.isPending}
-            className="inline-flex items-center gap-1.5 rounded-btn bg-elevated px-3 py-1.5 text-xs text-secondary hover:text-foreground disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-btn border border-border px-3 py-1.5 text-xs font-medium text-secondary hover:border-accent/40 hover:text-accent disabled:opacity-50"
           >
             {syncInstruments.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
             同步指数列表
@@ -272,7 +295,7 @@ export function Indices() {
       </div>
 
       <div className="grid grid-cols-[15rem_1fr] gap-4">
-        <aside className="rounded-card border border-border bg-surface p-3">
+        <PageContextModule id="list"><aside className="rounded-card border border-border bg-surface p-3">
           <div className="relative mb-3">
             <Search className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 text-muted" />
             <input
@@ -294,9 +317,8 @@ export function Indices() {
             )}
             {listRows.map(renderIndexItem)}
           </div>
-        </aside>
-
-        <main className="min-w-0 rounded-card border border-border bg-surface p-3">
+        </aside></PageContextModule>
+        <PageContextModule id="chart"><main className="min-w-0 rounded-card border border-border bg-surface p-3">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -392,7 +414,7 @@ export function Indices() {
               </div>
             </div>
           )}
-        </main>
+        </main></PageContextModule>
       </div>
     </div>
   )

@@ -4,22 +4,32 @@ from pathlib import Path
 
 import polars as pl
 
-from app.config import settings
+from app.services import preferences
 from app.services.financial_normalize import normalize_financial_record
 from app.services.free_sources.financials_public import (
     FINANCIAL_TABLES,
     build_shares_from_instruments,
     sync_shares_snapshot,
 )
-from app.services import preferences
 
 
 def test_financial_tables_include_shares():
     assert "shares" in FINANCIAL_TABLES
 
 
-def test_shares_snapshot_from_instruments():
-    d = Path(settings.data_dir)
+def test_shares_snapshot_from_instruments(tmp_path: Path):
+    d = tmp_path
+    instruments_dir = d / "instruments"
+    instruments_dir.mkdir(parents=True)
+    pl.DataFrame(
+        {
+            "symbol": ["600519.SH", "000001.SZ"],
+            "name": ["贵州茅台", "平安银行"],
+            "total_shares": [12_500_000_000.0, 19_400_000_000.0],
+            "float_shares": [12_500_000_000.0, 19_400_000_000.0],
+        }
+    ).write_parquet(instruments_dir / "instruments.parquet")
+
     df = build_shares_from_instruments(d, symbols=["600519.SH", "000001.SZ"])
     assert df.height >= 1
     assert {"symbol", "period_end", "total_shares", "float_shares"}.issubset(set(df.columns))

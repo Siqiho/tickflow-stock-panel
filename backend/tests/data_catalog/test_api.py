@@ -7,17 +7,28 @@ from app.api import data
 from app.data_catalog.api import router
 from app.data_catalog.control_db import CatalogControlDB
 from app.data_catalog.definitions import get_dataset_definition
-from app.data_catalog.models import DatasetState
+from app.data_catalog.models import DatasetState, SourceHealth
 from app.data_catalog.service import CatalogRescanInProgress, CatalogService
+from app.services import user_context
 
 
 def _service(tmp_path) -> CatalogService:
     return CatalogService(tmp_path, CatalogControlDB(tmp_path), manifests=())
 
 
-def _client(service: CatalogService) -> TestClient:
+def _client(service: CatalogService, *, role: str = "admin") -> TestClient:
     app = FastAPI()
     app.state.catalog_service = service
+    if role != "admin":
+        @app.middleware("http")
+        async def bind_regular_user(request, call_next):
+            token = user_context.bind(
+                {"id": "regular-test-user", "username": "alice", "role": role}
+            )
+            try:
+                return await call_next(request)
+            finally:
+                user_context.reset(token)
     app.include_router(router)
     return TestClient(app)
 
@@ -57,6 +68,115 @@ def test_catalog_endpoints_return_catalog_detail_schema_and_runs(tmp_path) -> No
     assert schema.json()["dataset_id"] == "stock_daily"
     assert schema.json()["fields"]
     assert runs.json() == {"dataset_id": "stock_daily", "runs": []}
+
+
+def test_regular_user_catalog_contains_only_shared_market_storage(tmp_path) -> None:
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs" / "runtime.log").write_text("server-only", encoding="utf-8")
+    (tmp_path / "user_data").mkdir()
+    (tmp_path / "user_data" / "preferences.json").write_text(
+        '{"private": true}', encoding="utf-8"
+    )
+    service = _service(tmp_path)
+    service.rescan()
+
+    admin = _client(service).get("/api/data/catalog").json()
+    regular = _client(service, role="user").get("/api/data/catalog").json()
+    detail = _client(service, role="user").get(
+        "/api/data/catalog/stock_daily"
+    ).json()
+
+    assert admin["storage"]["operational_bytes"] > 0
+    assert regular["storage"]["operational_bytes"] == 0
+    assert regular["storage"]["total_bytes"] == regular["storage"]["managed_data_bytes"]
+    assert all(item["kind"] == "managed" for item in regular["storage"]["categories"])
+    assert all(item["key"] != "user_data" for item in regular["storage"]["categories"])
+    assert "lineage" not in detail["state"]["payload"]
+    assert "scan_errors" not in detail["state"]["payload"]
+
+
+def test_control_summary_exposes_optional_control_facts_without_triggering_a_rescan(
+    tmp_path,
+) -> None:
+    service = _service(tmp_path)
+    _persist_daily_state(service)
+    service.control_db.upsert_source_health(
+        SourceHealth(
+            provider="data_sync",
+            operation="sync:trading_calendar",
+            last_success_at="2026-07-22T05:45:05Z",
+        )
+    )
+    with service.control_db.transaction() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE dataset_policies (
+                dataset_id TEXT PRIMARY KEY, phase TEXT NOT NULL,
+                max_lag_trading_days INTEGER, sync_mode TEXT, schedule_cron TEXT,
+                source_policy_json TEXT NOT NULL DEFAULT '{}',
+                retention_policy_json TEXT NOT NULL DEFAULT '{}',
+                supports_backfill INTEGER NOT NULL DEFAULT 0,
+                supports_repair INTEGER NOT NULL DEFAULT 0, updated_at TEXT
+            );
+            CREATE TABLE sync_checkpoints (
+                dataset_id TEXT NOT NULL, scope TEXT NOT NULL,
+                cursor_json TEXT NOT NULL DEFAULT '{}', watermark TEXT,
+                last_success_run_id TEXT, updated_at TEXT,
+                PRIMARY KEY (dataset_id, scope)
+            );
+            CREATE TABLE agent_query_audit (
+                audit_id TEXT PRIMARY KEY, created_at TEXT NOT NULL,
+                dataset_id TEXT NOT NULL, tool_name TEXT, row_count INTEGER NOT NULL DEFAULT 0,
+                duration_ms INTEGER, status TEXT NOT NULL, error_code TEXT
+            );
+            INSERT INTO dataset_policies VALUES (
+                'trading_calendar', 'production', 1, 'scheduled', '20 8 * * 1-5',
+                '{}', '{}', 1, 1, '2026-07-22T05:45:05Z'
+            );
+            INSERT INTO sync_checkpoints VALUES (
+                'trading_calendar', 'default', '{"date": "2026-08-31"}', '2026-08-31',
+                'run-42', '2026-07-22T05:45:05Z'
+            );
+            INSERT INTO agent_query_audit VALUES (
+                'audit-1', '2026-07-22T06:00:00Z', 'trading_calendar',
+                'get_trading_days', 12, 8, 'succeeded', NULL
+            );
+            """
+        )
+    unregistered = tmp_path / "reference" / "governance_events"
+    unregistered.mkdir(parents=True)
+    (unregistered / "part.parquet").write_bytes(b"physical-side-data")
+
+    response = _client(service).get("/api/data/control-summary")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source_health"][0]["operation"] == "sync:trading_calendar"
+    assert body["dataset_policies"][0]["phase"] == "production"
+    assert body["sync_checkpoints"][0] == {
+        "dataset_id": "trading_calendar",
+        "scope": "default",
+        "watermark": "2026-08-31",
+        "updated_at": "2026-07-22T05:45:05Z",
+        "cursor": {"date": "2026-08-31"},
+        "last_success_run_id": "run-42",
+    }
+    assert body["query_audits"][0]["tool_name"] == "get_trading_days"
+    assert body["unregistered_physical"][0]["relative_path"] == "reference/governance_events"
+    assert body["physical_scan_scope"] == "reference"
+
+
+def test_control_summary_does_not_initialize_a_missing_control_database(tmp_path) -> None:
+    service = object.__new__(CatalogService)
+    service.data_dir = tmp_path
+    service.control_db = CatalogControlDB(tmp_path)
+    service.definitions = ()
+
+    summary = service.control_summary()
+
+    assert summary.catalog_stale is True
+    assert summary.source_health == []
+    assert not service.control_db.path.exists()
 
 
 def test_catalog_unknown_dataset_ids_have_stable_404_detail(tmp_path) -> None:
@@ -173,3 +293,39 @@ def test_status_delegates_to_catalog_and_keeps_legacy_top_level_shape() -> None:
         "last_instruments_run",
         "checked_at",
     }
+
+
+def test_regular_user_status_total_excludes_operational_storage() -> None:
+    class Catalog:
+        def compatibility_status(self):
+            return {
+                "storage": {
+                    "daily_size_mb": 1.25,
+                    "enriched_size_mb": 2.5,
+                    "total_size_mb": 99.0,
+                }
+            }
+
+        def list_runs(self, dataset_id, limit=100):
+            return []
+
+    app = FastAPI()
+    app.state.catalog_service = Catalog()
+    app.state.scheduler = None
+
+    @app.middleware("http")
+    async def bind_regular_user(request, call_next):
+        token = user_context.bind(
+            {"id": "regular-test-user", "username": "alice", "role": "user"}
+        )
+        try:
+            return await call_next(request)
+        finally:
+            user_context.reset(token)
+
+    app.include_router(data.router)
+
+    response = TestClient(app).get("/api/data/status")
+
+    assert response.status_code == 200
+    assert response.json()["storage"]["total_size_mb"] == 3.75

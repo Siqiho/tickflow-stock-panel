@@ -1,7 +1,9 @@
 """SQLite-backed catalog composition and explicit local rescans."""
+# ruff: noqa: RUF001
 
 from __future__ import annotations
 
+import os
 import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -15,6 +17,7 @@ from .control_db import CatalogControlDB
 from .definitions import DATASET_DEFINITIONS, DatasetDefinition
 from .models import (
     CatalogResponse,
+    ControlSummaryResponse,
     DatasetAvailability,
     DatasetCatalogEntry,
     DatasetState,
@@ -24,26 +27,28 @@ from .models import (
     StorageBreakdown,
     StorageCategory,
     SyncRun,
+    UnregisteredPhysicalData,
 )
 from .scanner import CatalogScanner, DatasetScanResult
 
 _CATEGORY_TITLES = {
-    "stocks": "Stocks",
-    "etfs": "ETFs",
-    "indices": "Indices",
-    "quote_snapshot": "Quote snapshot",
-    "sealed_l1": "Sealed L1",
-    "depth5": "True depth5",
-    "pools": "Pools",
-    "financials": "Financials",
-    "ext_data": "External data",
-    "reference": "Reference data",
-    "lineage": "Lineage",
-    "job_store": "Job store",
-    "logs": "Logs",
-    "user_data": "User data",
-    "control": "SQLite control files",
-    "operational_other": "Other operational files",
+    "stocks": "股票",
+    "etfs": "ETF",
+    "indices": "指数",
+    "quote_snapshot": "行情快照",
+    "sealed_l1": "封板 L1",
+    "depth5": "五档盘口",
+    "pools": "股票池",
+    "financials": "财务",
+    "f10": "股票 F10",
+    "ext_data": "扩展数据",
+    "reference": "参考数据",
+    "lineage": "血缘",
+    "job_store": "任务库",
+    "logs": "日志",
+    "user_data": "用户数据",
+    "control": "控制库",
+    "operational_other": "其他运行文件",
 }
 _OPERATIONAL_KEYS = {
     "lineage",
@@ -66,7 +71,17 @@ _LEGACY_STORAGE_DATASETS = {
     "minute": ("stock_minute",),
     "adj_factor": ("stock_adj_factor",),
     "instruments": ("stock_instruments",),
-    "ext_data": ("ext_data",),
+    "ext_data": (
+        "ext_data",
+        "ext_fund_flow_bk",
+        "ext_fund_flow_bk_daily",
+        "ext_fund_flow_concept",
+        "ext_fund_flow_concept_daily",
+        "ext_fund_flow_stock",
+        "ext_gn_ths",
+        "ext_hy_ths",
+    ),
+    "f10": ("stock_margin_trading",),
     "financials": (
         "financial_metrics",
         "financial_income",
@@ -199,6 +214,7 @@ class CatalogService:
         retained_runs: list[SyncRun] = []
         for scanned_dataset_id, result in scan_results.items():
             run_status = _run_status(result)
+            error_code, error_message = _scan_run_diagnostics(result, run_status)
             run = SyncRun(
                 run_id=run_ids[scanned_dataset_id],
                 dataset_id=scanned_dataset_id,
@@ -210,12 +226,8 @@ class CatalogService:
                 rows_fetched=0,
                 rows_published=result.state.row_count,
                 quality_status=result.state.quality_status,
-                error_code=("catalog_quality_failed" if run_status == "failed" else None),
-                error_message=(
-                    "; ".join(result.state.payload.get("scan_errors", []))[:500]
-                    if run_status == "failed"
-                    else None
-                ),
+                error_code=error_code,
+                error_message=error_message,
             )
             all_runs.append(run)
             previous = self.control_db.get_dataset_state(scanned_dataset_id)
@@ -231,15 +243,6 @@ class CatalogService:
                 retained_runs.append(run)
                 continue
             persisted.append((result.state, run, result.artifacts))
-        if dataset_id is None and retained_runs:
-            # A full scan is one admitted snapshot. If any previously serving
-            # dataset cannot be replaced, record every run but preserve all
-            # state/artifact/storage/refreshed metadata at the prior version.
-            for run in all_runs:
-                self.control_db.upsert_sync_run(run)
-            self.control_db.set_meta("catalog_stale", {"value": True})
-            return self.list_catalog().model_copy(update={"stale": True})
-
         for run in retained_runs:
             self.control_db.upsert_sync_run(run)
         retained_failure = bool(retained_runs)
@@ -248,7 +251,7 @@ class CatalogService:
         )
         meta_updates["catalog_stale"] = {"value": any_failed}
         if retained_failure and not persisted:
-            # Preserve the previous successful state/artifact/storage snapshot.
+            # Nothing new to admit; keep the prior snapshot and mark it stale.
             self.control_db.set_meta("catalog_stale", {"value": True})
         else:
             self.control_db.commit_scan_results(persisted, meta_updates)
@@ -269,6 +272,16 @@ class CatalogService:
             StorageBreakdown.model_validate(storage_meta)
             if storage_meta is not None
             else StorageBreakdown()
+        )
+        storage = storage.model_copy(
+            update={
+                "categories": [
+                    category.model_copy(
+                        update={"title": _CATEGORY_TITLES.get(category.key, category.title)}
+                    )
+                    for category in storage.categories
+                ]
+            }
         )
         stale_meta = self.control_db.get_meta("catalog_stale")
         return CatalogResponse(
@@ -294,6 +307,84 @@ class CatalogService:
 
     def list_runs(self, dataset_id: str | None = None, limit: int = 100) -> list[SyncRun]:
         return self.control_db.list_sync_runs(dataset_id, limit)
+
+    def control_summary(self) -> ControlSummaryResponse:
+        refreshed_meta = self.control_db.read_meta("catalog_refreshed_at")
+        stale_meta = self.control_db.read_meta("catalog_stale")
+        has_states = self.control_db.has_dataset_states_readonly()
+        return ControlSummaryResponse(
+            generated_at=_utc_now(),
+            catalog_refreshed_at=refreshed_meta.get("value") if refreshed_meta else None,
+            catalog_stale=not has_states or bool((stale_meta or {}).get("value")),
+            source_health=self.control_db.read_source_health(),
+            dataset_policies=self.control_db.list_dataset_policies(),
+            sync_checkpoints=self.control_db.list_sync_checkpoints(),
+            query_audits=self.control_db.list_query_audits(),
+            unregistered_physical=self._unregistered_reference_data(),
+        )
+
+    def _unregistered_reference_data(self) -> list[UnregisteredPhysicalData]:
+        reference_root = self.data_dir / "reference"
+        if not reference_root.is_dir() or reference_root.is_symlink():
+            return []
+        registered = {
+            parts[1]
+            for definition in self.definitions
+            for root in definition.roots
+            if len(parts := Path(root).parts) >= 2 and parts[0] == "reference"
+        }
+        alerts: list[UnregisteredPhysicalData] = []
+        try:
+            directories = sorted(reference_root.iterdir(), key=lambda path: path.name)
+        except OSError:
+            return []
+        for directory in directories:
+            if (
+                directory.name.startswith(".")
+                or directory.name in registered
+                or directory.is_symlink()
+                or not directory.is_dir()
+            ):
+                continue
+            file_count = 0
+            total_bytes = 0
+            latest_mtime: float | None = None
+            for root, directories, files in os.walk(directory, followlinks=False):
+                directories[:] = [
+                    name
+                    for name in directories
+                    if not (Path(root) / name).is_symlink() and not name.startswith(".")
+                ]
+                for name in files:
+                    path = Path(root) / name
+                    if path.is_symlink() or name.startswith("."):
+                        continue
+                    try:
+                        stat_result = path.stat()
+                    except OSError:
+                        continue
+                    if not path.is_file():
+                        continue
+                    file_count += 1
+                    total_bytes += stat_result.st_size
+                    latest_mtime = max(latest_mtime or stat_result.st_mtime, stat_result.st_mtime)
+            if file_count == 0:
+                continue
+            alerts.append(
+                UnregisteredPhysicalData(
+                    key=directory.name,
+                    title=directory.name.replace("_", " "),
+                    relative_path=f"reference/{directory.name}",
+                    files=file_count,
+                    bytes=total_bytes,
+                    updated_at=(
+                        datetime.fromtimestamp(latest_mtime, UTC).isoformat().replace("+00:00", "Z")
+                        if latest_mtime is not None
+                        else None
+                    ),
+                )
+            )
+        return alerts
 
     def compatibility_status(self) -> dict[str, Any]:
         states = {state.dataset_id: state for state in self.control_db.list_dataset_states()}
@@ -409,6 +500,8 @@ class CatalogService:
 
     def _cached_expected_by_market(self, dataset_id: str) -> dict[str, int] | None:
         definition = self._by_id[dataset_id]
+        if definition.coverage_policy == "on_demand":
+            return None
         asset_types = definition.descriptor.asset_types
         if len(asset_types) != 1:
             return None
@@ -537,6 +630,60 @@ class CatalogService:
         storage = self.control_db.get_meta("storage_breakdown") or {}
         values["total_size_mb"] = round(int(storage.get("total_bytes", 0)) / 1_048_576, 2)
         return values
+
+
+def lineage_quality_details(lineage: Sequence[Any]) -> str | None:
+    """Explain a degraded catalog snapshot from current lineage records."""
+    counts: dict[str, int] = {}
+    sources: dict[str, int] = {}
+    for item in lineage:
+        if isinstance(item, Mapping):
+            status = str(item.get("quality_status") or "unknown")
+            source = str(item.get("source") or "").strip()
+        else:
+            status = str(getattr(item, "quality_status", None) or "unknown")
+            source = str(getattr(item, "source", None) or "").strip()
+        counts[status] = counts.get(status, 0) + 1
+        if status in {"degraded", "failed", "unknown"} and source:
+            sources[source] = sources.get(source, 0) + 1
+    if not counts:
+        return None
+    parts: list[str] = []
+    if "legacy_local_artifact" in sources:
+        parts.append("这些是补录的 legacy lineage，目录扫描因此降级，不代表当日正式日 K 丢失")
+    parts.append(
+        "当前分区 lineage 质量: "
+        + "、".join(f"{status} {count} 条" for status, count in sorted(counts.items()))
+    )
+    if sources:
+        parts.append(
+            "降级/未知来源: "
+            + "、".join(f"{source} {count} 条" for source, count in sorted(sources.items()))
+        )
+    return "；".join(parts)
+
+
+def _scan_run_diagnostics(
+    result: DatasetScanResult, run_status: str
+) -> tuple[str | None, str | None]:
+    if run_status == "succeeded":
+        return None, None
+    scan_errors = [
+        str(item).strip()
+        for item in result.state.payload.get("scan_errors", [])
+        if str(item).strip()
+    ]
+    if scan_errors:
+        code = (
+            "catalog_quality_failed" if run_status == "failed" else "catalog_quality_degraded"
+        )
+        return code, "; ".join(scan_errors)[:500]
+    if run_status == "degraded":
+        details = lineage_quality_details(result.lineage) or (
+            "目录扫描因 lineage 质量降级，但未记录分区级 scan_errors"
+        )
+        return "catalog_quality_degraded", details[:500]
+    return "catalog_quality_failed", None
 
 
 def _run_status(result: DatasetScanResult) -> str:

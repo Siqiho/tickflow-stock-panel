@@ -29,6 +29,7 @@ const FLUSH_SIZE = 12
 const ENDPOINT = '/api/runtime-logs/client'
 
 let installed = false
+let remoteUploadEnabled = false
 let queue: RuntimeLogEvent[] = []
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 let lastPath = ''
@@ -185,6 +186,10 @@ export async function flushRuntimeLogs() {
     clearTimeout(flushTimer)
     flushTimer = null
   }
+  if (!remoteUploadEnabled) {
+    queue = []
+    return
+  }
   if (!queue.length) return
   const batch = queue.splice(0, queue.length)
   try {
@@ -202,6 +207,17 @@ export async function flushRuntimeLogs() {
     }
   } catch {
     queue = batch.concat(queue).slice(0, MAX_QUEUE)
+  }
+}
+
+export function setRuntimeLogUploadEnabled(enabled: boolean) {
+  remoteUploadEnabled = enabled
+  if (!enabled) {
+    queue = []
+    if (flushTimer) {
+      clearTimeout(flushTimer)
+      flushTimer = null
+    }
   }
 }
 

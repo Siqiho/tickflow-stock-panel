@@ -102,6 +102,58 @@ class SourceHealth(BaseModel):
     last_error_code: str | None = None
 
 
+class DatasetControlPolicy(BaseModel):
+    dataset_id: str
+    phase: str
+    max_lag_trading_days: int | None = Field(default=None, ge=0)
+    sync_mode: str | None = None
+    schedule_cron: str | None = None
+    supports_backfill: bool = False
+    supports_repair: bool = False
+    updated_at: str | None = None
+
+
+class SyncCheckpoint(BaseModel):
+    dataset_id: str
+    scope: str
+    watermark: str | None = None
+    updated_at: str | None = None
+    cursor: dict[str, Any] = Field(default_factory=dict)
+    last_success_run_id: str | None = None
+
+
+class QueryAuditRecord(BaseModel):
+    audit_id: str
+    created_at: str
+    dataset_id: str
+    tool_name: str | None = None
+    row_count: int = Field(default=0, ge=0)
+    duration_ms: int | None = Field(default=None, ge=0)
+    status: str
+    error_code: str | None = None
+
+
+class UnregisteredPhysicalData(BaseModel):
+    key: str
+    title: str
+    relative_path: str
+    files: int = Field(default=0, ge=0)
+    bytes: int = Field(default=0, ge=0)
+    updated_at: str | None = None
+
+
+class ControlSummaryResponse(BaseModel):
+    generated_at: str
+    catalog_refreshed_at: str | None = None
+    catalog_stale: bool = False
+    source_health: list[SourceHealth] = Field(default_factory=list)
+    dataset_policies: list[DatasetControlPolicy] = Field(default_factory=list)
+    sync_checkpoints: list[SyncCheckpoint] = Field(default_factory=list)
+    query_audits: list[QueryAuditRecord] = Field(default_factory=list)
+    unregistered_physical: list[UnregisteredPhysicalData] = Field(default_factory=list)
+    physical_scan_scope: Literal["reference"] = "reference"
+
+
 class LineageSummary(BaseModel):
     run_id: str | None = None
     source: str

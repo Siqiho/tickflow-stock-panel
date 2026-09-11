@@ -1,7 +1,7 @@
 # 构建 Docker 镜像时排除的文件 / 目录。
 # 与 .gitignore 思路一致: 只把 Dockerfile 真正需要的送进构建上下文,
 # 减小上下文体积、加速上传、避免缓存误伤。
-# 注意: .dockerignore 不识别 .gitignore 的取反(!)语法, 这里按白名单思路直接列举排除项。
+# Docker 的 ! 例外规则可用；这里仍以显式排除为主，保持构建上下文可审计。
 
 # ===== 版本控制 / CI =====
 .git
@@ -9,14 +9,30 @@
 .gitignore
 
 # ===== 用户运行时数据(绝不应进镜像) =====
-data
-backend/data
+/data
+/backend/data
+/.data.staging-*
+/data.k4-residual-*
+/output
+/.worktrees
+/.superpowers
+!frontend/src/components/data
+!frontend/src/components/data/**
 
 # ===== 前端构建产物 / 依赖(镜像内会重新 build, 带进来反而污染) =====
 frontend/node_modules
 frontend/dist
+frontend/android
+frontend/assets
 backend/static
 backend/app/static
+
+# ===== Android 私人发布工具链 / 签名 / 安装包 =====
+/.android-sdk
+/.android-toolchain
+/.private
+/releases
+/deploy/android-download
 
 # ===== Python 缓存 / 虚拟环境 =====
 **/__pycache__
@@ -46,6 +62,15 @@ backend/build
 dev.sh
 dev.ps1
 scripts
+!backend/scripts/
+!backend/scripts/hermes_one_trading_runtime.py
+!backend/scripts/hermes_user_console_mcp.py
+!backend/scripts/start_one_trading_server.py
+# 数据台显式维护工具随镜像分发(容器终端手动运行)
+!scripts/rebuild-reference-derived.py
+!scripts/sync-share-capital.py
+!scripts/sync-corporate-actions.py
+!scripts/reconcile-legacy-market-lineage.py
 
 # ===== 密钥(防止误打进公开镜像) =====
 .env
@@ -54,4 +79,5 @@ backend/.env
 
 # ===== 其他构建产物 =====
 **/node_modules
+**/*.tsbuildinfo
 *.log

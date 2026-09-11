@@ -70,7 +70,8 @@ def _data_dir(request: Request) -> Path:
 
 
 def _base_dir(request: Request) -> Path:
-    return _data_dir(request) / "analysis_menus"
+    from app.services.user_context import user_data_dir
+    return user_data_dir(_data_dir(request)) / "analysis_menus"
 
 
 def _path(request: Request, menu_id: str) -> Path:

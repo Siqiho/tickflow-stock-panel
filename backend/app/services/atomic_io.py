@@ -4,12 +4,66 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import polars as pl
+
+
+def parquet_file_stamp(path: Path) -> tuple[int, int] | None:
+    """Return (mtime_ns, size) for optimistic publish, or None if missing."""
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+def optimistic_upsert_parquet(
+    incoming: pl.DataFrame,
+    target: Path,
+    *,
+    keys: list[str],
+    sort_by: list[str] | str,
+    lock: threading.Lock,
+    max_retries: int = 64,
+    prepare_existing: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
+) -> int:
+    """Concat/unique outside ``lock``; publish with ``atomic_write_parquet`` if stamp is unchanged.
+
+    Callers must not already hold ``lock`` (it is not re-entrant). A failed
+    ``atomic_write_parquet`` leaves the original target in place.
+    """
+    target = Path(target)
+    if incoming is None or incoming.is_empty():
+        return 0
+    target.parent.mkdir(parents=True, exist_ok=True)
+    sort_cols = [sort_by] if isinstance(sort_by, str) else list(sort_by)
+    for _ in range(max_retries):
+        stamp = parquet_file_stamp(target)
+        if target.exists():
+            existing = pl.read_parquet(target)
+            if prepare_existing is not None:
+                existing = prepare_existing(existing)
+            if existing is None or existing.is_empty():
+                merged = incoming
+            else:
+                merged = pl.concat([existing, incoming], how="diagonal_relaxed").unique(
+                    subset=keys, keep="last",
+                )
+        else:
+            merged = incoming
+        merged = merged.sort(sort_cols)
+        with lock:
+            if parquet_file_stamp(target) != stamp:
+                continue
+            atomic_write_parquet(merged, target)
+            return merged.height
+    raise RuntimeError(f"optimistic parquet upsert exhausted retries: {target}")
 
 
 def atomic_write_parquet(df: pl.DataFrame, target: Path) -> None:

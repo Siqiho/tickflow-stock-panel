@@ -1,21 +1,31 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, BellRing, Database, Flame, Gauge, Info, LineChart, Loader2, Play, RefreshCw, Sparkles, Target, Timer } from 'lucide-react'
+import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, BellRing, CloudDownload, Database, Flame, Gauge, Info, LineChart, Loader2, Play, RefreshCw, Sparkles, Target, Timer } from 'lucide-react'
 import { DatePicker } from '@/components/DatePicker'
 import { api, type MarketSnapshotRow, type OverviewDimensionRankItem, type OverviewMarket, type AlertEvent } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { fmtBigNum, fmtPct } from '@/lib/format'
 import { useDataStatus, useCapabilities, useSettings } from '@/lib/useSharedQueries'
 import { SealedBadge } from '@/components/SealedBadge'
-import { StockPreviewDialog } from '@/components/StockPreviewDialog'
+import { StockPreviewDialog, toNavItems, type NavItem } from '@/components/StockPreviewDialog'
 import { SettingsModal } from '@/components/data/SettingsModal'
+import { useAdjFactorSyncGate } from '@/components/AdjFactorSyncGate'
 import { STAGE_LABELS } from '@/components/data/ActiveJobCard'
 import { cn } from '@/lib/cn'
 import { cnSignal } from '@/lib/signals'
 import { boardTag } from '@/components/stock-table/primitives'
 import { SectorFundFlowPanel } from '@/components/SectorFundFlowPanel'
+import { MarketPulsePanel } from '@/components/MarketPulsePanel'
+import { SourceTraceButton } from '@/components/SourceTraceButton'
+import { SOURCE_TRACE } from '@/lib/sourceTraceSubjects'
+import { clearPageContext, setPageContext } from '@/lib/pageContext'
+import { buildDashboardPageContext } from '@/lib/pageContextSnapshots'
+import { PageContextModule } from '@/components/PageContextModule'
+import { dashboardFeedStatus, formatDashboardFeedClock, invalidateDashboardModules, liveOverviewRefetchMs, shanghaiCalendarDate } from '@/lib/dashboardFeed'
+
+const SESSION_WATCH_MS = 15_000
 
 function n(v: number | null | undefined) {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
@@ -53,14 +63,6 @@ function pctClass(v: number | null | undefined) {
   return x > 0 ? 'text-bull' : 'text-bear'
 }
 
-function quoteAge(ms?: number | null) {
-  if (ms == null) return '—'
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  const s = Math.round(ms / 1000)
-  if (s < 60) return `${s}s`
-  return `${Math.floor(s / 60)}m${s % 60}s`
-}
-
 function compactCount(v: number | null | undefined) {
   const x = n(v)
   if (x == null) return '—'
@@ -68,14 +70,171 @@ function compactCount(v: number | null | undefined) {
   return x.toFixed(0)
 }
 
-function SectionTitle({ icon: Icon, title, hint }: { icon: typeof Activity; title: string; hint?: ReactNode }) {
+type DashboardCardKey =
+  | 'breadth'
+  | 'radar'
+  | 'trend'
+  | 'monitor'
+  | 'concept'
+  | 'industry'
+  | 'gainers'
+  | 'losers'
+  | 'turnover'
+  | 'active'
+  | 'limit'
+
+type DashboardCardPatch = Partial<{
+  breadth: OverviewMarket['breadth']
+  radar: OverviewMarket['radar']
+  emotion: OverviewMarket['emotion']
+  trend: OverviewMarket['trend']
+  activity: OverviewMarket['activity']
+  limit: OverviewMarket['limit']
+  concept_rank: OverviewMarket['concept_rank']
+  industry_rank: OverviewMarket['industry_rank']
+  top_gainers: OverviewMarket['top_gainers']
+  top_losers: OverviewMarket['top_losers']
+  turnover_leaders: OverviewMarket['turnover_leaders']
+  active_leaders: OverviewMarket['active_leaders']
+  distribution: OverviewMarket['distribution']
+}>
+
+const CARD_UPDATE_SUCCESS_MS = 3000
+
+type CardUpdateStatus = {
+  state: 'idle' | 'updating' | 'success' | 'error'
+  at?: string
+  error?: string
+}
+
+const CARD_UPDATE_STATUS_KEY = 'one-trading.dashboard-card-update-status'
+
+function readStoredCardUpdateStatus(asOf?: string): Partial<Record<DashboardCardKey, CardUpdateStatus>> {
+  try {
+    const raw = sessionStorage.getItem(`${CARD_UPDATE_STATUS_KEY}:${asOf || 'latest'}`)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Partial<Record<DashboardCardKey, CardUpdateStatus>>
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeStoredCardUpdateStatus(asOf: string | undefined, value: Partial<Record<DashboardCardKey, CardUpdateStatus>>) {
+  try {
+    sessionStorage.setItem(`${CARD_UPDATE_STATUS_KEY}:${asOf || 'latest'}`, JSON.stringify(value))
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function formatCardUpdatedAt(iso?: string) {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+function CardUpdateStatusLine({ status }: { status?: CardUpdateStatus }) {
+  if (!status || status.state === 'idle') return null
+  if (status.state === 'updating') {
+    return <div className="mb-2 text-[10px] text-muted">正在更新…</div>
+  }
+  if (status.state === 'error') {
+    return <div className="mb-2 text-[10px] text-bear">{status.error || '更新失败'}</div>
+  }
   return (
-    <div className="mb-2 flex items-center justify-between gap-2">
-      <div className="flex items-center gap-1.5">
-        <Icon className="h-3.5 w-3.5 text-accent" />
-        <h2 className="text-xs font-semibold text-foreground">{title}</h2>
+    <div className="mb-2 rounded-lg border border-bull/20 bg-bull/5 px-2 py-1 font-mono text-[10px] text-secondary">
+      已更新 · {formatCardUpdatedAt(status.at)}
+    </div>
+  )
+}
+
+function cardPatchFromOverview(next: OverviewMarket, key: DashboardCardKey): DashboardCardPatch {
+  switch (key) {
+    case 'breadth':
+      return { breadth: next.breadth, distribution: next.distribution }
+    case 'radar':
+      return { radar: next.radar, emotion: next.emotion }
+    case 'trend':
+      return { trend: next.trend }
+    case 'monitor':
+      return { limit: next.limit, activity: next.activity }
+    case 'concept':
+      return { concept_rank: next.concept_rank }
+    case 'industry':
+      return { industry_rank: next.industry_rank }
+    case 'gainers':
+      return { top_gainers: next.top_gainers }
+    case 'losers':
+      return { top_losers: next.top_losers }
+    case 'turnover':
+      return { turnover_leaders: next.turnover_leaders }
+    case 'active':
+      return { active_leaders: next.active_leaders }
+    case 'limit':
+      return { limit: next.limit }
+  }
+}
+
+function CardUpdateButton({
+  onUpdate,
+  updating,
+  label = '更新',
+}: {
+  onUpdate?: () => void
+  updating?: boolean
+  label?: string
+}) {
+  if (!onUpdate) return null
+  return (
+    <button
+      type="button"
+      onClick={onUpdate}
+      disabled={updating}
+      aria-label={label}
+      title={label}
+      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-btn text-muted transition-colors hover:bg-elevated hover:text-foreground disabled:opacity-50"
+    >
+      {updating
+        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        : <CloudDownload className="h-3.5 w-3.5" />}
+    </button>
+  )
+}
+
+function SectionTitle({
+  icon: Icon,
+  title,
+  hint,
+  subjects,
+  onUpdate,
+  updating,
+  updateStatus,
+}: {
+  icon: typeof Activity
+  title: string
+  hint?: ReactNode
+  subjects?: readonly { id: string; label: string }[]
+  onUpdate?: () => void
+  updating?: boolean
+  updateStatus?: CardUpdateStatus
+}) {
+  return (
+    <div className="mb-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <Icon className="h-3.5 w-3.5 text-accent" />
+          <h2 className="text-xs font-semibold text-foreground">{title}</h2>
+        </div>
+        <div className="flex items-center gap-1">
+          <CardUpdateButton onUpdate={onUpdate} updating={updating} />
+          {subjects ? <SourceTraceButton subjects={subjects} /> : null}
+          {hint && <span className="font-mono text-[10px] text-muted">{hint}</span>}
+        </div>
       </div>
-      {hint && <span className="font-mono text-[10px] text-muted">{hint}</span>}
+      <CardUpdateStatusLine status={updateStatus} />
     </div>
   )
 }
@@ -103,6 +262,10 @@ function MonitorWidget() {
     refetchIntervalInBackground: true,
   })
   const events: AlertEvent[] = alerts.data?.alerts ?? []
+  // 切股导航列表: 有 symbol 的触发记录
+  const alertNav = toNavItems(events.filter((ev): ev is AlertEvent & { symbol: string } => !!ev.symbol))
+  const activeSymbol = previewEv?.symbol ?? null
+  void alertNav
 
   if (events.length === 0) {
     return (
@@ -128,7 +291,7 @@ function MonitorWidget() {
               initial={{ opacity: 0, y: -8, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               transition={{ duration: 0.3, delay: Math.min(i * 0.03, 0.3) }}
-              className="relative overflow-hidden rounded-md border border-border/40 bg-surface/60 pl-2.5 pr-2 py-1.5 hover:border-border hover:bg-surface transition-colors"
+              className={`relative overflow-hidden rounded-md border pl-2.5 pr-2 py-1.5 transition-colors ${ev.symbol && ev.symbol === activeSymbol ? 'border-accent/40 bg-accent/5' : 'border-border/40 bg-surface/60 hover:border-border hover:bg-surface'}`}
             >
               <div className={cn('absolute left-0 top-0 h-full w-0.5', sev)} />
               {/* 第一行: 代码 + 名称 + 价格 + 涨跌幅 (点击代码/名称弹日K) */}
@@ -219,9 +382,9 @@ function KpiCell({ label, value, sub, tone = 'neutral' }: { label: ReactNode; va
   const isPlain = typeof value === 'string' || typeof value === 'number'
   const color = tone === 'bull' ? 'text-bull' : tone === 'bear' ? 'text-bear' : tone === 'accent' ? 'text-accent' : 'text-foreground'
   return (
-    <div className="min-w-0 rounded-lg border border-border bg-surface/80 px-3 py-2">
-      <div className="flex items-center gap-1 text-[11px] text-muted">{label}</div>
-      <div className={`mt-1 truncate font-mono text-lg font-semibold leading-none tabular-nums ${isPlain ? color : 'text-foreground'}`}>{value}</div>
+    <div className="min-w-0 overflow-visible rounded-lg border border-border bg-surface/80 px-3 py-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 text-[11px] leading-4 text-muted">{label}</div>
+      <div className={`mt-1 flex min-w-0 flex-wrap items-baseline font-mono text-lg font-semibold leading-tight tabular-nums sm:leading-none ${isPlain ? color : 'text-foreground'}`}>{value}</div>
       {sub && <div className="mt-1 truncate text-[10px] text-muted">{sub}</div>}
     </div>
   )
@@ -295,12 +458,14 @@ function EmotionRadar({ radar, score }: { radar: OverviewMarket['radar']; score:
   const cy = size / 2
   const maxR = 78
   const color = scoreColor(score)
-  if (!radar.length) return <div className="flex h-52 items-center justify-center text-xs text-muted">暂无雷达数据</div>
+  if (!radar.length) return <div className="flex h-full min-h-52 items-center justify-center text-xs text-muted">暂无雷达数据</div>
   const points = radar.map((r, i) => {
     const angle = -Math.PI / 2 + i * 2 * Math.PI / radar.length
-    const radius = maxR * Math.max(0, Math.min(100, r.value)) / 100
+    const ready = r.ready !== false && r.value != null
+    const radius = ready ? maxR * Math.max(0, Math.min(100, r.value ?? 0)) / 100 : 0
     return {
       ...r,
+      ready,
       x: cx + Math.cos(angle) * radius,
       y: cy + Math.sin(angle) * radius,
       lx: cx + Math.cos(angle) * (maxR + 27),
@@ -319,8 +484,8 @@ function EmotionRadar({ radar, score }: { radar: OverviewMarket['radar']; score:
     }).join(' '),
   }))
   return (
-    <div className="flex justify-center">
-      <svg viewBox={`0 0 ${size} ${size}`} className="h-56 w-full">
+    <div className="flex h-full min-h-52 w-full items-center justify-center">
+      <svg viewBox={`0 0 ${size} ${size}`} className="h-full max-h-64 w-full">
         <defs>
           <radialGradient id="emotionRadarFill" cx="50%" cy="45%" r="70%">
             <stop offset="0%" stopColor={`${color}57`} />
@@ -343,11 +508,11 @@ function EmotionRadar({ radar, score }: { radar: OverviewMarket['radar']; score:
         ))}
         {points.map(p => <line key={p.key} x1={cx} y1={cy} x2={p.gx} y2={p.gy} stroke="rgba(148,163,184,0.08)" />)}
         <polygon points={polygon} fill="url(#emotionRadarFill)" stroke={color} strokeWidth="2" />
-        {points.map(p => <circle key={p.key} cx={p.x} cy={p.y} r="2.8" fill={color} stroke="rgba(15,23,42,0.9)" strokeWidth="1" />)}
+        {points.map(p => <circle key={p.key} cx={p.x} cy={p.y} r="2.8" fill={p.ready ? color : 'rgba(148,163,184,0.45)'} stroke="rgba(15,23,42,0.9)" strokeWidth="1" />)}
         <circle cx={cx} cy={cy} r="29" fill="url(#emotionRadarCenter)" />
         <text x={cx} y={cy + 7} textAnchor="middle" className="fill-foreground font-mono text-[24px] font-bold">{score}</text>
         {points.map(p => (
-          <text key={`${p.key}-label`} x={p.lx} y={p.ly + 4} textAnchor="middle" className="fill-secondary text-[10px] font-medium">{p.label}</text>
+          <text key={`${p.key}-label`} x={p.lx} y={p.ly + 4} textAnchor="middle" className={`${p.ready ? 'fill-secondary' : 'fill-muted'} text-[10px] font-medium`}>{p.ready ? p.label : `${p.label} · —`}</text>
         ))}
       </svg>
     </div>
@@ -356,11 +521,14 @@ function EmotionRadar({ radar, score }: { radar: OverviewMarket['radar']; score:
 
 function LadderMini({ limit }: { limit: OverviewMarket['limit'] }) {
   const tiers = limit.tiers.filter(t => t.boards >= 2).slice(0, 6)
+  if (limit.ready === false) {
+    return <div className="rounded border border-dashed border-border py-8 text-center text-xs text-muted">盘后计算</div>
+  }
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between rounded bg-elevated/55 px-2 py-1.5 text-[11px]">
         <span className="text-muted">封板率</span>
-        <span className="font-mono text-accent">{(limit.seal_rate ?? 0).toFixed(0)}%</span>
+        <span className="font-mono text-accent">{limit.seal_rate == null ? '—' : `${limit.seal_rate.toFixed(0)}%`}</span>
       </div>
       {tiers.length === 0 && <div className="rounded border border-dashed border-border py-5 text-center text-xs text-muted">暂无 2 板以上</div>}
       {tiers.map(t => (
@@ -385,16 +553,43 @@ function MiniMetric({ label, value, cls = 'text-foreground' }: { label: string; 
   )
 }
 
-function StockList({ title, rows, mode }: { title: string; rows: MarketSnapshotRow[]; mode: 'gain' | 'loss' | 'amount' | 'active' }) {
+function StockList({
+  title,
+  rows,
+  mode,
+  onUpdate,
+  updating,
+  updateStatus,
+  activeSymbol,
+  onStockClick,
+}: {
+  title: string
+  rows: MarketSnapshotRow[]
+  mode: 'gain' | 'loss' | 'amount' | 'active'
+  onUpdate?: () => void
+  updating?: boolean
+  updateStatus?: CardUpdateStatus
+  activeSymbol?: string | null
+  onStockClick?: (symbol: string, name?: string) => void
+}) {
   return (
     <div className="rounded-card border border-border bg-surface/80 p-2.5">
       <div className="mb-1.5 flex items-center justify-between">
         <h3 className="text-xs font-semibold text-foreground">{title}</h3>
-        <span className="text-[9px] text-muted">TOP {Math.min(rows.length, 8)}</span>
+        <div className="flex items-center gap-1">
+          <CardUpdateButton onUpdate={onUpdate} updating={updating} />
+          <SourceTraceButton subjects={SOURCE_TRACE.marketOverview} />
+          <span className="text-[9px] text-muted">TOP {Math.min(rows.length, 8)}</span>
+        </div>
       </div>
+      <CardUpdateStatusLine status={updateStatus} />
       <div className="space-y-1">
         {rows.slice(0, 8).map((r, idx) => (
-          <div key={`${r.symbol}-${idx}`} className="grid grid-cols-[18px_1fr_auto] items-center gap-1.5 rounded bg-elevated/40 px-1.5 py-1">
+          <div
+            key={`${r.symbol}-${idx}`}
+            className={`grid grid-cols-[18px_1fr_auto] items-center gap-1.5 rounded px-1.5 py-1 ${onStockClick ? 'cursor-pointer hover:bg-elevated/70' : 'bg-elevated/40'} ${r.symbol === activeSymbol ? 'bg-accent/10 ring-1 ring-accent/40' : 'bg-elevated/40'}`}
+            onClick={() => onStockClick?.(r.symbol, r.name || undefined)}
+          >
             <span className="text-center font-mono text-[10px] text-muted">{idx + 1}</span>
             <div className="min-w-0">
               <div className="truncate text-[11px] text-foreground">{r.name || r.symbol}</div>
@@ -427,12 +622,16 @@ function StockList({ title, rows, mode }: { title: string; rows: MarketSnapshotR
   )
 }
 
-function RankColumn({ title, rows, tone }: { title: string; rows: OverviewDimensionRankItem[]; tone: 'bull' | 'bear' }) {
+function RankColumn({ title, rows, tone, onStockClick, activeSymbol }: { title: string; rows: OverviewDimensionRankItem[]; tone: 'bull' | 'bear'; onStockClick?: (symbol: string, name?: string) => void; activeSymbol?: string | null }) {
   return (
     <div className="min-w-0 space-y-1">
       <div className={`text-[10px] font-medium ${tone === 'bull' ? 'text-bull' : 'text-bear'}`}>{title}</div>
       {rows.slice(0, 5).map((r, idx) => (
-        <div key={`${title}-${r.name}-${idx}`} className="grid grid-cols-[14px_1fr_auto] items-center gap-1 rounded bg-elevated/40 px-1.5 py-1">
+        <div
+          key={`${title}-${r.name}-${idx}`}
+          className={`grid grid-cols-[14px_1fr_auto] items-center gap-1 rounded px-1.5 py-1 ${r.leader?.symbol && onStockClick ? 'cursor-pointer hover:bg-elevated/70' : 'bg-elevated/40'} ${r.leader?.symbol === activeSymbol ? 'bg-accent/10 ring-1 ring-accent/40' : 'bg-elevated/40'}`}
+          onClick={() => r.leader?.symbol && onStockClick?.(r.leader.symbol, r.leader.name || undefined)}
+        >
           <span className="text-center font-mono text-[9px] text-muted">{idx + 1}</span>
           <div className="min-w-0">
             <div className="truncate text-[11px] text-foreground" title={r.name}>{r.name}</div>
@@ -446,47 +645,101 @@ function RankColumn({ title, rows, tone }: { title: string; rows: OverviewDimens
   )
 }
 
-function HotRankCard({ title, rank, configUrl }: { title: string; rank?: OverviewMarket['concept_rank']; configUrl: string }) {
+function HotRankCard({
+  title,
+  rank,
+  configUrl,
+  subjects,
+  onUpdate,
+  updating,
+  updateStatus,
+  activeSymbol,
+  onStockClick,
+}: {
+  title: string
+  rank?: OverviewMarket['concept_rank']
+  configUrl?: string
+  subjects: readonly { id: string; label: string }[]
+  onUpdate?: () => void
+  updating?: boolean
+  updateStatus?: CardUpdateStatus
+  activeSymbol?: string | null
+  onStockClick?: (symbol: string, name?: string) => void
+}) {
   const hasData = (rank?.leading?.length ?? 0) > 0 || (rank?.lagging?.length ?? 0) > 0
   return (
     <section className="rounded-card border border-border bg-surface/80 p-2.5">
-      <SectionTitle icon={Flame} title={title} hint="领涨/领跌" />
+      <SectionTitle icon={Flame} title={title} hint="领涨/领跌" subjects={subjects} onUpdate={onUpdate} updating={updating} updateStatus={updateStatus} />
       {hasData ? (
         <div className="grid grid-cols-2 gap-2">
-          <RankColumn title="领涨" rows={rank?.leading ?? []} tone="bull" />
-          <RankColumn title="领跌" rows={rank?.lagging ?? []} tone="bear" />
+          <RankColumn title="领涨" rows={rank?.leading ?? []} tone="bull" onStockClick={onStockClick} activeSymbol={activeSymbol} />
+          <RankColumn title="领跌" rows={rank?.lagging ?? []} tone="bear" onStockClick={onStockClick} activeSymbol={activeSymbol} />
         </div>
       ) : (
         <div className="py-4 text-center">
           <p className="text-[11px] text-muted">未配置扩展数据源</p>
-          <Link
+          {configUrl && <Link
             to={configUrl}
             className="mt-1.5 inline-block text-[11px] text-accent hover:text-accent/80 transition-colors"
           >
             前往配置 →
-          </Link>
+          </Link>}
         </div>
       )}
     </section>
   )
 }
 
+// 切股导航列表构建 (与列表展示行一致: StockList 只显示前 8)
+function stockListNav(rows: MarketSnapshotRow[]): NavItem[] {
+  return toNavItems(rows.slice(0, 8))
+}
+function rankNav(rank?: OverviewMarket['concept_rank']): NavItem[] {
+  const leaders = [...(rank?.leading ?? []), ...(rank?.lagging ?? [])]
+    .map(r => r.leader)
+    .filter((l): l is NonNullable<typeof l> & { symbol: string } => !!l?.symbol)
+  return toNavItems(leaders)
+}
+
 export function Dashboard() {
+  const [searchParams] = useSearchParams()
   const qc = useQueryClient()
-  const [selectedDate, setSelectedDate] = useState<string | undefined>()
+  const [selectedDate, setSelectedDate] = useState<string | undefined>(() => searchParams.get('as_of') || undefined)
   const [manualFetching, setManualFetching] = useState(false)
+  const [cardUpdateStatus, setCardUpdateStatus] = useState<Partial<Record<DashboardCardKey, CardUpdateStatus>>>(() => (
+    readStoredCardUpdateStatus(searchParams.get('as_of') || undefined)
+  ))
   // 首次使用(无数据 + 未完成引导)自动弹窗: 同一会话只弹一次
   const [showWelcomeModal, setShowWelcomeModal] = useState(false)
+  const [previewStock, setPreviewStock] = useState<{ symbol: string; name?: string; navList?: NavItem[] } | null>(null)
+  const [clockNow, setClockNow] = useState(() => Date.now())
+  const liveWas = useRef<boolean | null>(null)
   const dataStatus = useDataStatus({ staleTime: 60_000 })
   const overview = useQuery({
     queryKey: QK.overviewMarket(selectedDate),
     queryFn: () => api.overviewMarket(selectedDate),
     staleTime: 5_000,
     placeholderData: (prev) => prev,
+    refetchInterval: (query) => {
+      const current = query.state.data
+      if (!current) return false
+      const live = dashboardFeedStatus({
+        viewedDate: selectedDate ?? current.as_of ?? '',
+        dataMode: current.data_mode,
+        quoteRunning: !!current.quote_status?.running,
+        isTradingHours: current.quote_status?.is_trading_hours,
+        now: new Date(),
+      }).live
+      return liveOverviewRefetchMs({ live, intervalS: current.quote_status?.interval_s })
+    },
+    refetchIntervalInBackground: true,
   })
   const data = overview.data
+  const feedClock = new Date(clockNow)
+  const viewingTodayForClock = (selectedDate ?? data?.as_of ?? '') === shanghaiCalendarDate(feedClock)
   const caps = useCapabilities()
   const settings = useSettings()
+  const isAdmin = settings.data?.is_admin === true
   const hasDepth = !!(
     caps.data?.features?.depth?.available
     || caps.data?.depth?.available
@@ -509,7 +762,7 @@ export function Dashboard() {
   const fetchStatus = useQuery({
     queryKey: QK.pipelineJob(fetchJobId ?? ''),
     queryFn: () => api.pipelineJob(fetchJobId!),
-    enabled: !!fetchJobId,
+    enabled: isAdmin && !!fetchJobId,
     refetchInterval: (q: any) => {
       const j = q.state.data
       return j && (j.status === 'succeeded' || j.status === 'failed') ? false : 1_000
@@ -526,13 +779,15 @@ export function Dashboard() {
   const fetchSucceeded = fetchStatus.data?.status === 'succeeded'
 
   // 首次使用且无数据 → 自动弹一次引导弹窗(同会话只弹一次)
+  // 「开始获取」前若无除权因子能力, 先弹前置确认 (adjGate.guard)
+  const adjGate = useAdjFactorSyncGate()
   useEffect(() => {
-    if (!hasNoData) return
+    if (!isAdmin || !hasNoData) return
     if (settings.data?.onboarding_completed === false) return  // 还在引导流程中,不重复弹
     if (sessionStorage.getItem('tf_welcome_shown')) return
     sessionStorage.setItem('tf_welcome_shown', '1')
     setShowWelcomeModal(true)
-  }, [hasNoData, settings.data?.onboarding_completed])
+  }, [hasNoData, isAdmin, settings.data?.onboarding_completed])
 
   // 同步完成后刷新看板数据
   useEffect(() => {
@@ -548,19 +803,153 @@ export function Dashboard() {
   const resumeTriedRef = useRef(false)
   useEffect(() => {
     if (resumeTriedRef.current) return
+    if (!isAdmin) return
     if (!hasNoData) return
     if (fetchJobId) return
     resumeTriedRef.current = true
     api.pipelineJobs(1).then(({ active_id }) => {
       if (active_id) setFetchJobId(active_id)
     }).catch(() => { /* 查询失败不阻塞, 用户仍可手动点击获取 */ })
-  }, [hasNoData, fetchJobId])
+  }, [fetchJobId, hasNoData, isAdmin])
 
-  // 手动刷新: 显示旋转动画; SSE 自动刷新: 静默, 无体感
+  useEffect(() => {
+    if (!viewingTodayForClock) return
+    const timer = window.setInterval(() => setClockNow(Date.now()), SESSION_WATCH_MS)
+    return () => window.clearInterval(timer)
+  }, [viewingTodayForClock])
+
+  const refetchOverview = overview.refetch
+  useEffect(() => {
+    const nextLive = dashboardFeedStatus({
+      viewedDate: selectedDate ?? data?.as_of ?? '',
+      dataMode: data?.data_mode,
+      quoteRunning: !!data?.quote_status?.running,
+      isTradingHours: data?.quote_status?.is_trading_hours,
+      now: new Date(clockNow),
+    }).live
+    if (liveWas.current === null) {
+      liveWas.current = nextLive
+      return
+    }
+    if (nextLive && !liveWas.current) void refetchOverview()
+    liveWas.current = nextLive
+  }, [clockNow, data?.as_of, data?.data_mode, data?.quote_status?.running, refetchOverview, selectedDate])
+
+  // 手动刷新: 今天（实时或非实时）都重读全部模块本地数据。
+  // 只有当前仍在交易时段且是盘中快照时，才催行情缓存。历史日 / 午休 / 收盘只重读本地。
+  // 不拉同花顺官方池，也不走脉搏/资金流的外连「更新」。
   const handleRefresh = () => {
+    if (manualFetching) return
     setManualFetching(true)
-    overview.refetch().finally(() => setManualFetching(false))
+    const viewed = selectedDate ?? data?.as_of ?? ''
+    const feedState = dashboardFeedStatus({
+      viewedDate: viewed,
+      dataMode: data?.data_mode,
+      quoteRunning: !!data?.quote_status?.running,
+      isTradingHours: data?.quote_status?.is_trading_hours,
+      now: new Date(),
+    })
+    const pullQuotes = feedState.live
+      ? api.intradayRefresh().catch(() => undefined)
+      : Promise.resolve()
+    pullQuotes
+      .then(() => invalidateDashboardModules(qc))
+      .then(() => overview.refetch())
+      .finally(() => setManualFetching(false))
   }
+
+  useEffect(() => {
+    setCardUpdateStatus(readStoredCardUpdateStatus(selectedDate))
+  }, [selectedDate])
+
+  useEffect(() => {
+    writeStoredCardUpdateStatus(selectedDate, cardUpdateStatus)
+  }, [selectedDate, cardUpdateStatus])
+
+  useEffect(() => {
+    const timers = Object.entries(cardUpdateStatus).flatMap(([key, status]) => {
+      if (status?.state !== 'success' || !status.at) return []
+      const elapsed = Date.now() - new Date(status.at).getTime()
+      const wait = Math.max(0, CARD_UPDATE_SUCCESS_MS - elapsed)
+      const timer = window.setTimeout(() => {
+        setCardUpdateStatus(current => {
+          if (current[key as DashboardCardKey]?.state !== 'success') return current
+          const next = { ...current }
+          delete next[key as DashboardCardKey]
+          return next
+        })
+      }, wait)
+      return [timer]
+    })
+    return () => {
+      for (const timer of timers) window.clearTimeout(timer)
+    }
+  }, [cardUpdateStatus])
+
+  const handleCardUpdate = (key: DashboardCardKey) => {
+    if (cardUpdateStatus[key]?.state === 'updating') return
+    setCardUpdateStatus(current => ({ ...current, [key]: { state: 'updating' } }))
+    api.overviewMarket(selectedDate)
+      .then((next) => {
+        qc.setQueryData<OverviewMarket>(QK.overviewMarket(selectedDate), current => {
+          if (!current) return next
+          return { ...current, ...cardPatchFromOverview(next, key) }
+        })
+        setCardUpdateStatus(current => ({
+          ...current,
+          [key]: { state: 'success', at: new Date().toISOString() },
+        }))
+      })
+      .catch((error: unknown) => {
+        setCardUpdateStatus(current => ({
+          ...current,
+          [key]: {
+            state: 'error',
+            error: error instanceof Error ? error.message : '更新失败',
+          },
+        }))
+      })
+  }
+
+  useEffect(() => {
+    const snapshotDate = selectedDate ?? data?.as_of ?? null
+    setPageContext(buildDashboardPageContext({
+      asOf: snapshotDate,
+      viewingNow: (selectedDate ?? data?.as_of ?? '') === shanghaiCalendarDate(),
+      dataMode: data?.data_mode,
+      indicatorsApprox: data?.indicators_approx || data?.indicators_source === 'intraday_approx',
+      emotion: data?.emotion,
+      breadth: data?.breadth ? {
+        up: data.breadth.up,
+        down: data.breadth.down,
+        flat: data.breadth.flat,
+        up_pct: data.breadth.up_pct,
+        avg_pct: data.breadth.avg_pct ?? null,
+      } : null,
+      limit: data?.limit ? {
+        limit_up: data.limit.limit_up,
+        limit_down: data.limit.limit_down,
+        broken: data.limit.broken,
+        max_boards: data.limit.max_boards,
+        seal_rate: data.limit.seal_rate ?? null,
+        source: data.limit.source ?? null,
+        tiers: data.limit.tiers,
+      } : null,
+      amountTotal: data?.amount.total ?? null,
+      indices: data?.indices.map(item => ({
+        name: item.name,
+        symbol: item.symbol,
+        change_pct: item.change_pct,
+        last_price: item.last_price ?? item.close ?? null,
+      })),
+      conceptLeading: data?.concept_rank.leading.slice(0, 5),
+      industryLeading: data?.industry_rank.leading.slice(0, 5),
+      topGainers: data?.top_gainers.slice(0, 5),
+      topLosers: data?.top_losers.slice(0, 3),
+      empty: !overview.isLoading && !data,
+    }))
+    return () => clearPageContext('/')
+  }, [data, overview.isLoading, selectedDate])
 
   if (overview.isLoading && !data) {
     return (
@@ -586,9 +975,42 @@ export function Dashboard() {
   const score = data.emotion?.score ?? 50
   const strongUp = data.breadth.strong_up ?? 0
   const strongDown = data.breadth.strong_down ?? 0
-  const latestDate = dataStatus.data?.enriched?.latest_date ?? null
+  const officialLatest = data.official_as_of ?? dataStatus.data?.enriched?.latest_date ?? null
+  const snapshotLatest = data.snapshot_as_of ?? dataStatus.data?.quote_snapshot?.latest_date ?? null
+  const latestDate = data.available_as_of
+    ?? [officialLatest, snapshotLatest].filter(Boolean).sort().at(-1)
+    ?? officialLatest
+    ?? null
   const currentDate = selectedDate ?? data.as_of ?? ''
-  const quoteRunning = (!selectedDate || selectedDate === latestDate) && data.quote_status?.running
+  const feed = dashboardFeedStatus({
+    viewedDate: currentDate,
+    dataMode: data.data_mode,
+    quoteRunning: !!data.quote_status?.running,
+    isTradingHours: data.quote_status?.is_trading_hours,
+    now: feedClock,
+  })
+  const viewingToday = feed.label !== '历史'
+  const isIntradaySnapshot = data.data_mode === 'intraday_snapshot'
+  const isIntradayApprox = isIntradaySnapshot && (data.indicators_approx || data.indicators_source === 'intraday_approx')
+  const isOfficialPool = data.limit.source === 'hithink_official_pool'
+  const approxHint = isOfficialPool ? '同花顺官方池' : isIntradayApprox ? '盘中近似' : undefined
+  const limitSubjects = isOfficialPool
+    ? SOURCE_TRACE.hithinkLimitPool
+    : isIntradayApprox
+      ? SOURCE_TRACE.marketOverview
+      : SOURCE_TRACE.limitUpEvents
+  const trendReady = data.trend.ready !== false
+  const extremesReady = data.trend.extremes_ready !== false
+  const limitReady = data.limit.ready !== false
+  const volReady = data.activity.vol_ready !== false && data.activity.vol_ratio != null
+  const highLowTotal = data.trend.new_high + data.trend.new_low
+  const emotionNote = data.emotion?.note
+  const radarHint = emotionNote ?? (isIntradayApprox ? '盘中近似' : `情绪评分 ${score}`)
+  const trendHint = !trendReady && !extremesReady
+    ? (isIntradayApprox ? '盘后计算' : '均线/新高低')
+    : isIntradayApprox
+      ? '盘中近似 · 现价对昨日均线'
+      : '均线/新高低'
   // 实时模式: none / watchlist / full_market。
   // watchlist (Free 档) 仅自选 ≤5 只实时, 看板呈现的大盘数据实为盘后快照, 需提示避免误读。
   const quoteMode = data.quote_status?.mode as ('none' | 'watchlist' | 'full_market') | undefined
@@ -596,7 +1018,7 @@ export function Dashboard() {
   return (
     <div className="min-h-full bg-base p-3">
       {/* 无本地数据常驻引导卡片 —— 一键触发盘后管道获取数据(无 Key 也可) */}
-      {hasNoData && (
+      {hasNoData && isAdmin && (
         <FetchDataCard
           isFetching={isFetching}
           isStarting={startFetch.isPending}
@@ -609,19 +1031,21 @@ export function Dashboard() {
       )}
       {/* 首次使用自动弹窗(同会话仅一次) */}
       <AnimatePresence>
-        {showWelcomeModal && (
+        {isAdmin && showWelcomeModal && (
           <WelcomeFetchModal
             isNoKey={isNoKey}
             onClose={() => setShowWelcomeModal(false)}
             onStart={() => {
-              startFetch.mutate()
-              setShowWelcomeModal(false)
+              adjGate.guard(() => {
+                startFetch.mutate()
+                setShowWelcomeModal(false)
+              })
             }}
           />
         )}
       </AnimatePresence>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-card border border-border bg-surface/85 px-3 py-2">
-        <div className="flex items-center gap-2">
+      <PageContextModule id="overview"><div className="mb-3 grid gap-2 rounded-card border border-border bg-surface/85 px-3 py-2 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Gauge className="h-4 w-4 text-accent" />
           <h1 className="text-base font-semibold text-foreground">市场看板</h1>
           <span
@@ -632,128 +1056,157 @@ export function Dashboard() {
               background: `${scoreColor(score)}14`,
             }}
           >
-            {data.emotion.label} · {score}
+            {data.emotion?.label ?? '暂无'} · {score}{data.emotion?.partial ? ' · 部分' : ''}
           </span>
         </div>
-        <div className="flex items-center gap-3 text-[11px] text-muted">
+        <div className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-2 text-[11px] text-muted sm:flex sm:w-auto sm:gap-3">
           {currentDate ? (
             <DatePicker
               value={currentDate}
               onChange={setSelectedDate}
               min={dataStatus.data?.enriched?.earliest_date ?? undefined}
               max={latestDate ?? undefined}
-              className="w-32"
+              className="min-w-0 w-full sm:w-32"
+              buttonClassName="w-full justify-start whitespace-nowrap"
             />
           ) : (
             <span className="font-mono text-secondary">—</span>
           )}
-          <span className="flex items-center gap-1"><Timer className="h-3 w-3" />{quoteAge(data.quote_status?.quote_age_ms)}</span>
-          <span className={quoteRunning ? 'text-accent' : 'text-warning'}>{quoteRunning ? '实时' : '非实时'}</span>
+          <span className="flex shrink-0 items-center gap-1 whitespace-nowrap"><Timer className="h-3 w-3" />{formatDashboardFeedClock({ live: feed.live, showAge: feed.showAge, intervalS: data.quote_status?.interval_s, ageMs: data.quote_status?.quote_age_ms })}</span>
+          <span className={`shrink-0 whitespace-nowrap ${feed.live ? 'text-accent' : feed.label === '历史' ? 'text-muted' : 'text-warning'}`}>{feed.label}</span>
           <button
             onClick={handleRefresh}
             disabled={manualFetching}
-            className="inline-flex items-center gap-1 rounded-btn border border-border bg-elevated px-2 py-1 text-[11px] text-secondary transition-colors hover:text-foreground disabled:opacity-50"
+            aria-label="刷新全部模块"
+            title="重读今天看板上的总览、脉搏、资金流和监控；非实时也可手刷，不外连同步官方池"
+            className="inline-flex h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-btn border border-border bg-elevated px-2 text-[11px] text-secondary transition-colors hover:text-foreground disabled:opacity-50"
           >
             <RefreshCw className={`h-3 w-3 ${manualFetching ? 'animate-spin' : ''}`} />刷新
           </button>
         </div>
-      </div>
+      </div></PageContextModule>
+
+      {isIntradaySnapshot && viewingToday && (
+        <div className="mb-3 flex items-start gap-2 rounded-card border border-sky-500/30 bg-sky-500/8 px-3 py-2 text-[11px] leading-relaxed">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-500" />
+          <div className="min-w-0 flex-1 text-secondary">
+            当前为<strong className="text-foreground">盘中快照，未收盘</strong>。涨跌家数和成交额按今日公开行情；
+            {isOfficialPool
+              ? <>涨停/跌停/炸板读<strong className="text-foreground">今日同花顺官方池</strong>（不是收盘正式日）；均线、量比仍是<strong className="text-foreground">盘中近似</strong>。</>
+              : <>均线、涨停梯队、炸板、量比是<strong className="text-foreground">盘中近似</strong>（现价对昨收规则 / 昨日均线 / 近 5 日快照量），非正式收盘口径。</>}
+          </div>
+        </div>
+      )}
 
       {/* Free 档提示: 大盘看板为盘后数据, 仅自选股实时。避免用户误读为全市场实时。 */}
-      {quoteMode === 'watchlist' && (
+      {quoteMode === 'watchlist' && viewingToday && (
         <div className="mb-3 flex items-start gap-2 rounded-card border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-[11px] leading-relaxed">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
           <div className="min-w-0 flex-1 text-secondary">
             当前为「自选实时」模式,看板展示的大盘数据为<strong className="text-foreground">盘后快照</strong>(最新有数据日),并非盘中实时;
-            仅自选股({data.quote_status?.watchlist_symbol_count ?? 0} 只)支持实时监控。
+            {isAdmin
+              ? <>仅服务器实时监控列表({data.quote_status?.watchlist_symbol_count ?? 0} 只)支持实时监控。</>
+              : <>个人自选仍按账户隔离，不会自动加入服务器的实时监控范围。</>}
             <span className="ml-1 text-accent">全市场实时需 Starter+</span>
           </div>
         </div>
       )}
 
-      <div className="mb-3 grid grid-cols-4 gap-2">
+      <PageContextModule id="indices"><div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
         {data.indices.map(item => <IndexTicker key={item.symbol} item={item} />)}
-      </div>
+      </div></PageContextModule>
 
-      <div className="mb-3 grid grid-cols-6 gap-2">
+      <PageContextModule id="kpis"><div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         <KpiCell label="个股涨 / 平 / 跌" value={<><span className="text-bull">{data.breadth.up}</span><span className="text-muted">/</span><span className="text-muted">{data.breadth.flat}</span><span className="text-muted">/</span><span className="text-bear">{data.breadth.down}</span></>} sub={`上涨率 ${data.breadth.up_pct.toFixed(1)}%`} />
         <KpiCell label="强势 / 弱势" value={<><span className="text-bull">{strongUp}</span><span className="text-muted">/</span><span className="text-bear">{strongDown}</span></>} sub="涨跌 ≥3%" />
-        <KpiCell label={<span className="inline-flex items-center gap-1">涨停 / 跌停<SealedBadge degraded={isSealedDegrade} hasDepth={hasDepth} isHistorical={false} sealedReady={sealedReady} sealedCountsUp={{ real: data.limit.limit_up, fake: data.limit.fake_up ?? 0, pending: 0 }} sealedCountsDown={{ real: data.limit.limit_down, fake: data.limit.fake_down ?? 0, pending: 0 }} rawUp={data.limit.limit_up + (data.limit.fake_up ?? 0)} rawDown={data.limit.limit_down + (data.limit.fake_down ?? 0)} invalidateKeys={['overview-market', 'limit-ladder']} /></span>} value={<><span className="text-bull">{data.limit.limit_up}</span><span className="text-muted">/</span><span className="text-bear">{data.limit.limit_down}</span></>} sub={`封板率 ${(data.limit.seal_rate ?? 0).toFixed(0)}%`} />
-        <KpiCell label="最高连板" value={`${data.limit.max_boards || 0}板`} sub={`梯队 ${data.limit.tiers.length}`} tone="accent" />
+        <KpiCell label={<span className="flex min-w-0 flex-wrap items-center gap-1"><span className="whitespace-nowrap">涨停 / 跌停</span>{!isOfficialPool && <SealedBadge degraded={isSealedDegrade} hasDepth={hasDepth} isHistorical={false} sealedReady={sealedReady} sealedCountsUp={{ real: data.limit.limit_up, fake: data.limit.fake_up ?? 0, pending: 0 }} sealedCountsDown={{ real: data.limit.limit_down, fake: data.limit.fake_down ?? 0, pending: 0 }} rawUp={data.limit.limit_up + (data.limit.fake_up ?? 0)} rawDown={data.limit.limit_down + (data.limit.fake_down ?? 0)} invalidateKeys={['overview-market', 'limit-ladder']} />}</span>} value={limitReady ? <><span className="text-bull">{data.limit.limit_up}</span><span className="text-muted">/</span><span className="text-bear">{data.limit.limit_down}</span></> : '—'} sub={limitReady ? `${isOfficialPool ? '同花顺官方池 · ' : ''}封板率 ${data.limit.seal_rate == null ? '—' : `${data.limit.seal_rate.toFixed(0)}%`}` : '盘后计算'} />
+        <KpiCell label="最高连板" value={limitReady ? `${data.limit.max_boards || 0}板` : '—'} sub={limitReady ? `${isOfficialPool ? '官方池 · ' : ''}梯队 ${data.limit.tiers.length}` : '盘后计算'} tone="accent" />
         <KpiCell label="成交额" value={fmtBigNum(data.amount.total)} sub={`均额 ${fmtBigNum(data.amount.avg)}`} />
-        <KpiCell label="换手 / 量比" value={`${fmtPrice(data.activity.avg_turnover, 1)}% / ${fmtPrice(data.activity.vol_ratio, 2)}`} sub={`高换手 ${data.activity.high_turnover} · 放量占比 ${fmtPrice(data.activity.high_vol_ratio, 1)}%`} tone="accent" />
+        <KpiCell label="换手 / 量比" value={`${fmtPrice(data.activity.avg_turnover, 1)}% / ${volReady ? fmtPrice(data.activity.vol_ratio, 2) : '—'}`} sub={`${isIntradayApprox && volReady ? '盘中近似 · ' : volReady ? '' : '量比盘后计算 · '}高换手 ${data.activity.high_turnover} · 放量占比 ${volReady ? `${fmtPrice(data.activity.high_vol_ratio, 1)}%` : '—'}`} tone="accent" />
       </div>
+
+      </PageContextModule>
+
+      <PageContextModule id="pulse"><div className="mb-3 overflow-hidden rounded-card border border-border bg-surface/70">
+        <MarketPulsePanel tradeDate={currentDate || undefined} />
+      </div></PageContextModule>
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_20rem]">
         <main className="min-w-0 space-y-3">
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-            <section className="rounded-card border border-border bg-surface/80 p-2.5">
-              <SectionTitle icon={BarChart3} title="涨跌分布 / 广度" hint={`${data.breadth.total}只`} />
+          <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-3">
+            <PageContextModule id="breadth" className="h-full"><section className="flex h-full min-h-0 flex-col rounded-card border border-border bg-surface/80 p-2.5">
+              <SectionTitle icon={BarChart3} title="涨跌分布 / 广度" hint={`${data.breadth.total}只`} subjects={SOURCE_TRACE.marketOverview} onUpdate={() => handleCardUpdate('breadth')} updating={cardUpdateStatus.breadth?.state === 'updating'} updateStatus={cardUpdateStatus.breadth} />
+              <div className="flex min-h-0 flex-1 flex-col justify-between gap-2">
               <DistributionBars rows={data.distribution} />
-              <div className="mt-2">
+              <div>
                 <BreadthBar data={data.breadth} />
               </div>
-              <div className="mt-2 grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-2 gap-1.5">
                 <MiniMetric label="平均涨跌" value={fmtStockPct(data.breadth.avg_pct)} cls={pctClass(data.breadth.avg_pct)} />
                 <MiniMetric label="中位涨跌" value={fmtStockPct(data.breadth.median_pct)} cls={pctClass(data.breadth.median_pct)} />
               </div>
+              </div>
             </section>
 
-            <section
-              className="rounded-card border bg-surface/80 p-2.5"
+            </PageContextModule>
+            <PageContextModule id="radar" className="h-full"><section
+              className="flex h-full min-h-0 flex-col rounded-card border bg-surface/80 p-2.5"
               style={{ borderColor: `${scoreColor(score)}40` }}
             >
-              <SectionTitle icon={Sparkles} title="情绪雷达" hint={`情绪评分 ${score}`} />
+              <SectionTitle icon={Sparkles} title="情绪雷达" hint={radarHint} subjects={SOURCE_TRACE.marketOverview} onUpdate={() => handleCardUpdate('radar')} updating={cardUpdateStatus.radar?.state === 'updating'} updateStatus={cardUpdateStatus.radar} />
+              <div className="flex min-h-0 flex-1 items-center justify-center">
               <EmotionRadar radar={data.radar} score={score} />
+              </div>
             </section>
 
-            <section className="flex flex-col rounded-card border border-border bg-surface/80 p-2.5">
+            </PageContextModule>
+            <PageContextModule id="trend" className="h-full"><section className="flex h-full min-h-0 flex-col rounded-card border border-border bg-surface/80 p-2.5">
               <div>
-                <SectionTitle icon={LineChart} title="趋势强度" hint="均线/新高低" />
+                <SectionTitle icon={LineChart} title="趋势强度" hint={trendHint} subjects={isIntradayApprox ? SOURCE_TRACE.marketOverview : SOURCE_TRACE.stockEnriched} onUpdate={() => handleCardUpdate('trend')} updating={cardUpdateStatus.trend?.state === 'updating'} updateStatus={cardUpdateStatus.trend} />
                 <div className="grid grid-cols-3 gap-1.5">
-                  <MiniMetric label="站上MA5" value={`${data.trend.above_ma5_pct.toFixed(0)}%`} cls="text-accent" />
-                  <MiniMetric label="站上MA20" value={`${data.trend.above_ma20_pct.toFixed(0)}%`} cls="text-accent" />
-                  <MiniMetric label="站上MA60" value={`${data.trend.above_ma60_pct.toFixed(0)}%`} cls="text-accent" />
-                  <MiniMetric label="60日新高" value={compactCount(data.trend.new_high)} cls="text-bull" />
-                  <MiniMetric label="60日新低" value={compactCount(data.trend.new_low)} cls="text-bear" />
-                  <MiniMetric label="高低比" value={`${data.trend.new_high + data.trend.new_low > 0 ? Math.round(data.trend.new_high / (data.trend.new_high + data.trend.new_low) * 100) : 50}%`} cls={data.trend.new_high >= data.trend.new_low ? 'text-bull' : 'text-bear'} />
+                  <MiniMetric label="站上MA5" value={trendReady ? `${data.trend.above_ma5_pct.toFixed(0)}%` : '—'} cls={trendReady ? 'text-accent' : 'text-muted'} />
+                  <MiniMetric label="站上MA20" value={trendReady ? `${data.trend.above_ma20_pct.toFixed(0)}%` : '—'} cls={trendReady ? 'text-accent' : 'text-muted'} />
+                  <MiniMetric label="站上MA60" value={trendReady ? `${data.trend.above_ma60_pct.toFixed(0)}%` : '—'} cls={trendReady ? 'text-accent' : 'text-muted'} />
+                  <MiniMetric label="60日新高" value={extremesReady ? compactCount(data.trend.new_high) : '—'} cls={extremesReady ? 'text-bull' : 'text-muted'} />
+                  <MiniMetric label="60日新低" value={extremesReady ? compactCount(data.trend.new_low) : '—'} cls={extremesReady ? 'text-bear' : 'text-muted'} />
+                  <MiniMetric label="高低比" value={extremesReady && highLowTotal > 0 ? `${Math.round(data.trend.new_high / highLowTotal * 100)}%` : '—'} cls={!extremesReady || highLowTotal === 0 ? 'text-muted' : data.trend.new_high >= data.trend.new_low ? 'text-bull' : 'text-bear'} />
                 </div>
               </div>
               <div className="mt-3 border-t border-border pt-2.5">
-                <SectionTitle icon={Target} title="实用监控" hint="盘中观察" />
+                <SectionTitle icon={Target} title="实用监控" hint="盘中观察" subjects={SOURCE_TRACE.marketOverview} onUpdate={() => handleCardUpdate('monitor')} updating={cardUpdateStatus.monitor?.state === 'updating'} updateStatus={cardUpdateStatus.monitor} />
                 <div className="grid grid-cols-3 gap-1.5">
-                  <MiniMetric label="炸板" value={`${data.limit.broken ?? 0}`} cls="text-warning" />
-                  <MiniMetric label="跌停" value={`${data.limit.limit_down ?? 0}`} cls="text-bear" />
-                  <MiniMetric label="站上MA60" value={`${data.trend.above_ma60_pct.toFixed(0)}%`} cls="text-accent" />
-                  <MiniMetric label="新高/新低" value={`${compactCount(data.trend.new_high)}/${compactCount(data.trend.new_low)}`} cls={data.trend.new_high >= data.trend.new_low ? 'text-bull' : 'text-bear'} />
+                  <MiniMetric label="炸板" value={limitReady ? `${data.limit.broken ?? 0}` : '—'} cls={limitReady ? 'text-warning' : 'text-muted'} />
+                  <MiniMetric label="跌停" value={limitReady ? `${data.limit.limit_down ?? 0}` : '—'} cls={limitReady ? 'text-bear' : 'text-muted'} />
+                  <MiniMetric label="站上MA60" value={trendReady ? `${data.trend.above_ma60_pct.toFixed(0)}%` : '—'} cls={trendReady ? 'text-accent' : 'text-muted'} />
+                  <MiniMetric label="新高/新低" value={extremesReady ? `${compactCount(data.trend.new_high)}/${compactCount(data.trend.new_low)}` : '—'} cls={!extremesReady ? 'text-muted' : data.trend.new_high >= data.trend.new_low ? 'text-bull' : 'text-bear'} />
                   <MiniMetric label="高换手数" value={`${data.activity.high_turnover}`} cls="text-accent" />
-                  <MiniMetric label="放量占比" value={`${fmtPrice(data.activity.high_vol_ratio, 1)}%`} cls="text-accent" />
+                  <MiniMetric label="放量占比" value={volReady ? `${fmtPrice(data.activity.high_vol_ratio, 1)}%` : '—'} cls={volReady ? 'text-accent' : 'text-muted'} />
                 </div>
               </div>
-            </section>
+            </section></PageContextModule>
           </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <HotRankCard title="概念热度" rank={data.concept_rank} configUrl="/concept-analysis" />
-            <HotRankCard title="行业热度" rank={data.industry_rank} configUrl="/industry-analysis" />
+            <PageContextModule id="hot-concept"><HotRankCard title="概念热度" rank={data.concept_rank} configUrl={isAdmin ? '/concept-analysis' : undefined} subjects={SOURCE_TRACE.conceptAnalysis} onUpdate={() => handleCardUpdate('concept')} updating={cardUpdateStatus.concept?.state === 'updating'} updateStatus={cardUpdateStatus.concept} activeSymbol={previewStock?.symbol} onStockClick={(symbol, name) => setPreviewStock({ symbol, name, navList: rankNav(data.concept_rank) })} /></PageContextModule>
+            <PageContextModule id="hot-industry"><HotRankCard title="行业热度" rank={data.industry_rank} configUrl={isAdmin ? '/industry-analysis' : undefined} subjects={SOURCE_TRACE.industryAnalysis} onUpdate={() => handleCardUpdate('industry')} updating={cardUpdateStatus.industry?.state === 'updating'} updateStatus={cardUpdateStatus.industry} activeSymbol={previewStock?.symbol} onStockClick={(symbol, name) => setPreviewStock({ symbol, name, navList: rankNav(data.industry_rank) })} /></PageContextModule>
           </div>
 
-          <SectorFundFlowPanel kind="both" top={6} />
+          <PageContextModule id="fund-flow"><SectorFundFlowPanel kind="both" top={6} readOnly={!isAdmin} /></PageContextModule>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <StockList title="涨幅榜" rows={data.top_gainers} mode="gain" />
-            <StockList title="跌幅榜" rows={data.top_losers} mode="loss" />
-            <StockList title="成交额榜" rows={data.turnover_leaders} mode="amount" />
-            <StockList title="活跃换手" rows={data.active_leaders} mode="active" />
+            <PageContextModule id="gainers"><StockList title="涨幅榜" rows={data.top_gainers} mode="gain" onUpdate={() => handleCardUpdate('gainers')} updating={cardUpdateStatus.gainers?.state === 'updating'} updateStatus={cardUpdateStatus.gainers} activeSymbol={previewStock?.symbol} onStockClick={(symbol, name) => setPreviewStock({ symbol, name, navList: stockListNav(data.top_gainers) })} /></PageContextModule>
+            <PageContextModule id="losers"><StockList title="跌幅榜" rows={data.top_losers} mode="loss" onUpdate={() => handleCardUpdate('losers')} updating={cardUpdateStatus.losers?.state === 'updating'} updateStatus={cardUpdateStatus.losers} activeSymbol={previewStock?.symbol} onStockClick={(symbol, name) => setPreviewStock({ symbol, name, navList: stockListNav(data.top_losers) })} /></PageContextModule>
+            <PageContextModule id="turnover"><StockList title="成交额榜" rows={data.turnover_leaders} mode="amount" onUpdate={() => handleCardUpdate('turnover')} updating={cardUpdateStatus.turnover?.state === 'updating'} updateStatus={cardUpdateStatus.turnover} activeSymbol={previewStock?.symbol} onStockClick={(symbol, name) => setPreviewStock({ symbol, name, navList: stockListNav(data.turnover_leaders) })} /></PageContextModule>
+            <PageContextModule id="active"><StockList title="活跃换手" rows={data.active_leaders} mode="active" onUpdate={() => handleCardUpdate('active')} updating={cardUpdateStatus.active?.state === 'updating'} updateStatus={cardUpdateStatus.active} activeSymbol={previewStock?.symbol} onStockClick={(symbol, name) => setPreviewStock({ symbol, name, navList: stockListNav(data.active_leaders) })} /></PageContextModule>
           </div>
         </main>
 
         <aside className="min-w-0 space-y-3">
-          <section className="rounded-card border border-border bg-surface/80 p-3">
-            <SectionTitle icon={Flame} title="涨停梯队" hint={<span className="inline-flex items-center gap-1">{`涨停 ${data.limit.limit_up}`}{isSealedDegrade && <span className="text-[9px] px-1 rounded bg-yellow-500/10 text-yellow-600 dark:text-yellow-500">{hasDepth ? '未修正' : '降级'}</span>}</span>} />
+          <PageContextModule id="limit"><section className="rounded-card border border-border bg-surface/80 p-3">
+            <SectionTitle icon={Flame} title="涨停梯队" subjects={limitSubjects} onUpdate={() => handleCardUpdate('limit')} updating={cardUpdateStatus.limit?.state === 'updating'} updateStatus={cardUpdateStatus.limit} hint={limitReady ? <span className="inline-flex items-center gap-1">{approxHint ? <span>{approxHint} · </span> : null}{`涨停 ${data.limit.limit_up}`}{!isOfficialPool && isSealedDegrade && <span className="text-[9px] px-1 rounded bg-yellow-500/10 text-yellow-600 dark:text-yellow-500">{hasDepth ? '未修正' : '降级'}</span>}</span> : '盘后计算'} />
             <LadderMini limit={data.limit} />
-          </section>
-          <section className="rounded-card border border-border bg-surface/80 p-3">
+          </section></PageContextModule>
+          {isAdmin && <PageContextModule id="monitor"><section className="rounded-card border border-border bg-surface/80 p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
                 <BellRing className="h-3.5 w-3.5 text-accent" />
@@ -765,9 +1218,16 @@ export function Dashboard() {
               </Link>
             </div>
             <MonitorWidget />
-          </section>
+          </section></PageContextModule>}
         </aside>
       </div>
+      <StockPreviewDialog
+        symbol={previewStock?.symbol ?? null}
+        name={previewStock?.name}
+        navList={previewStock?.navList}
+        onClose={() => setPreviewStock(null)}
+        onNavigate={(symbol, name) => setPreviewStock(current => current ? { ...current, symbol, name } : { symbol, name })}
+      />
     </div>
   )
 }

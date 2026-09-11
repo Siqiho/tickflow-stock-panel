@@ -1,0 +1,24 @@
+{
+  "purpose": "TEST-ONLY leftover quote samples. No tokens. Do not write to shared DATA_DIR.",
+  "as_of": "2026-09-11",
+  "scope": null,
+  "expected_before": {
+    "breadth": "4/0/1",
+    "amount_yi": 55.72,
+    "looks_like": "today_full_market"
+  },
+  "expected_after": {
+    "coverage.scope": "unknown",
+    "coverage.trusted_full_market": false,
+    "breadth.up": null,
+    "amount.total": null,
+    "sample": { "up": 4, "flat": 0, "down": 1, "amount_total": 5572000000 }
+  },
+  "rows": [
+    {"symbol": "000001.SZ", "name": "平安银行", "close": 12.0, "prev_close": 11.5, "change_pct": 4.35, "amount": 1200000000.0, "volume": 100.0},
+    {"symbol": "000002.SZ", "name": "万科A", "close": 8.5, "prev_close": 8.2, "change_pct": 3.66, "amount": 1100000000.0, "volume": 80.0},
+    {"symbol": "600000.SH", "name": "浦发银行", "close": 9.1, "prev_close": 8.9, "change_pct": 2.25, "amount": 1500000000.0, "volume": 90.0},
+    {"symbol": "600519.SH", "name": "贵州茅台", "close": 1480.0, "prev_close": 1460.0, "change_pct": 1.37, "amount": 1272000000.0, "volume": 20.0},
+    {"symbol": "300750.SZ", "name": "宁德时代", "close": 198.0, "prev_close": 200.0, "change_pct": -1.00, "amount": 500000000.0, "volume": 30.0}
+  ]
+}

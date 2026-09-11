@@ -5,6 +5,7 @@
  * 自选页 13 个，缺一个均线金叉/死叉变体）。
  */
 import type { ColumnConfig } from '@/lib/list-columns'
+import type { MinuteKlineRow } from '@/lib/api'
 
 // ===== 信号 =====
 
@@ -63,7 +64,7 @@ export function getSortValue(r: any, col: ColumnConfig): any {
     case 'symbol':        return r.symbol
     case 'price':         return r.rt_price ?? r.close
     case 'pct':           return r.rt_pct ?? r.change_pct
-    case 'change_amount': return r.change_amount
+    case 'change_amount': return r.rt_change_amount ?? r.change_amount
     case 'amplitude':     return r.amplitude
     case 'turnover':      return r.turnover_rate
     case 'amount':        return r.rt_amount ?? r.amount
@@ -97,9 +98,26 @@ export function getSortValue(r: any, col: ColumnConfig): any {
     case 'momentum_60d':  return r.momentum_60d
     case 'limit_ups':     return r.consecutive_limit_ups ?? 0
     case 'limit_downs':   return r.consecutive_limit_downs ?? 0
+    case 'eps':            return r.eps
+    case 'bps':            return r.bps
+    case 'roe':            return r.roe
+    case 'pe_ttm':         return r.pe_ttm
+    case 'pb':             return r.pb
+    case 'gross_margin':   return r.gross_margin
+    case 'net_margin':     return r.net_margin
+    case 'revenue_yoy':    return r.revenue_yoy
+    case 'net_income_yoy': return r.net_income_yoy
+    case 'debt_ratio':     return r.debt_ratio
     case 'score':         return r.score
     default: return null
   }
+}
+
+/** 分时列排序：最新分钟收盘相对昨收的涨跌幅。 */
+export function getIntradaySortValue(r: any, minuteRows: MinuteKlineRow[] | undefined): number | null {
+  if (!minuteRows?.length || !r.prev_close) return null
+  const last = minuteRows[minuteRows.length - 1]
+  return last.close / r.prev_close - 1
 }
 
 // ===== 共享样式 =====

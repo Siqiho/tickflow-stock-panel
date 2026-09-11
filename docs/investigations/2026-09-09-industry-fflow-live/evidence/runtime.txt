@@ -1,0 +1,5 @@
+parent_uvicorn_pid=3510 start=2026-09-09 05:20:24 +0800 port=3018 --reload
+worker_pid=91841 start=2026-09-09 13:17:10 +0800 (after backend mtimes 13:15:57-13:16:50)
+frontend_vite_pid=3528 start=2026-09-09 05:20:24 +0800 port=3011
+DATA_DIR=/Users/simon/Trading/one-trading/data
+controlled_roll=roll_industry_daily_from_h5 on official DATA_DIR; not full run_now; future 15:35 cron not observed

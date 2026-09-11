@@ -1,0 +1,45 @@
+{
+  "captured_at": "2026-09-10T14:42:00+08:00",
+  "url": "http://127.0.0.1:3011/",
+  "view_id": "7958b1",
+  "logged_in": true,
+  "pass": "fresh homepage after WP2; not the WP2 freshness acceptance pass",
+  "industry_half_year": {
+    "control": "半年",
+    "mode": "window_rank",
+    "label": "近126个交易日累计 · 行业日线窗口排名",
+    "start": "2026-03-11",
+    "end": "2026-09-09",
+    "coverage": "128/128",
+    "full": "128/128",
+    "freshness": "数据截止 2026-09-09 · 足够新 · 窗口完整",
+    "calendar_unknown": false,
+    "top_in": {"name": "农业综合Ⅱ", "main_net_yi": -2.67},
+    "top_out": {"name": "半导体", "main_net_yi": -5719.16}
+  },
+  "concept_half_year": {
+    "control": "半年",
+    "mode": "snapshot",
+    "label": "当日快照 · 半年窗口数据不足",
+    "as_of": "2026-09-02 12:41:07",
+    "top_in": {"name": "军工", "main_net_yi": 25.20},
+    "no_freshness_line": true
+  },
+  "concept_year": {
+    "control": "1 年",
+    "mode": "snapshot",
+    "label": "当日快照 · 1 年窗口数据不足",
+    "top_in": {"name": "军工", "main_net_yi": 25.20}
+  },
+  "industry_year": {
+    "control": "1 年",
+    "mode": "snapshot",
+    "label": "当日快照 · 1 年窗口数据不足",
+    "top_in": {"name": "电网设备", "main_net_yi": 15.08},
+    "no_window_rank": true
+  },
+  "fetch_watch_after_patch": {
+    "note": "window.fetch patched after industry 半年 already loaded; subsequent concept 半年 / both 1 年 recorded zero fund-flow window requests",
+    "fund_flow_window_urls": []
+  }
+}

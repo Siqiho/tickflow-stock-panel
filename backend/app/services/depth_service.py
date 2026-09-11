@@ -29,7 +29,10 @@ from pathlib import Path
 
 import polars as pl
 
+from app.market_time import cn_now
 from app.services.atomic_io import atomic_write_parquet, write_lineage_record
+from app.tickflow.capabilities import Cap
+from app.tickflow.rate_limits import chunked, resolve_limit, sleep_between_batches
 
 logger = logging.getLogger(__name__)
 
@@ -271,16 +274,79 @@ class DepthService:
     def _call_depth_batch(self, symbols: list[str]) -> dict:
         """Fetch depth for sealed judgment.
 
-        Prefer TickFlow depth.batch when available; otherwise use public L1
-        bid1/ask1 volumes (enough for true/false limit-up sealed).
-        Returns {symbol: {"ask_volumes":[...], "bid_volumes":[...], ...}}.
+        Custom/908 providers are fail-closed with no cross-source fallback.
+        Default tickflow keeps the local TickFlow → public L1 sealed path.
         """
+        from app.services import preferences
+
+        provider_name = preferences.get_depth5_data_provider()
+        if provider_name == "public":
+            return self._call_public_depth_l1(symbols)
+        if provider_name != "tickflow":
+            return self._call_routed_depth_batch(provider_name, symbols, fallback_public=False)
+        data = self._call_routed_depth_batch("tickflow", symbols, fallback_public=False)
+        if data:
+            return data
         if self._has_tickflow_depth():
             data = self._call_tickflow_depth_batch(symbols)
             if data:
                 return data
             logger.warning("TickFlow depth empty/failed, falling back to public L1")
         return self._call_public_depth_l1(symbols)
+
+    def _call_routed_depth_batch(
+        self,
+        provider_name: str,
+        symbols: list[str],
+        *,
+        fallback_public: bool,
+    ) -> dict:
+        if provider_name == "tickflow":
+            from app.data_providers.registry import get_provider
+
+            provider = get_provider("tickflow")
+        else:
+            from app.data_providers import custom as custom_sources
+
+            try:
+                if not custom_sources.provider_has_dataset(provider_name, "depth5"):
+                    logger.warning("depth provider %s 未声明 depth5, 跳过本轮", provider_name)
+                    return {}
+                provider = custom_sources.get_provider(provider_name)
+            except Exception as e:
+                logger.warning("depth provider %s 解析失败, 跳过本轮: %s", provider_name, e)
+                return {}
+
+        fetch_depth = getattr(provider, "get_depth_batch", None)
+        if not callable(fetch_depth):
+            logger.warning("depth provider %s 未实现 get_depth_batch, 跳过本轮", provider_name)
+            return {} if not fallback_public else self._call_public_depth_l1(symbols)
+
+        capset = self._get_capset()
+        limit = resolve_limit(capset, Cap.DEPTH5_BATCH, default_batch=100, default_rpm=30)
+        result: dict = {}
+        chunks = chunked(symbols, limit.batch)
+        for i, chunk in enumerate(chunks):
+            sleep_between_batches(i, limit.rpm, default_interval=2.0)
+            try:
+                data = fetch_depth(chunk)
+                if isinstance(data, dict):
+                    result.update(data)
+                else:
+                    logger.warning(
+                        "depth provider %s 第 %d 批返回非 dict, 已跳过",
+                        provider_name,
+                        i + 1,
+                    )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "depth provider %s 第 %d 批失败(%d 只): %s",
+                    provider_name,
+                    i + 1,
+                    len(chunk),
+                    e,
+                )
+        return result
 
     def _call_tickflow_depth_batch(self, symbols: list[str]) -> dict:
         """调 tf.depth.batch, 按 capset 的 batch 切片 + 节流。"""
@@ -513,10 +579,10 @@ class DepthService:
         """盘中轮询: 按 capset 自适应间隔拉 depth, 更新内存缓存。"""
         while self._running:
             try:
-                if self._is_trading_hours():
+                if self._is_continuous_trading():
                     self._poll_once()
                 else:
-                    logger.debug("depth sealed: 非交易时段, 跳过")
+                    logger.debug("depth sealed: 非连续竞价时段, 跳过")
             except Exception as e:  # noqa: BLE001
                 logger.warning("depth sealed 轮询异常: %s", e)
 
@@ -680,8 +746,17 @@ class DepthService:
 
     @staticmethod
     def _is_trading_hours() -> bool:
-        now = datetime.now()
+        now = cn_now()
         t = now.time()
         morning = dt_time(9, 25) <= t <= dt_time(11, 35)
         afternoon = dt_time(12, 55) <= t <= dt_time(15, 5)
+        return now.weekday() < 5 and (morning or afternoon)
+
+    @staticmethod
+    def _is_continuous_trading() -> bool:
+        """A股连续竞价(北京时间): 9:30-11:30 / 13:00-15:00。sealed 轮询用此窗口。"""
+        now = cn_now()
+        t = now.time()
+        morning = dt_time(9, 30) <= t <= dt_time(11, 30)
+        afternoon = dt_time(13, 0) <= t <= dt_time(15, 0)
         return now.weekday() < 5 and (morning or afternoon)

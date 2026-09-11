@@ -1,0 +1,20 @@
+# NOT APPLIED / 非本轮交付
+# 本 diff 是历史拟稿，P2 轮不再写入外部 README，也不作为验收阻断。
+# 目标文件保持 2026-09-06 原文：
+# /Users/simon/Trading/下载数据/stockdb_quantdb_integration_review_20260906/README.md
+
+--- /Users/simon/Trading/下载数据/stockdb_quantdb_integration_review_20260906/README.md
++++ intended (NOT APPLIED; not this-round delivery)
+@@
+ # StockDB + QuantDB：整合可行性与 one-trading 数据增量复核
++
++> 2026-09-11 增量指针（不改下方 2026-09-06 历史证据正文）：估值历史原包只读查询契约与 4 样本对账见 one-trading `docs/data-platform-development-log.md#offline-valuation-readonly-contract` 与 `docs/investigations/2026-09-11-offline-valuation-readonly/`。本轮未重扫 80G、未重做两融 API、未写正式 DATA_DIR。
+ 
+ 核验时间：2026-09-06，北京时间。主台：数据台；本轮是本地数据包评估，未开展新的 GitHub 上游审阅，也未实施正式接入。
+@@ end of file
++
++## 9. 2026-09-11 估值历史原包只读增量
++
++本小节是增量指针，不修改第 1–8 节 2026-09-06 历史证据。权威工程状态见 one-trading `docs/data-platform-development-log.md#offline-valuation-readonly-contract`。
++
++只读查询：`scripts/offline_valuation_query.py`，默认 root=`/Users/simon/Trading/下载数据/quant_data`，仅 `5_technical_derived/valuation/<symbol>.parquet`。4 样本实读 `000001.SZ`/`000338.SZ`/`600519.SH`/`300750.SZ`。与项目 `data/reference/valuation_daily` 在 2026-07-21..2026-08-12 并排对账：共同键 36，`close` 全相等；项目 PE/PB/PS/市值/股本为 null，不视为相等、不填 0、不 overlay。未重扫 80G，未执行修复 SQL overlay，未改源文件。

@@ -1,0 +1,13 @@
+cwd=/Users/simon/Trading/one-trading/frontend
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+ RUN  v2.1.9 /Users/simon/Trading/one-trading/frontend
+
+ ✓ ../docs/investigations/2026-09-07-industry-fflow-daily-roll/tests/frontend/SectorFundFlowPanel.industry-freshness.test.tsx (3 tests) 80ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  18:27:48
+   Duration  1.31s (transform 233ms, setup 110ms, collect 353ms, tests 80ms, environment 289ms, prepare 170ms)
+

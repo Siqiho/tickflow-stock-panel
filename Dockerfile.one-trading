@@ -1,0 +1,79 @@
+# one-trading private release image for Zeabur.
+# The development Dockerfile stays available for local workflows; zbpack.json
+# pins remote builds to this stricter, reproducible release definition.
+
+FROM node:20-alpine AS frontend-builder
+WORKDIR /build
+
+RUN npm install -g pnpm@9
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY frontend/ ./
+RUN pnpm build
+
+FROM python:3.11-slim AS hermes-builder
+WORKDIR /opt/hermes
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir uv
+
+RUN git init src \
+    && git -C src remote add origin https://github.com/NousResearch/hermes-agent.git \
+    && git -C src fetch --depth=1 origin 91937a6dc3ffbbe2f3be91a500f0ecf962c4cf53 \
+    && git -C src checkout --detach FETCH_HEAD \
+    && rm -rf src/.git \
+    && uv venv /opt/hermes/venv --python /usr/local/bin/python \
+    && uv pip install --python /opt/hermes/venv/bin/python --editable "/opt/hermes/src[mcp]" "aiohttp==3.14.1" \
+    && /opt/hermes/venv/bin/hermes --version \
+    && /opt/hermes/venv/bin/python -c "import aiohttp, mcp"
+
+FROM python:3.11-slim AS runtime
+WORKDIR /app
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir uv
+
+COPY README.md /app/README.md
+COPY backend/pyproject.toml backend/uv.lock ./
+RUN uv sync --frozen --no-dev
+
+COPY --from=hermes-builder /opt/hermes /opt/hermes
+COPY backend/app ./app
+COPY backend/scripts/hermes_user_console_mcp.py ./scripts/hermes_user_console_mcp.py
+COPY backend/scripts/hermes_one_trading_runtime.py ./scripts/hermes_one_trading_runtime.py
+COPY backend/scripts/start_one_trading_server.py ./scripts/start_one_trading_server.py
+# 数据台显式维护工具: 在容器终端手动运行, 不参与自动调度
+COPY scripts/rebuild-reference-derived.py scripts/sync-share-capital.py scripts/sync-corporate-actions.py scripts/reconcile-legacy-market-lineage.py ./scripts/
+COPY tiers.yaml /app/tiers.yaml
+COPY --from=frontend-builder /build/dist ./static
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    STATIC_DIR=/app/static \
+    TIERS_YAML=/app/tiers.yaml \
+    DATA_DIR=/app/data \
+    PUBLIC_REGISTRATION_ENABLED=true \
+    ONE_TRADING_HERMES_RUNTIME_ENABLED=true \
+    ONE_TRADING_HERMES_ROOT=/app/data/hermes \
+    ONE_TRADING_HERMES_BASE_URL=http://127.0.0.1:8650 \
+    ONE_TRADING_HERMES_PYTHON=/opt/hermes/venv/bin/python \
+    HERMES_RUNTIME_BIN=/opt/hermes/venv/bin/hermes \
+    HERMES_RUNTIME_CWD=/opt/hermes/src \
+    TZ=Asia/Shanghai \
+    RELEASE_CHANNEL=private
+
+RUN mkdir -p /app/data
+# Persistent storage is mounted by the Zeabur service specification.
+# Declaring a Docker VOLUME here would create an anonymous per-Pod volume.
+
+EXPOSE 3018
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+    CMD ["python", "-c", "import os, urllib.request; port = os.getenv('PORT', '3018'); urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=3).read()"]
+
+STOPSIGNAL SIGTERM
+CMD ["/app/.venv/bin/python", "/app/scripts/start_one_trading_server.py"]

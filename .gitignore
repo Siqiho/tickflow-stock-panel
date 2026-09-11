@@ -41,10 +41,15 @@ backend/app/static/
 .DS_Store
 
 # ===== Project data (Parquet/DuckDB) =====
-backend/data/**
-!backend/data/.gitkeep
-data/**
-!data/.gitkeep
+/backend/data/**
+!/backend/data/.gitkeep
+/data/**
+!/data/.gitkeep
+/.data.staging-*/
+/data.k4-residual-*/
+/output/
+!frontend/src/components/data/
+!frontend/src/components/data/**
 # data/ 下所有内容(含 ext_data 概念/行业)均不入库:
 #   - 用户运行时数据 (K线/财务/自选/回测等) 本就不该进 git
 #   - 概念/行业改为「首次启动自动从远程接口拉取」(见 app/services/ext_presets.py)
@@ -62,7 +67,21 @@ backend/user_prompts/
 
 # ===== Browser automation =====
 .playwright-mcp/
-.worktrees/
+/.worktrees/
+
+# ===== Android private release =====
+# Keep the generated Android project in Git, but never commit the local SDK,
+# signing keys, build outputs, or distributable binaries.
+/.android-sdk/
+/.android-toolchain/
+/.private/
+/releases/
+/deploy/android-download/public/*.apk
+/frontend/android/.gradle/
+/frontend/android/local.properties
+/frontend/android/**/build/
+*.apk
+*.aab
 
 # ===== AI IDE =====
 .trae/
@@ -86,7 +105,7 @@ CLAUDE.md
 docs/zhihu/
 
 # ===== 用户自定义策略(私有,不开源) =====
-data/strategies/custom/
+/data/strategies/custom/
 
 # ===== 临时 / 调试产物 =====
 backend._recheck*.py

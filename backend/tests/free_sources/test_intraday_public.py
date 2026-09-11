@@ -38,6 +38,33 @@ def test_public_intraday_to_minute_rows(monkeypatch):
     assert "2026-07-20" in rows[0]["datetime"]
 
 
+def test_public_intraday_to_minute_rows_rejects_another_trade_date(monkeypatch):
+    client = ResilientHttpClient()
+    payload = {
+        "data": {
+            "sz000001": {
+                "data": {
+                    "date": "20260805",
+                    "data": ["0930 12.00 1000 12000"],
+                }
+            }
+        }
+    }
+
+    def fake_get_json(url, **kwargs):
+        return FetchResult(ok=True, data=payload, status_code=200)
+
+    monkeypatch.setattr(client, "get_json", fake_get_json)
+
+    rows = public_intraday_to_minute_rows(
+        "000001.SZ",
+        trade_date=date(2026, 7, 20),
+        client=client,
+    )
+
+    assert rows == []
+
+
 def test_fetch_public_depth_l1(monkeypatch):
     client = ResilientHttpClient()
     parts = [""] * 50

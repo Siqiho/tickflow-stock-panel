@@ -1,0 +1,1675 @@
+{
+  "started_at": "2026-09-09T16:26:55.165579+08:00",
+  "finished_at": "2026-09-09T16:27:29.512935+08:00",
+  "today": "2026-09-09",
+  "data_dir": "/Users/simon/Trading/one-trading/data/news-isolated-20260909",
+  "coverage": "only isolated DATA_DIR news-isolated-20260909 policy items; no official one-trading/data; no full-market/history backfill",
+  "kept_first_round_evidence": "/Users/simon/Trading/one-trading/docs/cursor-handoffs/news-policy-20260909/live-fetch.json",
+  "kept_first_retest": "/Users/simon/Trading/one-trading/docs/cursor-handoffs/news-policy-20260909/retest-policy-dates.json",
+  "backup": "/Users/simon/备份/codex/news-policy-date-provenance-20260909-162024",
+  "diagnosis": {
+    "rule": "URL dates must be complete bounded forms. /YYYYMM/ + article id is not a publish date.",
+    "examples": [
+      {
+        "url": "/seac/xwzx/202609/1194319.shtml",
+        "legacy": "2026-09-11",
+        "new": ""
+      },
+      {
+        "url": "/202607/1200abc.shtml",
+        "legacy": "2026-07-12",
+        "new": ""
+      }
+    ],
+    "accepted_forms": [
+      "/2026/09/09/",
+      "t20260909_123.html",
+      "/2026-09/06/",
+      "/2026/0907/"
+    ]
+  },
+  "before": {
+    "total": 495,
+    "first_query_dates": [
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09"
+    ],
+    "first_item": {
+      "title": "黄石海事局气象类大风四级（蓝色）水上交通安全预警 (2026)216",
+      "url": "https://www.mot.gov.cn/fuwu/yujingtishi/cjanquanyujing/202609/t20260909_4224032.html",
+      "date": "2026-09-09",
+      "source": "交通运输部"
+    },
+    "neac": [
+      {
+        "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+        "date": "2026-09-11",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "第七期中华民族共同体理论体系专题研修班成功举办",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193820.shtml",
+        "date": "2026-08-11",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "第七届全国少数民族文艺会演首台剧目《赶大营》在京演出",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193762.shtml",
+        "date": "2026-08-11",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "48台剧目聚北京！第七届全国少数民族文艺会演今日开启",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193720.shtml",
+        "date": "2026-08-11",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "第七届全国少数民族文艺会演媒体通气会在京举行",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193454.shtml",
+        "date": "2026-08-11",
+        "source": "国家民族事务委员会"
+      }
+    ],
+    "unproven_or_spliced": [
+      {
+        "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+        "source": "国家民族事务委员会",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+        "before": "2026-09-11",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-11"
+      },
+      {
+        "title": "中国人民银行副行长宣昌能出席国际清算银行行长例会",
+        "source": "中国人民银行",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090909080511735/index.html",
+        "before": "2026-09-09",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-09"
+      },
+      {
+        "title": "署名文章 | 刘烈宏：把握数智化发展大势 深入推进数字中国建设",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/jgsz/jld/llh/llhldhd/0908/20260908091721448477945_pc.html",
+        "before": "2026-09-08",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-08"
+      },
+      {
+        "title": "地方动态 | 乘“数”而上 赋能八闽——2026年“数据要素×”大赛福建分赛圆满收官",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/dfdt/0906/20260906141327955491767_pc.html",
+        "before": "2026-09-06",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-06"
+      },
+      {
+        "title": "刘烈宏赴内蒙古自治区调研数据要素市场化配置改革工作推进情况",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/jgsz/jld/llh/llhldhd/0905/20260905165400677414218_pc.html",
+        "before": "2026-09-05",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-05"
+      },
+      {
+        "title": "新闻直播间 | 自然资源部：北斗基准站服务数据首次向社会共享开放",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/mtsy/0905/20260905111358252715152_pc.html",
+        "before": "2026-09-05",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-05"
+      },
+      {
+        "title": "新华网 | 全国首个国家级空间信息基础设施公共数据授权运营落地",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/mtsy/0905/20260905110546162365571_pc.html",
+        "before": "2026-09-05",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-05"
+      },
+      {
+        "title": "媒体报道 | 尹力调研世界数据组织（WDO）",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/mtsy/0905/20260905091101388502582_pc.html",
+        "before": "2026-09-05",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-05"
+      },
+      {
+        "title": "中国人民银行召开树立和践行正确政绩观学习教育总结会议",
+        "source": "中国人民银行",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090414583025333/index.html",
+        "before": "2026-09-04",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-04"
+      },
+      {
+        "title": "2026年2季度末金融业机构总资产562.2万亿元",
+        "source": "中国人民银行",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090314250952275/index.html",
+        "before": "2026-09-03",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-03"
+      },
+      {
+        "title": "刘烈宏在贵州省调研数据要素市场化配置改革工作",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/jgsz/jld/llh/llhldhd/0903/20260903172404040776258_pc.html",
+        "before": "2026-09-03",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-03"
+      },
+      {
+        "title": "地方动态 | 李殿勋在汉调研数字湖北建设并召开领导小组会议",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/dfdt/0903/20260903132327714704648_pc.html",
+        "before": "2026-09-03",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-03"
+      },
+      {
+        "title": "地方动态 | 甘肃省公共数据资源登记平台和授权运营平台正式上线运营",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/dfdt/0903/20260903132126258639144_pc.html",
+        "before": "2026-09-03",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-03"
+      },
+      {
+        "title": "地方动态 | 数智浪潮看广东，数据让广东更精彩！广东省主宾省展区精彩亮相数博会",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/dfdt/0903/20260903132015793096073_pc.html",
+        "before": "2026-09-03",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-03"
+      },
+      {
+        "title": "地方动态 | 宁夏自治区算力监测调度平台正式接入全国一体化算力网监测调度试验验证平台",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/dfdt/0903/20260903131554193890680_pc.html",
+        "before": "2026-09-03",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-03"
+      },
+      {
+        "title": "中国人民银行行长潘功胜会见国际金融机构负责人和相关国家财长及央行行长",
+        "source": "中国人民银行",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090214474837364/index.html",
+        "before": "2026-09-02",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-02"
+      },
+      {
+        "title": "中国人民银行行长潘功胜出席二十国集团财长和央行行长会议",
+        "source": "中国人民银行",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090214465859469/index.html",
+        "before": "2026-09-02",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-02"
+      },
+      {
+        "title": "2026中国国际大数据产业博览会“数字人才培养”交流活动在贵阳举办",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/jgsz/jld/xb/xbldhd/0901/20260901165247255663288_pc.html",
+        "before": "2026-09-01",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-01"
+      },
+      {
+        "title": "媒体报道 | 词元奔涌数智兴——2026中国国际大数据产业博览会综述",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/mtsy/0901/20260901104845060562387_pc.html",
+        "before": "2026-09-01",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-09-01"
+      },
+      {
+        "title": "通用智能的前沿发展——国家数据局举办2026年第12期（总第39期）“数据大讲堂”",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/jgsz/jld/llh/llhldhd/0831/20260831160946880542362_pc.html",
+        "before": "2026-08-31",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-31"
+      },
+      {
+        "title": "央视新闻 | 2026数博会闭幕 共发布87项创新成果",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/mtsy/0830/20260830211852657791650_pc.html",
+        "before": "2026-08-30",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-30"
+      },
+      {
+        "title": "《中国数据产业发展报告（2026）》在数博会开幕式发布",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/xwfb/0828/20260828233336307959824_pc.html",
+        "before": "2026-08-28",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-28"
+      },
+      {
+        "title": "2026中国国际大数据产业博览会开幕",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/xwfb/0828/20260828213345032974683_pc.html",
+        "before": "2026-08-28",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-28"
+      },
+      {
+        "title": "中国人民银行有关部门负责人就《关于改革完善房地产信贷管理 推动加快构建房地产发展新模式的意见》答记者问",
+        "source": "中国人民银行",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026082816463825521/index.html",
+        "before": "2026-08-28",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-28"
+      },
+      {
+        "title": "中国人民银行公告﹝2026﹞第22号",
+        "source": "中国人民银行",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026082809193480410/index.html",
+        "before": "2026-08-28",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-28"
+      },
+      {
+        "title": "中国人民银行新增西藏自治区分行支农支小再贷款额度50亿元 支持救灾及灾后重...",
+        "source": "中国人民银行",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026082717370314545/index.html",
+        "before": "2026-08-27",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-27"
+      },
+      {
+        "title": "中国人民银行副行长陆磊出席第十五届中国支付清算论坛",
+        "source": "中国人民银行",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026082717390451589/index.html",
+        "before": "2026-08-27",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-27"
+      },
+      {
+        "title": "国家数据局与约旦数字经济与创业部签署关于加强数字经济合作的谅解备忘录",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/xwfb/0826/20260826165027017947680_pc.html",
+        "before": "2026-08-26",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-26"
+      },
+      {
+        "title": "国家数据局发布第五批公共数据“跑起来”示范场景清单",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/xwfb/0825/20260825221943908355266_pc.html",
+        "before": "2026-08-25",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-25"
+      },
+      {
+        "title": "文字实录 | 国家数据局举办“数据价值化 我们在行动”系列新闻发布会（第五场）",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/xwfb/0825/20260825204140175751047_pc.html",
+        "before": "2026-08-25",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-25"
+      },
+      {
+        "title": "中国人民银行行长潘功胜会见澳门银行公会代表团",
+        "source": "中国人民银行",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026081919184870631/index.html",
+        "before": "2026-08-19",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-19"
+      },
+      {
+        "title": "中澳（大利亚）两国央行续签双边本币互换协议",
+        "source": "中国人民银行",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026081915294182128/index.html",
+        "before": "2026-08-19",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-19"
+      },
+      {
+        "title": "中国人民银行新增8家数字人民币业务运营机构",
+        "source": "中国人民银行",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026081714114337358/index.html",
+        "before": "2026-08-17",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-17"
+      },
+      {
+        "title": "中国人民银行公告﹝2026﹞第21号",
+        "source": "中国人民银行",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026081417014187625/index.html",
+        "before": "2026-08-14",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-14"
+      },
+      {
+        "title": "第七期中华民族共同体理论体系专题研修班成功举办",
+        "source": "国家民族事务委员会",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193820.shtml",
+        "before": "2026-08-11",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-11"
+      },
+      {
+        "title": "第七届全国少数民族文艺会演首台剧目《赶大营》在京演出",
+        "source": "国家民族事务委员会",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193762.shtml",
+        "before": "2026-08-11",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-11"
+      },
+      {
+        "title": "48台剧目聚北京！第七届全国少数民族文艺会演今日开启",
+        "source": "国家民族事务委员会",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193720.shtml",
+        "before": "2026-08-11",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-11"
+      },
+      {
+        "title": "第七届全国少数民族文艺会演媒体通气会在京举行",
+        "source": "国家民族事务委员会",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193454.shtml",
+        "before": "2026-08-11",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-11"
+      },
+      {
+        "title": "国家局总公司党的建设工作领导小组召开会议巩固拓展树立和践行正确政绩观学习教育成果以行业高质量发展新成效为国家经济社会发展作出新贡献",
+        "source": "国家烟草专卖局",
+        "url": "http://www.tobacco.gov.cn/gjyc/hytt/202608/09d011f989e742e5991df59f052c6def.shtml",
+        "before": "2026-08-09",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-08-09"
+      },
+      {
+        "title": "全国数字科技和基础设施建设专项培训班在呼和浩特成功举办",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/sjdt/0724/20260724200841838788309_pc.html",
+        "before": "2026-07-24",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-07-24"
+      },
+      {
+        "title": "全国数据资源开发利用培训班在大连成功举办",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/sjdt/0717/20260717213434597260385_pc.html",
+        "before": "2026-07-17",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-07-17"
+      },
+      {
+        "title": "赵冲久会见汤加公共企业部代表团",
+        "source": "国家邮政局",
+        "url": "https://www.spb.gov.cn/gjyzj/c100015/c100016/202607/15f21c8651c64564baa916244adeb347.shtml",
+        "before": "2026-07-15",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-07-15"
+      },
+      {
+        "title": "国家数据局召开网络安全、数据安全研究机构和企业座谈会",
+        "source": "国家数据局",
+        "url": "https://www.nda.gov.cn/sjj/swdt/sjdt/0716/20260715204314007379543_pc.html",
+        "before": "2026-07-15",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-07-15"
+      },
+      {
+        "title": "中国共产党国家烟草专卖局直属机关第五次党员代表大会强...",
+        "source": "国家烟草专卖局",
+        "url": "http://www.tobacco.gov.cn/gjyc/xwtp/202606/10786724b4e940949c6aaac33cdeb36c.shtml",
+        "before": "2026-06-10",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-06-10"
+      },
+      {
+        "title": "国家局党校举行2026年春季学期毕业典礼",
+        "source": "国家烟草专卖局",
+        "url": "http://www.tobacco.gov.cn/gjyc/xwtp/202606/0265629cc84a46bcb142d55e5292787f.shtml",
+        "before": "2026-06-02",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-06-02"
+      },
+      {
+        "title": "“十五五”邮政业标准体系建设指南诚邀您建言献策",
+        "source": "国家邮政局",
+        "url": "https://www.spb.gov.cn/gjyzj/c100009/c100010/202603/26eee423827b466bad0826dc17824593.shtml",
+        "before": "2026-03-26",
+        "would_be": "",
+        "new_url_date": "",
+        "legacy_url_date": "2026-03-26"
+      }
+    ],
+    "unproven_count": 46
+  },
+  "scrub": {
+    "cleared": 46,
+    "total": 495,
+    "today": "2026-09-09",
+    "changes": [
+      {
+        "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+        "source": "国家民族事务委员会",
+        "before": "2026-09-11",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/seac/xwzx/202609/1194319.shtml"
+      },
+      {
+        "title": "中国人民银行副行长宣昌能出席国际清算银行行长例会",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090909080511735/index.html",
+        "source": "中国人民银行",
+        "before": "2026-09-09",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/goutongjiaoliu/113456/113469/2026090909080511735/index.html"
+      },
+      {
+        "title": "署名文章 | 刘烈宏：把握数智化发展大势 深入推进数字中国建设",
+        "url": "https://www.nda.gov.cn/sjj/jgsz/jld/llh/llhldhd/0908/20260908091721448477945_pc.html",
+        "source": "国家数据局",
+        "before": "2026-09-08",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/jgsz/jld/llh/llhldhd/0908/20260908091721448477945_pc.html"
+      },
+      {
+        "title": "地方动态 | 乘“数”而上 赋能八闽——2026年“数据要素×”大赛福建分赛圆满收官",
+        "url": "https://www.nda.gov.cn/sjj/swdt/dfdt/0906/20260906141327955491767_pc.html",
+        "source": "国家数据局",
+        "before": "2026-09-06",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/dfdt/0906/20260906141327955491767_pc.html"
+      },
+      {
+        "title": "刘烈宏赴内蒙古自治区调研数据要素市场化配置改革工作推进情况",
+        "url": "https://www.nda.gov.cn/sjj/jgsz/jld/llh/llhldhd/0905/20260905165400677414218_pc.html",
+        "source": "国家数据局",
+        "before": "2026-09-05",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/jgsz/jld/llh/llhldhd/0905/20260905165400677414218_pc.html"
+      },
+      {
+        "title": "新闻直播间 | 自然资源部：北斗基准站服务数据首次向社会共享开放",
+        "url": "https://www.nda.gov.cn/sjj/swdt/mtsy/0905/20260905111358252715152_pc.html",
+        "source": "国家数据局",
+        "before": "2026-09-05",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/mtsy/0905/20260905111358252715152_pc.html"
+      },
+      {
+        "title": "新华网 | 全国首个国家级空间信息基础设施公共数据授权运营落地",
+        "url": "https://www.nda.gov.cn/sjj/swdt/mtsy/0905/20260905110546162365571_pc.html",
+        "source": "国家数据局",
+        "before": "2026-09-05",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/mtsy/0905/20260905110546162365571_pc.html"
+      },
+      {
+        "title": "媒体报道 | 尹力调研世界数据组织（WDO）",
+        "url": "https://www.nda.gov.cn/sjj/swdt/mtsy/0905/20260905091101388502582_pc.html",
+        "source": "国家数据局",
+        "before": "2026-09-05",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/mtsy/0905/20260905091101388502582_pc.html"
+      },
+      {
+        "title": "中国人民银行召开树立和践行正确政绩观学习教育总结会议",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090414583025333/index.html",
+        "source": "中国人民银行",
+        "before": "2026-09-04",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/goutongjiaoliu/113456/113469/2026090414583025333/index.html"
+      },
+      {
+        "title": "2026年2季度末金融业机构总资产562.2万亿元",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090314250952275/index.html",
+        "source": "中国人民银行",
+        "before": "2026-09-03",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/goutongjiaoliu/113456/113469/2026090314250952275/index.html"
+      },
+      {
+        "title": "刘烈宏在贵州省调研数据要素市场化配置改革工作",
+        "url": "https://www.nda.gov.cn/sjj/jgsz/jld/llh/llhldhd/0903/20260903172404040776258_pc.html",
+        "source": "国家数据局",
+        "before": "2026-09-03",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/jgsz/jld/llh/llhldhd/0903/20260903172404040776258_pc.html"
+      },
+      {
+        "title": "地方动态 | 李殿勋在汉调研数字湖北建设并召开领导小组会议",
+        "url": "https://www.nda.gov.cn/sjj/swdt/dfdt/0903/20260903132327714704648_pc.html",
+        "source": "国家数据局",
+        "before": "2026-09-03",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/dfdt/0903/20260903132327714704648_pc.html"
+      },
+      {
+        "title": "地方动态 | 甘肃省公共数据资源登记平台和授权运营平台正式上线运营",
+        "url": "https://www.nda.gov.cn/sjj/swdt/dfdt/0903/20260903132126258639144_pc.html",
+        "source": "国家数据局",
+        "before": "2026-09-03",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/dfdt/0903/20260903132126258639144_pc.html"
+      },
+      {
+        "title": "地方动态 | 数智浪潮看广东，数据让广东更精彩！广东省主宾省展区精彩亮相数博会",
+        "url": "https://www.nda.gov.cn/sjj/swdt/dfdt/0903/20260903132015793096073_pc.html",
+        "source": "国家数据局",
+        "before": "2026-09-03",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/dfdt/0903/20260903132015793096073_pc.html"
+      },
+      {
+        "title": "地方动态 | 宁夏自治区算力监测调度平台正式接入全国一体化算力网监测调度试验验证平台",
+        "url": "https://www.nda.gov.cn/sjj/swdt/dfdt/0903/20260903131554193890680_pc.html",
+        "source": "国家数据局",
+        "before": "2026-09-03",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/dfdt/0903/20260903131554193890680_pc.html"
+      },
+      {
+        "title": "中国人民银行行长潘功胜会见国际金融机构负责人和相关国家财长及央行行长",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090214474837364/index.html",
+        "source": "中国人民银行",
+        "before": "2026-09-02",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/goutongjiaoliu/113456/113469/2026090214474837364/index.html"
+      },
+      {
+        "title": "中国人民银行行长潘功胜出席二十国集团财长和央行行长会议",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090214465859469/index.html",
+        "source": "中国人民银行",
+        "before": "2026-09-02",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/goutongjiaoliu/113456/113469/2026090214465859469/index.html"
+      },
+      {
+        "title": "2026中国国际大数据产业博览会“数字人才培养”交流活动在贵阳举办",
+        "url": "https://www.nda.gov.cn/sjj/jgsz/jld/xb/xbldhd/0901/20260901165247255663288_pc.html",
+        "source": "国家数据局",
+        "before": "2026-09-01",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/jgsz/jld/xb/xbldhd/0901/20260901165247255663288_pc.html"
+      },
+      {
+        "title": "媒体报道 | 词元奔涌数智兴——2026中国国际大数据产业博览会综述",
+        "url": "https://www.nda.gov.cn/sjj/swdt/mtsy/0901/20260901104845060562387_pc.html",
+        "source": "国家数据局",
+        "before": "2026-09-01",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/mtsy/0901/20260901104845060562387_pc.html"
+      },
+      {
+        "title": "通用智能的前沿发展——国家数据局举办2026年第12期（总第39期）“数据大讲堂”",
+        "url": "https://www.nda.gov.cn/sjj/jgsz/jld/llh/llhldhd/0831/20260831160946880542362_pc.html",
+        "source": "国家数据局",
+        "before": "2026-08-31",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/jgsz/jld/llh/llhldhd/0831/20260831160946880542362_pc.html"
+      },
+      {
+        "title": "央视新闻 | 2026数博会闭幕 共发布87项创新成果",
+        "url": "https://www.nda.gov.cn/sjj/swdt/mtsy/0830/20260830211852657791650_pc.html",
+        "source": "国家数据局",
+        "before": "2026-08-30",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/mtsy/0830/20260830211852657791650_pc.html"
+      },
+      {
+        "title": "《中国数据产业发展报告（2026）》在数博会开幕式发布",
+        "url": "https://www.nda.gov.cn/sjj/swdt/xwfb/0828/20260828233336307959824_pc.html",
+        "source": "国家数据局",
+        "before": "2026-08-28",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/xwfb/0828/20260828233336307959824_pc.html"
+      },
+      {
+        "title": "2026中国国际大数据产业博览会开幕",
+        "url": "https://www.nda.gov.cn/sjj/swdt/xwfb/0828/20260828213345032974683_pc.html",
+        "source": "国家数据局",
+        "before": "2026-08-28",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/xwfb/0828/20260828213345032974683_pc.html"
+      },
+      {
+        "title": "中国人民银行有关部门负责人就《关于改革完善房地产信贷管理 推动加快构建房地产发展新模式的意见》答记者问",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026082816463825521/index.html",
+        "source": "中国人民银行",
+        "before": "2026-08-28",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/goutongjiaoliu/113456/113469/2026082816463825521/index.html"
+      },
+      {
+        "title": "中国人民银行公告﹝2026﹞第22号",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026082809193480410/index.html",
+        "source": "中国人民银行",
+        "before": "2026-08-28",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/goutongjiaoliu/113456/113469/2026082809193480410/index.html"
+      },
+      {
+        "title": "中国人民银行新增西藏自治区分行支农支小再贷款额度50亿元 支持救灾及灾后重...",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026082717370314545/index.html",
+        "source": "中国人民银行",
+        "before": "2026-08-27",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/goutongjiaoliu/113456/113469/2026082717370314545/index.html"
+      },
+      {
+        "title": "中国人民银行副行长陆磊出席第十五届中国支付清算论坛",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026082717390451589/index.html",
+        "source": "中国人民银行",
+        "before": "2026-08-27",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/goutongjiaoliu/113456/113469/2026082717390451589/index.html"
+      },
+      {
+        "title": "国家数据局与约旦数字经济与创业部签署关于加强数字经济合作的谅解备忘录",
+        "url": "https://www.nda.gov.cn/sjj/swdt/xwfb/0826/20260826165027017947680_pc.html",
+        "source": "国家数据局",
+        "before": "2026-08-26",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/xwfb/0826/20260826165027017947680_pc.html"
+      },
+      {
+        "title": "国家数据局发布第五批公共数据“跑起来”示范场景清单",
+        "url": "https://www.nda.gov.cn/sjj/swdt/xwfb/0825/20260825221943908355266_pc.html",
+        "source": "国家数据局",
+        "before": "2026-08-25",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/xwfb/0825/20260825221943908355266_pc.html"
+      },
+      {
+        "title": "文字实录 | 国家数据局举办“数据价值化 我们在行动”系列新闻发布会（第五场）",
+        "url": "https://www.nda.gov.cn/sjj/swdt/xwfb/0825/20260825204140175751047_pc.html",
+        "source": "国家数据局",
+        "before": "2026-08-25",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/xwfb/0825/20260825204140175751047_pc.html"
+      },
+      {
+        "title": "中国人民银行行长潘功胜会见澳门银行公会代表团",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026081919184870631/index.html",
+        "source": "中国人民银行",
+        "before": "2026-08-19",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/goutongjiaoliu/113456/113469/2026081919184870631/index.html"
+      },
+      {
+        "title": "中澳（大利亚）两国央行续签双边本币互换协议",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026081915294182128/index.html",
+        "source": "中国人民银行",
+        "before": "2026-08-19",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/goutongjiaoliu/113456/113469/2026081915294182128/index.html"
+      },
+      {
+        "title": "中国人民银行新增8家数字人民币业务运营机构",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026081714114337358/index.html",
+        "source": "中国人民银行",
+        "before": "2026-08-17",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/goutongjiaoliu/113456/113469/2026081714114337358/index.html"
+      },
+      {
+        "title": "中国人民银行公告﹝2026﹞第21号",
+        "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026081417014187625/index.html",
+        "source": "中国人民银行",
+        "before": "2026-08-14",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/goutongjiaoliu/113456/113469/2026081417014187625/index.html"
+      },
+      {
+        "title": "第七期中华民族共同体理论体系专题研修班成功举办",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193820.shtml",
+        "source": "国家民族事务委员会",
+        "before": "2026-08-11",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/seac/xwzx/202608/1193820.shtml"
+      },
+      {
+        "title": "第七届全国少数民族文艺会演首台剧目《赶大营》在京演出",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193762.shtml",
+        "source": "国家民族事务委员会",
+        "before": "2026-08-11",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/seac/xwzx/202608/1193762.shtml"
+      },
+      {
+        "title": "48台剧目聚北京！第七届全国少数民族文艺会演今日开启",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193720.shtml",
+        "source": "国家民族事务委员会",
+        "before": "2026-08-11",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/seac/xwzx/202608/1193720.shtml"
+      },
+      {
+        "title": "第七届全国少数民族文艺会演媒体通气会在京举行",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193454.shtml",
+        "source": "国家民族事务委员会",
+        "before": "2026-08-11",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/seac/xwzx/202608/1193454.shtml"
+      },
+      {
+        "title": "国家局总公司党的建设工作领导小组召开会议巩固拓展树立和践行正确政绩观学习教育成果以行业高质量发展新成效为国家经济社会发展作出新贡献",
+        "url": "http://www.tobacco.gov.cn/gjyc/hytt/202608/09d011f989e742e5991df59f052c6def.shtml",
+        "source": "国家烟草专卖局",
+        "before": "2026-08-09",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/gjyc/hytt/202608/09d011f989e742e5991df59f052c6def.shtml"
+      },
+      {
+        "title": "全国数字科技和基础设施建设专项培训班在呼和浩特成功举办",
+        "url": "https://www.nda.gov.cn/sjj/swdt/sjdt/0724/20260724200841838788309_pc.html",
+        "source": "国家数据局",
+        "before": "2026-07-24",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/sjdt/0724/20260724200841838788309_pc.html"
+      },
+      {
+        "title": "全国数据资源开发利用培训班在大连成功举办",
+        "url": "https://www.nda.gov.cn/sjj/swdt/sjdt/0717/20260717213434597260385_pc.html",
+        "source": "国家数据局",
+        "before": "2026-07-17",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/sjdt/0717/20260717213434597260385_pc.html"
+      },
+      {
+        "title": "赵冲久会见汤加公共企业部代表团",
+        "url": "https://www.spb.gov.cn/gjyzj/c100015/c100016/202607/15f21c8651c64564baa916244adeb347.shtml",
+        "source": "国家邮政局",
+        "before": "2026-07-15",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/gjyzj/c100015/c100016/202607/15f21c8651c64564baa916244adeb347.shtml"
+      },
+      {
+        "title": "国家数据局召开网络安全、数据安全研究机构和企业座谈会",
+        "url": "https://www.nda.gov.cn/sjj/swdt/sjdt/0716/20260715204314007379543_pc.html",
+        "source": "国家数据局",
+        "before": "2026-07-15",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/sjj/swdt/sjdt/0716/20260715204314007379543_pc.html"
+      },
+      {
+        "title": "中国共产党国家烟草专卖局直属机关第五次党员代表大会强...",
+        "url": "http://www.tobacco.gov.cn/gjyc/xwtp/202606/10786724b4e940949c6aaac33cdeb36c.shtml",
+        "source": "国家烟草专卖局",
+        "before": "2026-06-10",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/gjyc/xwtp/202606/10786724b4e940949c6aaac33cdeb36c.shtml"
+      },
+      {
+        "title": "国家局党校举行2026年春季学期毕业典礼",
+        "url": "http://www.tobacco.gov.cn/gjyc/xwtp/202606/0265629cc84a46bcb142d55e5292787f.shtml",
+        "source": "国家烟草专卖局",
+        "before": "2026-06-02",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/gjyc/xwtp/202606/0265629cc84a46bcb142d55e5292787f.shtml"
+      },
+      {
+        "title": "“十五五”邮政业标准体系建设指南诚邀您建言献策",
+        "url": "https://www.spb.gov.cn/gjyzj/c100009/c100010/202603/26eee423827b466bad0826dc17824593.shtml",
+        "source": "国家邮政局",
+        "before": "2026-03-26",
+        "after": "",
+        "reason": "month_dir_id_splice",
+        "path": "/gjyzj/c100009/c100010/202603/26eee423827b466bad0826dc17824593.shtml"
+      }
+    ],
+    "first_query_dates_after_scrub": [
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09"
+    ],
+    "neac_1194319_after_scrub": [
+      {
+        "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+        "date": "",
+        "source": "国家民族事务委员会"
+      }
+    ]
+  },
+  "official_check": {
+    "today": "2026-09-09",
+    "pages": [
+      {
+        "url": "https://www.neac.gov.cn/",
+        "status": 200,
+        "bytes": 171201,
+        "extracted": [
+          {
+            "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+            "date": "2026-09-09",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml"
+          },
+          {
+            "title": "中央民族歌舞团慰问演出临时党支部在前郭尔罗斯蒙古族自治县开展党建活动",
+            "date": "2026-09-03",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194111.shtml"
+          },
+          {
+            "title": "北方民族大学校领导与全校学生同上“开学第一课”",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194081.shtml"
+          },
+          {
+            "title": "中南民大召开2026年秋季开学干部会议",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194090.shtml"
+          },
+          {
+            "title": "中央民族大学召开第九届党委第四次全委（扩大）会议并举办秋季学期干部教师培训班",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194103.shtml"
+          },
+          {
+            "title": "西南民族大学开展秋季学期开学前安全大检查",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194117.shtml"
+          },
+          {
+            "title": "一队一特色，普法润心田",
+            "date": "2026-09-07",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194235.shtml"
+          },
+          {
+            "title": "胡家福：生动鲜活讲好延边各民族交往交流交融故事 教育引导全州各族干部群众从内心深处树牢“四个与共”共同体理念",
+            "date": "2026-09-09",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194317.shtml"
+          },
+          {
+            "title": "海河连昆仑 文脉互交融 2026年津策文艺双向交流活动在新疆策勒成功举办",
+            "date": "2026-09-09",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194316.shtml"
+          },
+          {
+            "title": "会徽、吉祥物发布！海南这场少数民族体育盛会10月陵水举行",
+            "date": "2026-09-09",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194315.shtml"
+          },
+          {
+            "title": "新时代各地各部门推动民族团结进步创建提质增效综述",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194272.shtml"
+          },
+          {
+            "title": "新疆伽师县：“四心共融”促团结",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194226.shtml"
+          },
+          {
+            "title": "泰山脚下，同心圆里话发展",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194223.shtml"
+          },
+          {
+            "title": "把“纸上的法律”变为“行动中的法律”",
+            "date": "2026-09-07",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194231.shtml"
+          },
+          {
+            "title": "上学路，“修”到了云端",
+            "date": "2026-09-07",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194215.shtml"
+          },
+          {
+            "title": "内蒙古通辽新答卷：15分钟生活圈，何以成为各族群众的“幸福家”？",
+            "date": "2026-09-07",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194257.shtml"
+          },
+          {
+            "title": "畲族村的富硒稻长起来了，种田的人还记得那支队伍",
+            "date": "2026-09-04",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194142.shtml"
+          },
+          {
+            "title": "海南省省长刘小明在琼中调研经济社会发展情况",
+            "date": "2026-09-02",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194073.shtml"
+          },
+          {
+            "title": "跨越四千公里，桂疆共续山海情缘",
+            "date": "2026-09-07",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194221.shtml"
+          },
+          {
+            "title": "辽宁省召开落实“三项计划”工作推进会",
+            "date": "2026-09-07",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194260.shtml"
+          },
+          {
+            "title": "云南深化“团结进步同心营”品牌建设谱写各族青少年交往交流交融新篇",
+            "date": "2026-09-04",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194175.shtml"
+          },
+          {
+            "title": "非遗穿在身上，法律讲进心里",
+            "date": "2026-09-07",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194227.shtml"
+          },
+          {
+            "title": "中国语言资源保护工程成果展示馆开馆",
+            "date": "2026-09-04",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194144.shtml"
+          },
+          {
+            "title": "广西壮族自治区党委书记在南宁市调研文化和文物保护工作",
+            "date": "2026-09-03",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194137.shtml"
+          }
+        ],
+        "extracted_count": 124,
+        "sample": [
+          {
+            "title": "青海省擦亮品牌，推进互嵌式社区建设",
+            "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194250.shtml",
+            "date": "2026-09-07"
+          },
+          {
+            "title": "传统民俗节庆赋能边疆乡村高质量发展",
+            "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194246.shtml",
+            "date": "2026-09-07"
+          },
+          {
+            "title": "做好“铸牢”全媒体传播",
+            "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194245.shtml",
+            "date": "2026-09-07"
+          }
+        ]
+      },
+      {
+        "url": "https://www.neac.gov.cn/seac/xwzx/",
+        "status": 200,
+        "bytes": 48430,
+        "extracted": [
+          {
+            "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+            "date": "2026-09-09",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml"
+          },
+          {
+            "title": "中央民族歌舞团慰问演出临时党支部在前郭尔罗斯蒙古族自治县开展党建活动",
+            "date": "2026-09-03",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194111.shtml"
+          },
+          {
+            "title": "北方民族大学校领导与全校学生同上“开学第一课”",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194081.shtml"
+          },
+          {
+            "title": "中南民大召开2026年秋季开学干部会议",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194090.shtml"
+          },
+          {
+            "title": "中央民族大学召开第九届党委第四次全委（扩大）会议并举办秋季学期干部教师培训班",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194103.shtml"
+          },
+          {
+            "title": "西南民族大学开展秋季学期开学前安全大检查",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194117.shtml"
+          },
+          {
+            "title": "胡家福：生动鲜活讲好延边各民族交往交流交融故事 教育引导全州各族干部群众从内心深处树牢“四个与共”共同体理念",
+            "date": "2026-09-09",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194317.shtml"
+          },
+          {
+            "title": "海河连昆仑 文脉互交融 2026年津策文艺双向交流活动在新疆策勒成功举办",
+            "date": "2026-09-09",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194316.shtml"
+          },
+          {
+            "title": "会徽、吉祥物发布！海南这场少数民族体育盛会10月陵水...",
+            "date": "2026-09-09",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194315.shtml"
+          },
+          {
+            "title": "新时代各地各部门推动民族团结进步创建提质增效综述",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194272.shtml"
+          },
+          {
+            "title": "新疆伽师县：“四心共融”促团结",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194226.shtml"
+          }
+        ],
+        "extracted_count": 38,
+        "sample": [
+          {
+            "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+            "date": "2026-09-09"
+          },
+          {
+            "title": "第七期中华民族共同体理论体系专题研修班成功举办",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193820.shtml",
+            "date": "2026-08-21"
+          },
+          {
+            "title": "第七届全国少数民族文艺会演首台剧目《赶大营》在京演...",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193762.shtml",
+            "date": "2026-08-19"
+          }
+        ]
+      },
+      {
+        "url": "https://www.neac.gov.cn/seac/xwzx/index.shtml",
+        "status": 200,
+        "bytes": 48430,
+        "extracted": [
+          {
+            "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+            "date": "2026-09-09",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml"
+          },
+          {
+            "title": "中央民族歌舞团慰问演出临时党支部在前郭尔罗斯蒙古族自治县开展党建活动",
+            "date": "2026-09-03",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194111.shtml"
+          },
+          {
+            "title": "北方民族大学校领导与全校学生同上“开学第一课”",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194081.shtml"
+          },
+          {
+            "title": "中南民大召开2026年秋季开学干部会议",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194090.shtml"
+          },
+          {
+            "title": "中央民族大学召开第九届党委第四次全委（扩大）会议并举办秋季学期干部教师培训班",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194103.shtml"
+          },
+          {
+            "title": "西南民族大学开展秋季学期开学前安全大检查",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194117.shtml"
+          },
+          {
+            "title": "胡家福：生动鲜活讲好延边各民族交往交流交融故事 教育引导全州各族干部群众从内心深处树牢“四个与共”共同体理念",
+            "date": "2026-09-09",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194317.shtml"
+          },
+          {
+            "title": "海河连昆仑 文脉互交融 2026年津策文艺双向交流活动在新疆策勒成功举办",
+            "date": "2026-09-09",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194316.shtml"
+          },
+          {
+            "title": "会徽、吉祥物发布！海南这场少数民族体育盛会10月陵水...",
+            "date": "2026-09-09",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194315.shtml"
+          },
+          {
+            "title": "新时代各地各部门推动民族团结进步创建提质增效综述",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194272.shtml"
+          },
+          {
+            "title": "新疆伽师县：“四心共融”促团结",
+            "date": "2026-09-08",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194226.shtml"
+          }
+        ],
+        "extracted_count": 38,
+        "sample": [
+          {
+            "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+            "date": "2026-09-09"
+          },
+          {
+            "title": "第七期中华民族共同体理论体系专题研修班成功举办",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193820.shtml",
+            "date": "2026-08-21"
+          },
+          {
+            "title": "第七届全国少数民族文艺会演首台剧目《赶大营》在京演...",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193762.shtml",
+            "date": "2026-08-19"
+          }
+        ]
+      },
+      {
+        "url": "https://www.neac.gov.cn/seac/mwjs/201805/1009171.shtml",
+        "status": 200,
+        "bytes": 32737,
+        "extracted": [],
+        "extracted_count": 0,
+        "sample": []
+      },
+      {
+        "url": "https://www.neac.gov.cn/seac/mwjs/mzzc/jj.shtml",
+        "status": 200,
+        "bytes": 31502,
+        "extracted": [],
+        "extracted_count": 0,
+        "sample": []
+      },
+      {
+        "url": "https://www.neac.gov.cn/seac/xwzx/mwyw/index.shtml",
+        "status": 200,
+        "bytes": 34844,
+        "extracted": [
+          {
+            "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+            "date": "2026-09-09",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml"
+          }
+        ],
+        "extracted_count": 20,
+        "sample": [
+          {
+            "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+            "date": "2026-09-09"
+          },
+          {
+            "title": "第七期中华民族共同体理论体系专题研修班成功举办",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193820.shtml",
+            "date": "2026-08-21"
+          },
+          {
+            "title": "第七届全国少数民族文艺会演首台剧目《赶大营》在京演出",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193762.shtml",
+            "date": "2026-08-19"
+          }
+        ]
+      },
+      {
+        "url": "https://www.neac.gov.cn/seac/xwzx/mwdt/index.shtml",
+        "status": 200,
+        "bytes": 34597,
+        "extracted": [],
+        "extracted_count": 20,
+        "sample": [
+          {
+            "title": "第七届全国少数民族文艺会演开启 48台优秀剧目进京演出",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193767.shtml",
+            "date": "2026-08-19"
+          },
+          {
+            "title": "中华民族共同体体验馆2026年第三期中华民族共同体文化体验项目开展",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193282.shtml",
+            "date": "2026-07-31"
+          },
+          {
+            "title": "国家民委机关服务局党委、‌中华全国供销合作总社办公厅党支部开展联学共建主题党日活动",
+            "url": "https://www.neac.gov.cn/seac/xwzx/202607/1192544.shtml",
+            "date": "2026-07-13"
+          }
+        ]
+      }
+    ],
+    "article": {
+      "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+      "status": 200,
+      "bytes": 144370,
+      "publish_hint": "",
+      "has_1194319": true,
+      "snippet": "发布会 介绍发展社会主义民主有关情况\"/>\r\n<meta name=\"PubDate\" content=\"2026-09-09 14:50:53\"/>\r\n<me",
+      "applied_to_cache": true,
+      "publish_hint_after_meta_support": "2026-09-09",
+      "list_same_item_date": "2026-09-09",
+      "applied_reason": "Same-item list date on neac home/xwzx plus article meta PubDate 2026-09-09 14:50:53; not month-dir+id 2026-09-11 and not a neighbor story."
+    },
+    "department_refresh": {
+      "ok": true,
+      "error": null,
+      "fetched": 30,
+      "added": 30,
+      "failures": [],
+      "scope": "department",
+      "sample": [
+        {
+          "title": "青海省擦亮品牌，推进互嵌式社区建设",
+          "date": "2026-09-07",
+          "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194250.shtml"
+        },
+        {
+          "title": "多措并举，构筑共有精神家园",
+          "date": "2026-09-07",
+          "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194243.shtml"
+        },
+        {
+          "title": "在法治轨道上推进民族事务治理体系和治理能力现代化",
+          "date": "2026-09-07",
+          "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194242.shtml"
+        },
+        {
+          "title": "加快中华民族共同体理论体系建设",
+          "date": "2026-09-07",
+          "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194244.shtml"
+        },
+        {
+          "title": "做好“铸牢”全媒体传播",
+          "date": "2026-09-07",
+          "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194245.shtml"
+        },
+        {
+          "title": "传统民俗节庆赋能边疆乡村高质量发展",
+          "date": "2026-09-07",
+          "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194246.shtml"
+        },
+        {
+          "title": "突出红石榴文化符号，推动“铸牢”走深走实",
+          "date": "2026-09-05",
+          "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194164.shtml"
+        },
+        {
+          "title": "舆情中心2026年部门预算公开",
+          "date": "2026-08-19",
+          "url": "https://www.neac.gov.cn/seac/xxgk/202608/1193746.shtml"
+        }
+      ]
+    },
+    "list_hits_for_1194319": [
+      {
+        "page": "https://www.neac.gov.cn/",
+        "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+        "date": "2026-09-09"
+      },
+      {
+        "page": "https://www.neac.gov.cn/seac/xwzx/",
+        "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+        "date": "2026-09-09"
+      },
+      {
+        "page": "https://www.neac.gov.cn/seac/xwzx/index.shtml",
+        "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+        "date": "2026-09-09"
+      },
+      {
+        "page": "https://www.neac.gov.cn/seac/xwzx/mwyw/index.shtml",
+        "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+        "date": "2026-09-09"
+      }
+    ]
+  },
+  "after": {
+    "total": 525,
+    "query_total": 525,
+    "first_query_dates": [
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09"
+    ],
+    "first_item": {
+      "title": "黄石海事局气象类大风四级（蓝色）水上交通安全预警 (2026)216",
+      "url": "https://www.mot.gov.cn/fuwu/yujingtishi/cjanquanyujing/202609/t20260909_4224032.html",
+      "date": "2026-09-09",
+      "source": "交通运输部"
+    },
+    "neac": [
+      {
+        "title": "青海省擦亮品牌，推进互嵌式社区建设",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194250.shtml",
+        "date": "2026-09-07",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "多措并举，构筑共有精神家园",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194243.shtml",
+        "date": "2026-09-07",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "在法治轨道上推进民族事务治理体系和治理能力现代化",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194242.shtml",
+        "date": "2026-09-07",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "加快中华民族共同体理论体系建设",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194244.shtml",
+        "date": "2026-09-07",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "做好“铸牢”全媒体传播",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194245.shtml",
+        "date": "2026-09-07",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "传统民俗节庆赋能边疆乡村高质量发展",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194246.shtml",
+        "date": "2026-09-07",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "突出红石榴文化符号，推动“铸牢”走深走实",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202609/1194164.shtml",
+        "date": "2026-09-05",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "舆情中心2026年部门预算公开",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202608/1193746.shtml",
+        "date": "2026-08-19",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "舆情中心2025年部门决算公开",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202608/1193747.shtml",
+        "date": "2026-08-19",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "国家民委机关本级2025年度部门决算",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202608/1193707.shtml",
+        "date": "2026-08-17",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "离退休干部局2025年度决算公开",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202608/1193453.shtml",
+        "date": "",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "机关服务中心2025年度决算公开",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202608/1193452.shtml",
+        "date": "",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "全国少数民族古籍整理研究室2025年决算公开",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202608/1193312.shtml",
+        "date": "2026-08-04",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "国家民委2025年度部门决算",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202607/1192953.shtml",
+        "date": "2026-07-23",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "中华人民共和国2025年国民经济和社会发展统计公报",
+        "url": "https://www.neac.gov.cn/seac/c103544/202606/1190888.shtml",
+        "date": "2026-02-28",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "国家民委关于修改《国家民委科研项目管理办法》的决定",
+        "url": "https://www.neac.gov.cn/seac/c103280/202503/1179105.shtml",
+        "date": "2025-03-05",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "中华人民共和国2024年国民经济和社会发展统计公报",
+        "url": "https://www.neac.gov.cn/seac/c103544/202606/1190889.shtml",
+        "date": "2025-02-28",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "对十四届全国人大一次会议第6798号建议的答复",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202312/1169836.shtml",
+        "date": "2023-12-29",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "对十四届全国人大一次会议第2728号建议的答复",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202312/1169835.shtml",
+        "date": "2023-12-29",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "对十四届全国人大一次会议第1516号建议的答复",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202312/1169832.shtml",
+        "date": "2023-12-29",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "对十四届全国人大一次会议第0174号建议的答复",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202312/1169833.shtml",
+        "date": "2023-12-29",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "关于政协第十四届全国委员会第一次会议第00957号（文体宣传类064号）提案答复的函",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202312/1169838.shtml",
+        "date": "2023-12-29",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "关于政协第十四届全国委员会第一次会议第00836号（文体宣传类056号）提案答复的函",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202312/1169837.shtml",
+        "date": "2023-12-29",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "关于政协第十三届全国委员会第五次会议第04426号（文体宣传类367号）提案答复的函",
+        "url": "https://www.neac.gov.cn/seac/xxgk/202301/1160016.shtml",
+        "date": "2023-01-10",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "巴音郭楞蒙古自治州2021年国民经济和社会发展统计公报",
+        "url": "https://www.neac.gov.cn/seac/c103544/202210/1159397.shtml",
+        "date": "2022-10-26",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "克孜勒苏柯尔克孜自治州2021年国 经济和社会发展统计公...",
+        "url": "https://www.neac.gov.cn/seac/c103544/202210/1159401.shtml",
+        "date": "2022-10-26",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "民族统计工作管理办法",
+        "url": "https://www.neac.gov.cn/seac/c103280/202111/1154740.shtml",
+        "date": "2017-12-28",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "中国公民民族成份登记管理办法",
+        "url": "https://www.neac.gov.cn/seac/c103280/202111/1154721.shtml",
+        "date": "2015-06-26",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "全国民族团结进步教育基地评审命名办法",
+        "url": "https://www.neac.gov.cn/seac/c103280/202111/1154739.shtml",
+        "date": "2013-09-30",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "国家民委制定规章和规范性文件的规定",
+        "url": "https://www.neac.gov.cn/seac/c103280/202111/1154723.shtml",
+        "date": "2011-08-05",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "第七期中华民族共同体理论体系专题研修班成功举办",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193820.shtml",
+        "date": "",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "第七届全国少数民族文艺会演首台剧目《赶大营》在京演出",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193762.shtml",
+        "date": "",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "第七届全国少数民族文艺会演媒体通气会在京举行",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193454.shtml",
+        "date": "",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+        "date": "",
+        "source": "国家民族事务委员会"
+      },
+      {
+        "title": "48台剧目聚北京！第七届全国少数民族文艺会演今日开启",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202608/1193720.shtml",
+        "date": "",
+        "source": "国家民族事务委员会"
+      }
+    ],
+    "neac_1194319": {
+      "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+      "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+      "date": "2026-09-09",
+      "source": "国家民族事务委员会"
+    },
+    "unknown_on_first_200": 0,
+    "first_unknown_sample": null,
+    "order_ok": true,
+    "applied_neac_list_and_pubdate": true
+  },
+  "notes": [
+    "GET was not used to write.",
+    "live-fetch.json and retest-policy-dates.json were not modified.",
+    "Dates without evidence stay empty and do not rank as newest.",
+    "Not independent review. Not accepted/production."
+  ]
+}

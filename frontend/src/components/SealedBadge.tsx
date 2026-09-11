@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { HelpCircle } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useSettings } from '@/lib/useSharedQueries'
 import { toast } from '@/components/Toast'
 
 /** 单方向(涨停/跌停)的修正明细块 */
@@ -54,8 +56,12 @@ export function SealedBadge({ degraded, hasDepth, isHistorical, sealedReady, sea
   invalidateKeys?: string[]
 }) {
   const [showHint, setShowHint] = useState(false)
+  const anchorRef = useRef<HTMLButtonElement>(null)
+  const [pos, setPos] = useState({ top: 0, left: 0 })
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const settings = useSettings()
+  const canManage = settings.data?.is_admin === true
   const runFix = useMutation({
     mutationFn: () => api.runLimitLadderFix(),
     onSuccess: (data) => {
@@ -73,9 +79,42 @@ export function SealedBadge({ degraded, hasDepth, isHistorical, sealedReady, sea
 
   const label = degraded ? '降级' : '修正'
 
+  useLayoutEffect(() => {
+    if (!showHint || !anchorRef.current) return
+    const rect = anchorRef.current.getBoundingClientRect()
+    const cell = anchorRef.current.closest('.overflow-visible.rounded-lg') as HTMLElement | null
+    const cellRect = cell?.getBoundingClientRect() ?? rect
+    const popupWidth = 256
+    const popupHeight = 240
+    const gap = 12
+    let left = cellRect.right + gap
+    let top = rect.top
+    if (left + popupWidth > window.innerWidth - 8) {
+      left = cellRect.left - popupWidth - gap
+    }
+    left = Math.min(Math.max(8, left), window.innerWidth - popupWidth - 8)
+    if (top + popupHeight > window.innerHeight - 8) {
+      top = Math.max(8, window.innerHeight - popupHeight - 8)
+    }
+    setPos({ top, left })
+  }, [showHint])
+
+  useEffect(() => {
+    if (!showHint) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowHint(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [showHint])
+
   return (
     <div className="relative inline-flex items-center">
       <button
+        ref={anchorRef}
+        type="button"
+        aria-expanded={showHint}
+        aria-label={degraded ? '查看真假涨停判定降级说明' : '查看五档盘口修正结果'}
         onClick={() => setShowHint(v => !v)}
         className="group inline-flex items-center gap-1 h-5 px-2 rounded-full bg-yellow-500/10 border border-yellow-500/30 cursor-help transition-all hover:bg-yellow-500/20 hover:border-yellow-500/50"
       >
@@ -83,15 +122,19 @@ export function SealedBadge({ degraded, hasDepth, isHistorical, sealedReady, sea
         <span className="text-[10px] font-medium text-yellow-600 dark:text-yellow-500 leading-none">{label}</span>
         <HelpCircle className="h-3 w-3 text-yellow-500/70 group-hover:text-yellow-500 transition-colors" />
       </button>
-      <AnimatePresence>
+      {createPortal(
+        <AnimatePresence>
         {showHint && (
           <>
-            <div className="fixed inset-0 z-40" onClick={() => setShowHint(false)} />
+            <div className="fixed inset-0 z-[60]" onClick={() => setShowHint(false)} />
             <motion.div
+              role="dialog"
+              aria-label={degraded ? '真假涨停判定降级' : '五档盘口修正结果'}
               initial={{ opacity: 0, y: -4, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -4, scale: 0.95 }}
-              className="absolute top-full left-0 mt-1 z-50 w-64 bg-surface border border-border rounded-md shadow-xl p-3 text-[11px] text-secondary leading-relaxed"
+              style={{ position: 'fixed', top: pos.top, left: pos.left, width: 256 }}
+              className="z-[70] w-64 bg-surface border border-border rounded-md shadow-xl p-3 text-[11px] text-secondary leading-relaxed"
               onClick={e => e.stopPropagation()}
             >
               {degraded ? (
@@ -117,7 +160,7 @@ export function SealedBadge({ degraded, hasDepth, isHistorical, sealedReady, sea
                   </div>
                 </>
               )}
-              <div className="mt-2 flex gap-1.5">
+              {canManage && <div className="mt-2 flex gap-1.5">
                 {hasDepth && !isHistorical && (
                   <button
                     onClick={() => { runFix.mutate(); setShowHint(false) }}
@@ -133,11 +176,13 @@ export function SealedBadge({ degraded, hasDepth, isHistorical, sealedReady, sea
                 >
                   去设置 →
                 </button>
-              </div>
+              </div>}
             </motion.div>
           </>
         )}
-      </AnimatePresence>
+        </AnimatePresence>,
+        document.body,
+      )}
     </div>
   )
 }

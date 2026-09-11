@@ -1,18 +1,19 @@
 import { useRef, useState, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Settings, Tag, Upload, Code, RefreshCw, CheckCircle2, Loader2, Pencil, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react'
+import { Settings, Tag, Upload, Code, RefreshCw, CheckCircle2, Loader2, Pencil, ChevronDown, ChevronUp, AlertTriangle, GitBranch } from 'lucide-react'
 import { api, type ExtDataConfig } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { SettingsModal } from '@/components/data/SettingsModal'
 import { ExtDataPullPanel } from './ExtDataPullPanel'
 import { ExtDataApiPanel } from './ExtDataApiPanel'
 
-export function ExtDataStatCard({ config, onDelete, deleting, onEdit }: {
+export function ExtDataStatCard({ config, onDelete, deleting, onEdit, onTraceSource }: {
   config: ExtDataConfig
   onDelete: () => void
   deleting: boolean
   onEdit?: () => void
+  onTraceSource?: () => void
 }) {
   const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
@@ -84,10 +85,20 @@ export function ExtDataStatCard({ config, onDelete, deleting, onEdit }: {
             {config.mode === 'snapshot' ? '快照' : '时序'}
           </span>
           <button
+            type="button"
+            onClick={onTraceSource}
+            aria-label={`追踪 ${config.label} 来源`}
+            className="rounded p-0.5 text-accent transition-colors hover:bg-accent/10"
+          >
+            <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
             onClick={() => setSettingsOpen(v => !v)}
+            aria-label={`打开 ${config.label} 设置`}
             className="p-0.5 rounded hover:bg-elevated transition-colors text-secondary"
           >
-            <Settings className="h-3.5 w-3.5" />
+            <Settings aria-hidden="true" className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
@@ -144,7 +155,7 @@ export function ExtDataStatCard({ config, onDelete, deleting, onEdit }: {
 
       <AnimatePresence>
         {settingsOpen && (
-          <SettingsModal title={`${config.label} · 设置`} onClose={() => setSettingsOpen(false)}>
+          <SettingsModal title={`${config.label} · 设置`} onClose={() => setSettingsOpen(false)} width="max-w-2xl">
             <div className="space-y-3">
               {onEdit && (
                 <button

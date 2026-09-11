@@ -99,13 +99,30 @@ class _CacheEntry:
         self.ts = ts
 
 
+class _InFlight:
+    """同 key 正在计算的占位: leader 算完通过 done 唤醒跟随者复用结果。"""
+
+    __slots__ = ("done", "df", "error")
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.df: pl.DataFrame | None = None
+        self.error: BaseException | None = None
+
+
 class PanelCache:
-    """LRU + TTL 数据面板缓存。"""
+    """LRU + TTL 数据面板缓存。同 key 单飞, 避免 ETF/股票面板并发踩踏。"""
 
     def __init__(self, max_size: int = 2, ttl_seconds: int = 180):
         self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
         self._max_size = max_size
         self._ttl = ttl_seconds
+        self._lock = threading.Lock()
+        self._inflight: dict[str, _InFlight] = {}
+        self._compute_seconds = 0.0
+        self._compute_count = 0
+        self._hit_count = 0
+        self._reuse_count = 0
 
     def get_or_compute(
         self,
@@ -114,34 +131,90 @@ class PanelCache:
         end: date,
         columns: list[str] | None,
         compute_fn,
+        asset_type: str = "stock",
     ) -> pl.DataFrame:
-        key = self._make_key(symbols, start, end, columns)
+        key = self._make_key(symbols, start, end, columns, asset_type)
         now = time.monotonic()
 
-        if key in self._cache:
-            entry = self._cache[key]
-            if now - entry.ts < self._ttl:
-                self._cache.move_to_end(key)
-                return entry.df
-            del self._cache[key]
+        with self._lock:
+            entry = self._cache.get(key)
+            if entry is not None:
+                if now - entry.ts < self._ttl:
+                    self._cache.move_to_end(key)
+                    self._hit_count += 1
+                    return entry.df
+                del self._cache[key]
+            flight = self._inflight.get(key)
+            leader = flight is None
+            if leader:
+                flight = _InFlight()
+                self._inflight[key] = flight
 
-        df = compute_fn(symbols, start, end, columns)
-        self._cache[key] = _CacheEntry(df=df, ts=now)
-        if len(self._cache) > self._max_size:
-            self._cache.popitem(last=False)
+        if not leader:
+            flight.done.wait()
+            with self._lock:
+                self._reuse_count += 1
+            if flight.error is not None:
+                raise flight.error
+            return flight.df
+
+        t_compute = time.perf_counter()
+        try:
+            df = compute_fn(symbols, start, end, columns, asset_type)
+        except BaseException as exc:
+            with self._lock:
+                self._compute_seconds += time.perf_counter() - t_compute
+                self._compute_count += 1
+                self._inflight.pop(key, None)
+            flight.error = exc
+            flight.done.set()
+            raise
+        with self._lock:
+            self._compute_seconds += time.perf_counter() - t_compute
+            self._compute_count += 1
+            self._cache[key] = _CacheEntry(df=df, ts=now)
+            if len(self._cache) > self._max_size:
+                self._cache.popitem(last=False)
+            self._inflight.pop(key, None)
+        flight.df = df
+        flight.done.set()
         return df
 
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "compute_seconds": round(self._compute_seconds, 4),
+                "compute_count": self._compute_count,
+                "hit_count": self._hit_count,
+                "reuse_count": self._reuse_count,
+            }
+
     def invalidate(self) -> None:
-        self._cache.clear()
+        with self._lock:
+            self._cache.clear()
 
     @staticmethod
-    def _make_key(symbols: list[str] | None, start: date, end: date, columns: list[str] | None) -> str:
+    def _make_key(
+        symbols: list[str] | None,
+        start: date,
+        end: date,
+        columns: list[str] | None,
+        asset_type: str = "stock",
+    ) -> str:
         if symbols is None:
             h = "all"
         else:
             h = hashlib.md5(",".join(sorted(symbols)).encode()).hexdigest()[:12]
         cols = "all" if columns is None else hashlib.md5(",".join(sorted(columns)).encode()).hexdigest()[:8]
-        return f"{h}:{start}:{end}:{cols}"
+        return f"{asset_type}:{h}:{start}:{end}:{cols}"
+
+
+# 等待进行中 enriched 发布的上限与轮询间隔。孤儿标记由 get_enriched_generation
+# 在读取时直接自愈, 因此这里等到的 EnrichedGenerationUnavailableError 意味着
+# 发布方确实存活 —— 对回测/优化这类长任务, 有界等待优于立即失败。仅用于
+# worker 任务路径 (矩阵加载), 实时热路径不得调用 data_generation_await。
+_GENERATION_WAIT_TIMEOUT_S = 300.0
+_GENERATION_POLL_S = 1.0
 
 
 # ================================================================
@@ -157,15 +230,92 @@ class BacktestEngine:
 
     # ── 数据加载 ──────────────────────────────────────
 
+    def data_generation(self, asset_type: str = "stock") -> str | None:
+        loader = getattr(self.repo, "get_matrix_data_generation", None)
+        return loader(asset_type) if callable(loader) else None
+
+    def data_generation_await(
+        self,
+        asset_type: str = "stock",
+        *,
+        cancel_event: threading.Event | None = None,
+        timeout_s: float = _GENERATION_WAIT_TIMEOUT_S,
+    ) -> str | None:
+        """获取 generation; 发布进行中时在超时窗口内轮询, 可被取消事件打断。"""
+        deadline = time.monotonic() + timeout_s
+        while True:
+            try:
+                return self.data_generation(asset_type)
+            except EnrichedGenerationUnavailableError:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(_GENERATION_POLL_S)
+
+    def assert_data_generation(
+        self,
+        asset_type: str,
+        expected: str | None,
+    ) -> None:
+        if expected is None:
+            return
+        current = self.data_generation(asset_type)
+        if current != expected:
+            from app.enriched_generation import EnrichedGenerationUnavailableError
+
+            raise EnrichedGenerationUnavailableError(
+                "enriched data changed while the snapshot was being read"
+            )
+
     def load_panel(
         self,
         symbols: list[str] | None,
         start: date,
         end: date,
         columns: list[str] | None = None,
+        asset_type: str = "stock",
+        expected_generation: str | None = None,
+        **_: object,
     ) -> pl.DataFrame:
-        """加载 enriched 数据面板，带缓存。"""
-        return self._cache.get_or_compute(symbols, start, end, columns, self._load_panel_inner)
+        """加载 enriched 数据面板，带缓存。asset_type='etf' 读独立 ETF 面板, 不覆盖本地股票缓存路径。"""
+        return self._cache.get_or_compute(
+            symbols, start, end, columns, self._load_panel_inner, asset_type=asset_type,
+        )
+
+    def load_panel_for_backtest(
+        self,
+        symbols: list[str] | None,
+        start: date,
+        end: date,
+        feature_plan,
+        asset_type: str = "stock",
+    ) -> pl.DataFrame:
+        """Load the narrow base panel and compute the resolved backtest features."""
+        from app.indicators.pipeline import compute_indicators, compute_limit_signals, compute_signals
+
+        df = self.load_panel(
+            symbols,
+            start,
+            end,
+            columns=sorted(getattr(feature_plan, "base_columns", ())),
+            asset_type=asset_type,
+        )
+        if df.is_empty():
+            return df
+        df = compute_indicators(df)
+        instruments = (
+            self.repo.get_instruments_asset(asset_type)
+            if self.repo is not None and hasattr(self.repo, "get_instruments_asset")
+            else pl.DataFrame()
+        )
+        if instruments is not None and not getattr(instruments, "is_empty", lambda: True)():
+            df = compute_limit_signals(df, instruments)
+        df = compute_signals(df)
+        return df
+
+    def clear_panel_cache(self) -> None:
+        self._cache.invalidate()
 
     def _load_panel_inner(
         self,
@@ -173,21 +323,24 @@ class BacktestEngine:
         start: date,
         end: date,
         columns: list[str] | None = None,
+        asset_type: str = "stock",
     ) -> pl.DataFrame:
         t0 = time.perf_counter()
 
-        # 近期区间优先复用 repository 的预计算 enriched 历史缓存，避免重复 scan_parquet + compute_all。
-        try:
-            if self.repo is not None and hasattr(self.repo, "get_enriched_range"):
-                cached = self.repo.get_enriched_range(start, end, symbols=symbols, columns=columns)
-                if cached is not None and not cached.is_empty():
-                    elapsed = (time.perf_counter() - t0) * 1000
-                    logger.info("load_panel(cache): %.0fms, %d rows, %d columns", elapsed, len(cached), len(cached.columns))
-                    return cached
-        except Exception as e:  # noqa: BLE001
-            logger.debug("backtest load panel cache miss: %s", e)
+        # 股票路径保留本地预计算缓存; ETF 走独立目录, 不强行换成上游整段 loader。
+        if asset_type != "etf":
+            try:
+                if self.repo is not None and hasattr(self.repo, "get_enriched_range"):
+                    cached = self.repo.get_enriched_range(start, end, symbols=symbols, columns=columns)
+                    if cached is not None and not cached.is_empty():
+                        elapsed = (time.perf_counter() - t0) * 1000
+                        logger.info("load_panel(cache): %.0fms, %d rows, %d columns", elapsed, len(cached), len(cached.columns))
+                        return cached
+            except Exception as e:  # noqa: BLE001
+                logger.debug("backtest load panel cache miss: %s", e)
 
-        enriched_glob = str(self.repo.store.data_dir / "kline_daily_enriched" / "**" / "*.parquet")
+        panel_dir = "kline_etf_enriched" if asset_type == "etf" else "kline_daily_enriched"
+        enriched_glob = str(self.repo.store.data_dir / panel_dir / "**" / "*.parquet")
 
         try:
             lf = pl.scan_parquet(enriched_glob)
@@ -221,9 +374,20 @@ class BacktestEngine:
             logger.info("load_panel: %.0fms, %d rows, %d columns", elapsed, len(df), len(df.columns))
             return df
 
-        from app.indicators.pipeline import compute_all
-        instruments = self.repo.get_instruments()
-        df = compute_all(df, instruments=instruments)
+        instruments = (
+            self.repo.get_instruments_asset(asset_type)
+            if hasattr(self.repo, "get_instruments_asset")
+            else self.repo.get_instruments()
+        )
+        # 股票保留本地 compute_all (含涨跌停/股本)。ETF 没有 raw_close 时
+        # 不能走股票涨跌停链, 只算通用指标/信号, 与独立 ETF 面板共存。
+        if asset_type == "etf":
+            from app.indicators.pipeline import compute_indicators, compute_signals
+            df = compute_indicators(df)
+            df = compute_signals(df)
+        else:
+            from app.indicators.pipeline import compute_all
+            df = compute_all(df, instruments=instruments)
         if not instruments.is_empty() and "name" not in df.columns:
             inst_cols = [c for c in ["symbol", "name"] if c in instruments.columns]
             if len(inst_cols) == 2:

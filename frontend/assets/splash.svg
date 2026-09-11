@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2732" height="2732" viewBox="0 0 2732 2732">
+  <rect width="2732" height="2732" fill="#0a0a0b"/>
+  <g transform="translate(854 770)">
+    <path d="M358 260H254v504h104" fill="none" stroke="#8b5cf6" stroke-width="72" stroke-linejoin="round"/>
+    <path d="M666 260h104v504H666" fill="none" stroke="#8b5cf6" stroke-width="72" stroke-linejoin="round"/>
+    <line x1="512" y1="304" x2="512" y2="720" stroke="#c4b5fd" stroke-width="54" stroke-linecap="round" opacity=".72"/>
+    <rect x="422" y="358" width="180" height="248" rx="22" fill="#7c3aed"/>
+  </g>
+  <text x="1366" y="1900" text-anchor="middle" fill="#fafafa" font-family="monospace" font-size="112" font-weight="700">one-trading</text>
+  <text x="1366" y="2010" text-anchor="middle" fill="#71717a" font-family="sans-serif" font-size="48" letter-spacing="12">PRIVATE</text>
+</svg>

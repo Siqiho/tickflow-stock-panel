@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Search, Loader2 } from 'lucide-react'
@@ -7,6 +7,7 @@ import { QK } from '@/lib/queryKeys'
 
 interface Props {
   onSelect: (symbol: string, name: string) => void
+  trailingAction?: ReactNode
 }
 
 /**
@@ -14,7 +15,7 @@ interface Props {
  * 复用 instrumentSearch 后端(代码 / 名称模糊匹配),单选即跳转该股财务详情。
  * 模式对齐 Watchlist.StockSearchBox:useQuery + 外部点击关闭 + 键盘导航。
  */
-export function StockFinancialSearch({ onSelect }: Props) {
+export function StockFinancialSearch({ onSelect, trailingAction }: Props) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(-1)
@@ -79,11 +80,20 @@ export function StockFinancialSearch({ onSelect }: Props) {
           onFocus={() => { if (trimmed) setOpen(true) }}
           onKeyDown={handleKeyDown}
           // 较宽、更醒目 —— 作为财务页主入口
-          className="w-full h-11 pl-11 pr-10 rounded-card bg-surface border border-border text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-accent/50 focus:bg-base transition-colors"
+          className={`w-full h-11 pl-11 rounded-card bg-surface border border-border text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-accent/50 focus:bg-base transition-colors ${
+            trailingAction && search.isFetching ? 'pr-10 lg:pr-20' : 'pr-10'
+          }`}
         />
         {search.isFetching && (
-          <Loader2 className="absolute right-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted animate-spin" />
+          <Loader2 className={`absolute top-1/2 -translate-y-1/2 h-4 w-4 text-muted animate-spin ${
+            trailingAction ? 'right-3.5 lg:right-11' : 'right-3.5'
+          }`} />
         )}
+        {trailingAction ? (
+          <div className="absolute right-2 top-1/2 hidden -translate-y-1/2 items-center lg:flex">
+            {trailingAction}
+          </div>
+        ) : null}
       </div>
 
       <AnimatePresence>

@@ -36,6 +36,8 @@ export interface StockDataTableProps {
   renderHeaderContent?: (col: ColumnConfig) => ReactNode | undefined
   /** 外层容器 className */
   className?: string
+  /** 额外允许排序的 builtin key（覆盖 UNSORTABLE_KEYS） */
+  extraSortableKeys?: Set<string>
 }
 
 function alignThClass(align: ColumnConfig['align']): string {
@@ -56,6 +58,7 @@ export function StockDataTable({
   extraHeader,
   renderHeaderContent,
   className = 'rounded-card border border-border overflow-x-auto',
+  extraSortableKeys,
 }: StockDataTableProps) {
   const visibleColumns = columns.filter(c => c.visible)
   const computedMinWidth = minWidth ?? Math.max(900, visibleColumns.length * 110)
@@ -63,6 +66,8 @@ export function StockDataTable({
   const isColSortable = (col: ColumnConfig): boolean => {
     // 排序能力由调用方是否提供 onSortToggle 决定；sort 是否为 null 只影响当前指示器
     if (!onSortToggle) return false
+    const builtinKey = col.source.type === 'builtin' ? col.source.key : ''
+    if (builtinKey && extraSortableKeys?.has(builtinKey)) return true
     if (col.source.type === 'builtin' && UNSORTABLE_KEYS.has(col.source.key)) return false
     return true
   }

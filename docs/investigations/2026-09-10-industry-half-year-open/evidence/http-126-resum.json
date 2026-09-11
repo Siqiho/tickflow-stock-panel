@@ -1,0 +1,125 @@
+{
+  "captured_at": "2026-09-10T14:44:22.809814+08:00",
+  "anon_status": 401,
+  "http_status": 200,
+  "start": "2026-03-11",
+  "end": "2026-09-09",
+  "window_complete": true,
+  "full_count": 128,
+  "covered_count": 128,
+  "calendar_covers": true,
+  "freshness_status": "fresh",
+  "freshness_note": "足够新",
+  "http_match_aggregate": true,
+  "http_match_parquet_128": true,
+  "parquet_full_count": 128,
+  "http_item_count": 128,
+  "mismatch_count": 0,
+  "mismatches_head": [],
+  "top_in": [
+    {
+      "code": "BK1257",
+      "name": "农业综合Ⅱ",
+      "main_net": -267410972.0
+    },
+    {
+      "code": "BK1016",
+      "name": "汽车服务",
+      "main_net": -317133983.0
+    },
+    {
+      "code": "BK1243",
+      "name": "其他家电Ⅱ",
+      "main_net": -502250496.0
+    },
+    {
+      "code": "BK1240",
+      "name": "厨卫电器",
+      "main_net": -662833388.0
+    },
+    {
+      "code": "BK1260",
+      "name": "渔业",
+      "main_net": -883386528.0
+    },
+    {
+      "code": "BK1045",
+      "name": "房地产服务",
+      "main_net": -907915952.0
+    }
+  ],
+  "top_out": [
+    {
+      "code": "BK0457",
+      "name": "电网设备",
+      "main_net": -149333791584.0,
+      "days": 126,
+      "window_days": 126,
+      "coverage_pct": 100.0,
+      "as_of": "2026-09-09",
+      "kind": "board",
+      "source": "ext_fund_flow_bk_daily",
+      "unit_amount": "yuan"
+    },
+    {
+      "code": "BK1238",
+      "name": "IT服务Ⅱ",
+      "main_net": -152166224624.0,
+      "days": 126,
+      "window_days": 126,
+      "coverage_pct": 100.0,
+      "as_of": "2026-09-09",
+      "kind": "board",
+      "source": "ext_fund_flow_bk_daily",
+      "unit_amount": "yuan"
+    },
+    {
+      "code": "BK0459",
+      "name": "元件",
+      "main_net": -161657199616.0,
+      "days": 126,
+      "window_days": 126,
+      "coverage_pct": 100.0,
+      "as_of": "2026-09-09",
+      "kind": "board",
+      "source": "ext_fund_flow_bk_daily",
+      "unit_amount": "yuan"
+    },
+    {
+      "code": "BK1033",
+      "name": "电池",
+      "main_net": -212084098096.0,
+      "days": 126,
+      "window_days": 126,
+      "coverage_pct": 100.0,
+      "as_of": "2026-09-09",
+      "kind": "board",
+      "source": "ext_fund_flow_bk_daily",
+      "unit_amount": "yuan"
+    },
+    {
+      "code": "BK0448",
+      "name": "通信设备",
+      "main_net": -361398154752.0,
+      "days": 126,
+      "window_days": 126,
+      "coverage_pct": 100.0,
+      "as_of": "2026-09-09",
+      "kind": "board",
+      "source": "ext_fund_flow_bk_daily",
+      "unit_amount": "yuan"
+    },
+    {
+      "code": "BK1036",
+      "name": "半导体",
+      "main_net": -571916437504.0,
+      "days": 126,
+      "window_days": 126,
+      "coverage_pct": 100.0,
+      "as_of": "2026-09-09",
+      "kind": "board",
+      "source": "ext_fund_flow_bk_daily",
+      "unit_amount": "yuan"
+    }
+  ]
+}

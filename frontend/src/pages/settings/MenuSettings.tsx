@@ -21,40 +21,29 @@ import { Eye, EyeOff, ExternalLink, GripVertical, Settings, Bell } from 'lucide-
 import { Link } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
-import { usePreferences } from '@/lib/useSharedQueries'
-
-interface NavEntry {
-  id: string
-  label: string
-  type: 'builtin' | 'analysis'
-  visible: boolean
-}
-
-const BUILTIN_PAGES: NavEntry[] = [
-  { id: '/', label: '看板', type: 'builtin', visible: true },
-  { id: '/watchlist', label: '自选', type: 'builtin', visible: true },
-  { id: '/screener', label: '策略', type: 'builtin', visible: true },
-  { id: '/backtest', label: '回测', type: 'builtin', visible: true },
-  { id: '/limit-ladder', label: '连板梯队', type: 'builtin', visible: true },
-  { id: '/concept-analysis', label: '概念分析', type: 'builtin', visible: true },
-  { id: '/industry-analysis', label: '行业分析', type: 'builtin', visible: true },
-  { id: '/stock-analysis', label: '个股分析', type: 'builtin', visible: true },
-  { id: '/review', label: '复盘', type: 'builtin', visible: true },
-  { id: '/financials', label: '财务分析', type: 'builtin', visible: true },
-  { id: '/indices', label: '指数', type: 'builtin', visible: true },
-  { id: '/trading', label: '交易', type: 'builtin', visible: true },
-  { id: '/monitor', label: '监控中心', type: 'builtin', visible: true },
-  { id: '/data', label: '数据', type: 'builtin', visible: true },
-]
+import { usePreferences, useSettings } from '@/lib/useSharedQueries'
+import {
+  applySavedNavOrder,
+  builtinMenuCatalog,
+  findNavGroup,
+  hiddenGroupMembers,
+  isCatalogEntryVisible,
+  permissionFromSettings,
+  toggleHiddenIds,
+  TRADE_PATH,
+  type MenuCatalogEntry,
+} from '@/lib/navGroups'
 
 // ── Sortable row ──
 
-function SortableItem({ entry, hidden, onToggleHidden, badgeEnabled, onToggleBadge }: {
-  entry: NavEntry
+function SortableItem({ entry, hidden, onToggleHidden, badgeEnabled, onToggleBadge, hiddenMembers, onRestoreMember }: {
+  entry: MenuCatalogEntry
   hidden: boolean
   onToggleHidden: (id: string) => void
   badgeEnabled?: boolean
   onToggleBadge?: (id: string) => void
+  hiddenMembers?: Array<{ path: string; label: string }>
+  onRestoreMember?: (id: string) => void
 }) {
   const {
     attributes,
@@ -76,10 +65,11 @@ function SortableItem({ entry, hidden, onToggleHidden, badgeEnabled, onToggleBad
     <div
       ref={setNodeRef}
       style={style}
-      className={`grid grid-cols-[2.5rem_1fr_4.5rem_3rem_3rem_3rem] items-center border-b border-border/70 px-4 py-3 last:border-b-0 ${
+      className={`border-b border-border/70 last:border-b-0 ${
         isDragging ? 'bg-elevated rounded-lg shadow-lg' : ''
       } ${hidden ? 'opacity-50' : ''}`}
     >
+    <div className="grid grid-cols-[2.5rem_1fr_4.5rem_3rem_3rem_3rem] items-center px-4 py-3">
       <div
         {...attributes}
         {...listeners}
@@ -91,6 +81,9 @@ function SortableItem({ entry, hidden, onToggleHidden, badgeEnabled, onToggleBad
         <span className={`truncate text-sm font-medium ${!hidden ? 'text-foreground' : 'text-muted line-through'}`}>
           {entry.label}
         </span>
+        {entry.kind === 'group' && (
+          <span className="rounded bg-elevated px-1.5 py-0.5 text-[10px] text-muted shrink-0">分组</span>
+        )}
         {hidden && (
           <span className="rounded bg-elevated px-1.5 py-0.5 text-[10px] text-muted shrink-0">已隐藏</span>
         )}
@@ -135,7 +128,7 @@ function SortableItem({ entry, hidden, onToggleHidden, badgeEnabled, onToggleBad
           </Link>
         )}
       </div>
-      {/* 第 6 列: 徽标开关 (仅监控中心) */}
+      {/* 第 6 列: 徽标开关 (交易组 / 监控未读) */}
       <div className="flex justify-center">
         {onToggleBadge && (
           <button
@@ -152,6 +145,22 @@ function SortableItem({ entry, hidden, onToggleHidden, badgeEnabled, onToggleBad
         )}
       </div>
     </div>
+    {!hidden && hiddenMembers && hiddenMembers.length > 0 && (
+      <div className="flex flex-wrap items-center gap-2 px-4 pb-3 text-[11px] text-muted">
+        <span>部分标签已隐藏，可恢复：</span>
+        {hiddenMembers.map(member => (
+          <button
+            key={member.path}
+            type="button"
+            onClick={() => onRestoreMember?.(member.path)}
+            className="rounded-btn border border-border bg-elevated px-2 py-0.5 text-[11px] text-secondary hover:text-accent"
+          >
+            恢复 {member.label}
+          </button>
+        ))}
+      </div>
+    )}
+    </div>
   )
 }
 
@@ -160,57 +169,38 @@ function SortableItem({ entry, hidden, onToggleHidden, badgeEnabled, onToggleBad
 export function SettingsMenuSettingsPanel() {
   const qc = useQueryClient()
   const { data: prefs } = usePreferences()
+  const { data: settings } = useSettings()
+  const perm = permissionFromSettings(settings)
   const menus = useQuery({ queryKey: QK.analysisMenus, queryFn: api.analysisMenus })
 
-  const analysisEntries: NavEntry[] = (menus.data?.items ?? []).map(m => ({
+  const analysisEntries: MenuCatalogEntry[] = (menus.data?.items ?? []).map(m => ({
     id: m.id,
     label: m.label,
     type: 'analysis' as const,
-    visible: m.visible,
+    kind: 'leaf' as const,
   }))
 
-  const allEntries = useMemo(() => {
-    const saved = prefs?.nav_order ?? []
-    const entryMap = new Map<string, NavEntry>()
-    for (const e of BUILTIN_PAGES) entryMap.set(e.id, e)
-    for (const e of analysisEntries) entryMap.set(e.id, e)
+  const catalog = useMemo(
+    () => [
+      ...builtinMenuCatalog().filter(entry => !entry.adminOnly || (perm.settingsReady && perm.isAdmin)),
+      ...analysisEntries,
+    ],
+    [analysisEntries, perm.isAdmin, perm.settingsReady],
+  )
 
-    if (saved.length === 0) return [...BUILTIN_PAGES, ...analysisEntries]
-
-    const ordered: NavEntry[] = []
-    const seen = new Set<string>()
-    for (const id of saved) {
-      const entry = entryMap.get(id)
-      if (entry) {
-        ordered.push(entry)
-        seen.add(id)
-      }
-    }
-    for (const e of [...BUILTIN_PAGES, ...analysisEntries]) {
-      if (!seen.has(e.id)) ordered.push(e)
-    }
-    return ordered
-  }, [prefs?.nav_order, analysisEntries])
+  const allEntries = useMemo(
+    () => applySavedNavOrder(catalog, prefs?.nav_order ?? []),
+    [catalog, prefs?.nav_order],
+  )
 
   const hiddenSet = useMemo(() => new Set(prefs?.nav_hidden ?? []), [prefs?.nav_hidden])
 
   // Local order state for optimistic drag updates
   const [localOrder, setLocalOrder] = useState<string[] | null>(null)
-  const orderedEntries = useMemo(() => {
-    const order = localOrder ?? prefs?.nav_order ?? []
-    if (!order.length) return allEntries
-    const byId = new Map(allEntries.map(e => [e.id, e]))
-    const result: NavEntry[] = []
-    const seen = new Set<string>()
-    for (const id of order) {
-      const e = byId.get(id)
-      if (e) { result.push(e); seen.add(id) }
-    }
-    for (const e of allEntries) {
-      if (!seen.has(e.id)) result.push(e)
-    }
-    return result
-  }, [localOrder, prefs?.nav_order, allEntries])
+  const orderedEntries = useMemo(
+    () => applySavedNavOrder(allEntries, localOrder ?? prefs?.nav_order ?? []),
+    [localOrder, prefs?.nav_order, allEntries],
+  )
 
   const saveNavOrder = useMutation({
     mutationFn: (order: string[]) => api.saveNavOrder(order),
@@ -243,18 +233,15 @@ export function SettingsMenuSettingsPanel() {
   }
 
   const toggleHidden = (id: string) => {
-    const next = new Set(hiddenSet)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    saveNavHidden.mutate([...next])
+    saveNavHidden.mutate(toggleHiddenIds([...hiddenSet], id, perm))
   }
 
-  // 监控中心徽标开关 (localStorage)
+  // 监控未读徽标开关 (localStorage) — 设置入口指向交易组
   const [badgeEnabled, setBadgeEnabled] = useState(() => {
     try { return localStorage.getItem('monitor_badge_enabled') !== '0' } catch { return true }
   })
   const toggleBadge = (id: string) => {
-    if (id !== '/monitor') return
+    if (id !== TRADE_PATH) return
     const next = !badgeEnabled
     setBadgeEnabled(next)
     try { localStorage.setItem('monitor_badge_enabled', next ? '1' : '0') } catch { /* ignore */ }
@@ -289,16 +276,24 @@ export function SettingsMenuSettingsPanel() {
             items={orderedEntries.map(e => e.id)}
             strategy={verticalListSortingStrategy}
           >
-            {orderedEntries.map((entry) => (
+            {orderedEntries.map((entry) => {
+              const group = findNavGroup(entry.id)
+              const membersHidden = group
+                ? hiddenGroupMembers(group, hiddenSet, perm)
+                : []
+              return (
               <SortableItem
                 key={entry.id}
                 entry={entry}
-                hidden={hiddenSet.has(entry.id)}
+                hidden={!isCatalogEntryVisible(entry.id, hiddenSet, perm, entry.adminOnly)}
                 onToggleHidden={toggleHidden}
-                badgeEnabled={entry.id === '/monitor' ? badgeEnabled : undefined}
-                onToggleBadge={entry.id === '/monitor' ? toggleBadge : undefined}
+                badgeEnabled={entry.id === TRADE_PATH ? badgeEnabled : undefined}
+                onToggleBadge={entry.id === TRADE_PATH ? toggleBadge : undefined}
+                hiddenMembers={membersHidden}
+                onRestoreMember={toggleHidden}
               />
-            ))}
+              )
+            })}
           </SortableContext>
         </DndContext>
 

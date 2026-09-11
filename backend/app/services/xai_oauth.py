@@ -1,7 +1,7 @@
-"""xAI / Grok OAuth (device code) — 参考 anomalyco/opencode Grok-CLI 客户端。
+"""xAI / Grok OAuth deployment and user credential handling.
 
-使用 xAI 公开的 Grok-CLI OAuth client_id + RFC 8628 device authorization grant，
-适配本机桌面后端：用户在任意浏览器完成 SuperGrok 登录，后端轮询换取 token。
+Hosted subscription mode keeps one OAuth session in the deployment control
+directory. Self-hosted mode continues to store OAuth under the current user.
 """
 from __future__ import annotations
 
@@ -42,10 +42,46 @@ SK_EXPIRES = "ai_xai_expires_at"
 SK_AUTH_TYPE = "ai_xai_auth_type"  # oauth | api_key
 
 USER_AGENT = "one-trading-xai-oauth/1.0"
+_OAUTH_SECRET_KEYS = (SK_ACCESS, SK_REFRESH, SK_EXPIRES, SK_AUTH_TYPE)
 
 
 class XaiOAuthError(RuntimeError):
     pass
+
+
+def _cloud_managed() -> bool:
+    from app.config import settings
+
+    return (settings.ai_access_mode or "").strip().lower() == "cloud_subscription"
+
+
+def _store_load() -> dict[str, Any]:
+    if not _cloud_managed():
+        return secrets_store.load()
+    legacy = secrets_store.load_legacy_owner()
+    deployment = secrets_store.load_deployment()
+    return {
+        key: deployment.get(key, legacy.get(key))
+        for key in _OAUTH_SECRET_KEYS
+        if deployment.get(key, legacy.get(key)) is not None
+    }
+
+
+def _store_save(updates: dict[str, Any]) -> dict:
+    if _cloud_managed():
+        return secrets_store.save_deployment(
+            {key: value for key, value in updates.items() if key in _OAUTH_SECRET_KEYS}
+        )
+    return secrets_store.save(updates)
+
+
+def _store_clear(*keys: str) -> dict:
+    if _cloud_managed():
+        # Empty deployment values are tombstones: removing the keys would make
+        # the read-only legacy-owner fallback resurrect a deliberately cleared
+        # OAuth session.
+        return secrets_store.save_deployment({key: "" for key in keys})
+    return secrets_store.clear(*keys)
 
 
 def _http_form(url: str, data: dict[str, str], *, timeout: float = 30.0) -> dict[str, Any]:
@@ -170,43 +206,47 @@ def _jwt_exp(token: str) -> int | None:
         payload = json.loads(base64.urlsafe_b64decode(parts[1] + pad))
         exp = payload.get("exp")
         return int(exp) if exp is not None else None
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
 def save_oauth_tokens(token_response: dict[str, Any]) -> dict[str, Any]:
     access = token_response.get("access_token") or ""
-    refresh = token_response.get("refresh_token") or secrets_store.load().get(SK_REFRESH) or ""
+    refresh = token_response.get("refresh_token") or _store_load().get(SK_REFRESH) or ""
     expires_in = int(token_response.get("expires_in") or 3600)
     expires_at = int(time.time()) + expires_in
     jwt_exp = _jwt_exp(access)
     if jwt_exp:
         expires_at = min(expires_at, jwt_exp)
 
-    secrets_store.save({
+    updates = {
         SK_AUTH_TYPE: "oauth",
         SK_ACCESS: access,
         SK_REFRESH: refresh,
         SK_EXPIRES: str(expires_at),
-        # OAuth 模式下不再依赖手动 API Key；清空避免混淆
-        "ai_api_key": "",
-        "ai_provider": "xai",
-        "ai_base_url": XAI_API_BASE,
-    })
+    }
+    if not _cloud_managed():
+        updates.update({
+            # OAuth 模式下不再依赖手动 API Key；清空避免混淆
+            "ai_api_key": "",
+            "ai_provider": "xai",
+            "ai_base_url": XAI_API_BASE,
+        })
+    _store_save(updates)
     return status()
 
 
 def clear_oauth_tokens() -> None:
-    secrets_store.clear(SK_ACCESS, SK_REFRESH, SK_EXPIRES, SK_AUTH_TYPE)
+    _store_clear(SK_ACCESS, SK_REFRESH, SK_EXPIRES, SK_AUTH_TYPE)
 
 
 def has_oauth() -> bool:
-    data = secrets_store.load()
+    data = _store_load()
     return bool(data.get(SK_ACCESS) or data.get(SK_REFRESH))
 
 
 def status() -> dict[str, Any]:
-    data = secrets_store.load()
+    data = _store_load()
     auth_type = data.get(SK_AUTH_TYPE) or ("oauth" if data.get(SK_ACCESS) else "")
     expires_raw = data.get(SK_EXPIRES) or "0"
     try:
@@ -224,7 +264,7 @@ def status() -> dict[str, Any]:
 
 def get_valid_access_token() -> str | None:
     """Return a usable OAuth access token, refreshing if needed."""
-    data = secrets_store.load()
+    data = _store_load()
     access = data.get(SK_ACCESS) or ""
     refresh = data.get(SK_REFRESH) or ""
     if not access and not refresh:

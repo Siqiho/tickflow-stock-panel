@@ -5,17 +5,19 @@ import { api, type CustomSignal } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { BUILTIN_SIGNAL_DEFINITIONS, type SignalKind } from '@/lib/signals'
 import { CustomSignalDialog } from '@/components/signals/CustomSignalDialog'
+import { Skeleton } from '@/components/data/Skeleton'
+import { AnchorWrap } from '@/lib/useCardFlash'
 
 type SignalSection = 'builtin' | 'custom'
 
-const KIND_LABEL: Record<SignalKind, string> = { entry: '买入', exit: '卖出', both: '买卖通用' }
+const KIND_LABEL: Record<SignalKind, string> = { entry: '入场', exit: '出场', both: '出入通用' }
 const KIND_CLASS: Record<SignalKind, string> = {
   entry: 'bg-accent/10 text-accent',
   exit: 'bg-warning/10 text-warning',
   both: 'bg-muted/10 text-muted',
 }
 
-export function SettingsCustomSignalsPanel() {
+export function SettingsCustomSignalsPanel({ highlight }: { highlight?: string } = {}) {
   const qc = useQueryClient()
   const list = useQuery({ queryKey: QK.customSignals, queryFn: api.customSignalsList })
   const options = useQuery({ queryKey: QK.customSignalsOptions, queryFn: api.customSignalsOptions })
@@ -86,6 +88,7 @@ export function SettingsCustomSignalsPanel() {
 
   return (
     <div className="max-w-6xl space-y-6">
+      <AnchorWrap highlight={highlight} anchor="signals">
       <section className="rounded-2xl border border-border bg-surface p-6 bg-[radial-gradient(circle_at_top_right,rgba(234,179,8,0.12),transparent_38%)]">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
@@ -119,11 +122,11 @@ export function SettingsCustomSignalsPanel() {
                   key={tab.key}
                   type="button"
                   onClick={() => setActiveSection(tab.key)}
-                  className={`rounded-btn px-4 py-3 text-left transition-colors ${active ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300 shadow-sm' : 'text-secondary hover:bg-elevated hover:text-foreground'}`}
+                  className={`rounded-btn px-4 py-3 text-left transition-colors ${active ? 'bg-amber-500/15 text-amber-300 shadow-sm' : 'text-secondary hover:bg-elevated hover:text-foreground'}`}
                 >
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm font-medium">{tab.label}</span>
-                    <span className={`rounded px-2 py-0.5 text-[11px] ${active ? 'bg-amber-400/15 text-amber-800 dark:text-amber-300' : 'bg-elevated text-muted'}`}>{tab.count}</span>
+                    <span className={`rounded px-2 py-0.5 text-[11px] ${active ? 'bg-amber-400/15 text-amber-300' : 'bg-elevated text-muted'}`}>{tab.count}</span>
                   </div>
                   <div className="mt-1 text-[11px] text-muted">{tab.hint}</div>
                 </button>
@@ -132,6 +135,7 @@ export function SettingsCustomSignalsPanel() {
           </div>
         </div>
       </section>
+      </AnchorWrap>
 
       {activeSection === 'builtin' && (
         <section className="rounded-card border border-border bg-surface p-5 space-y-4">
@@ -234,15 +238,27 @@ export function SettingsCustomSignalsPanel() {
                   {sig.conditions.map((c, i) => (
                     <div key={i} className="flex items-center gap-1.5 text-[11px] text-secondary">
                       <span className="text-muted/50 w-6 text-right">{i === 0 ? '当' : '且'}</span>
-                      <span className="font-mono text-foreground/80">{fieldLabel(c.left, fields)}</span>
+                      <span className="font-mono text-foreground/80">{fieldWithDays(c.left, c.leftDays, fields)}</span>
                       <span className="font-mono text-muted">{c.op}</span>
-                      <span className="font-mono text-foreground/80">{rightDisplay(c.right, fields)}</span>
+                      <span className="font-mono text-foreground/80">
+                        {c.right.startsWith('field:')
+                          ? fieldWithDays(c.right.slice(6), c.rightDays, fields)
+                          : c.right}
+                      </span>
                     </div>
                   ))}
                 </div>
               </div>
             ))}
-            {signals.length === 0 && (
+            {list.isLoading &&
+              Array.from({ length: 2 }).map((_, i) => (
+                <div key={`sk-${i}`} className="rounded-card border border-border bg-base p-4 space-y-3">
+                  <Skeleton w="w-1/2" h="h-4" />
+                  <Skeleton w="w-1/3" h="h-3" />
+                  <Skeleton h="h-4" />
+                </div>
+              ))}
+            {!list.isLoading && signals.length === 0 && (
               <div className="rounded-card border border-border bg-base px-5 py-10 text-center text-sm text-muted md:col-span-2">
                 暂无自定义信号，点击右上角「新建自定义信号」。
               </div>
@@ -270,7 +286,8 @@ function fieldLabel(key: string, fields: { key: string; label: string }[]): stri
   return fields.find(f => f.key === key)?.label ?? key
 }
 
-function rightDisplay(right: string, fields: { key: string; label: string }[]): string {
-  if (right.startsWith('field:')) return fieldLabel(right.slice(6), fields)
-  return right
+/** 带偏移标注的字段显示: 收盘价(前1日) / MA20(最新省略) */
+function fieldWithDays(key: string, days: number | undefined, fields: { key: string; label: string }[]): string {
+  const label = fieldLabel(key, fields)
+  return days && days > 0 ? `${label}(前${days}日)` : label
 }

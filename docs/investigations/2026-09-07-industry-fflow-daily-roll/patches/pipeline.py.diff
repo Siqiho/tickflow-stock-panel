@@ -1,0 +1,42 @@
+--- a/backend/app/api/pipeline.py
++++ b/backend/app/api/pipeline.py
+@@ -29,7 +29,8 @@
+     repo = request.app.state.repo
+     capset = request.app.state.capabilities
+ 
+-    # 检测卡死的 running job (如 reload 后孤儿 task)
++    # 检测卡死的 running job (如 reload 后孤儿 task)。
++    # 进程内仍在跑的 worker 不是孤儿：只复用，不 fail 后再开第二条 run_now。
+     existing_id = job_store.active_id()
+     if existing_id:
+         existing = job_store.get(existing_id)
+@@ -40,9 +41,20 @@
+                 try:
+                     start_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                     elapsed = (datetime.now(timezone.utc) - start_dt).total_seconds()
+-                    if elapsed > 600:  # 超过 10 分钟视为卡死
++                    in_flight = bool(daily_pipeline.pipeline_in_flight())
++                    if daily_pipeline.should_force_fail_stale_pipeline_job(
++                        in_flight=in_flight,
++                        elapsed_s=elapsed,
++                        stale_after_s=600,
++                    ):
+                         logger.warning("强制取消卡死 job %s (已运行 %.0fs)", existing_id, elapsed)
+                         job_store.fail(existing_id, "超时自动取消 (疑似 reload 后孤儿 task)")
++                    elif elapsed > 600 and in_flight:
++                        logger.warning(
++                            "job %s still in-flight after %.0fs; reuse without second run_now",
++                            existing_id,
++                            elapsed,
++                        )
+                 except Exception:
+                     pass
+ 
+@@ -97,6 +109,7 @@
+         raise HTTPException(status_code=404, detail="job not found")
+     if j["status"] not in ("running", "pending"):
+         raise HTTPException(status_code=400, detail=f"job status is {j['status']}, cannot cancel")
++    daily_pipeline.request_pipeline_cancel()
+     job_store.fail(job_id, "用户手动取消")
+     return {"cancelled": job_id}
+ 

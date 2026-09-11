@@ -63,6 +63,195 @@ def _signal_cn_name(name: str) -> str:
     return _SIGNAL_CN.get(name, name)
 
 
+def format_alert_quote(price, change_pct) -> str:
+    """告警正文尾部: '现价 1650.0 · +10.0%'。price/pct 均可缺; pct 为小数制。"""
+    parts = []
+    if price is not None:
+        parts.append(f"现价 {price}")
+    if change_pct is not None:
+        sign = "+" if change_pct >= 0 else ""
+        parts.append(f"{sign}{change_pct * 100:.1f}%")
+    return " · ".join(parts)
+
+
+class SectorScopeError(ValueError):
+    """板块范围缺少标识或成员映射。不得退回全市场。"""
+
+
+_SECTOR_DIM_COLUMNS = (
+    "industry",
+    "concept",
+    "sector",
+    "行业",
+    "概念",
+    "板块",
+    "industry_name",
+    "sector_name",
+    "concept_name",
+)
+
+
+def _sector_targets(rule: dict) -> list:
+    raw = rule.get("sector_targets")
+    return raw if isinstance(raw, list) else []
+
+
+def _sector_identifier(rule: dict) -> str:
+    for key in ("sector", "sector_name", "sector_code"):
+        value = str(rule.get(key) or "").strip()
+        if value:
+            return value
+    for target in _sector_targets(rule):
+        if isinstance(target, str) and target.strip():
+            return target.strip()
+        if isinstance(target, dict):
+            for key in ("name", "value", "code", "key"):
+                value = str(target.get(key) or "").strip()
+                if value:
+                    return value
+    return ""
+
+
+def _explicit_sector_members(rule: dict) -> list[str] | None:
+    """规则里已带成员列表时直接使用。None 表示没有成员载荷。"""
+    symbols: list[str] = []
+    saw_members = False
+    for target in _sector_targets(rule):
+        if isinstance(target, dict) and isinstance(target.get("members"), list):
+            saw_members = True
+            symbols.extend(
+                str(item).strip().upper()
+                for item in target["members"]
+                if str(item).strip()
+            )
+        elif isinstance(target, dict) and target.get("symbol"):
+            saw_members = True
+            symbols.append(str(target["symbol"]).strip().upper())
+    injected = rule.get("_sector_members")
+    if isinstance(injected, (list, set, tuple)):
+        saw_members = True
+        symbols.extend(str(item).strip().upper() for item in injected if str(item).strip())
+    if not saw_members:
+        return None
+    return symbols
+
+
+def _filter_df_by_sector_columns(df: pl.DataFrame, identifier: str) -> pl.DataFrame | None:
+    columns = [name for name in _SECTOR_DIM_COLUMNS if name in df.columns]
+    if not columns:
+        return None
+    needle = identifier.casefold()
+    mask = None
+    for name in columns:
+        part = (
+            pl.col(name)
+            .cast(pl.Utf8, strict=False)
+            .fill_null("")
+            .str.to_lowercase()
+            .str.contains(needle, literal=True)
+        )
+        mask = part if mask is None else (mask | part)
+    return df.filter(mask)
+
+
+def _target_keys(rule: dict) -> list[str]:
+    keys: list[str] = []
+    for target in _sector_targets(rule):
+        if isinstance(target, dict) and target.get("key"):
+            keys.append(str(target["key"]))
+        elif isinstance(target, str) and target.startswith(("concept:", "industry:", "index:")):
+            keys.append(target)
+    return keys
+
+
+def _catalog_members_for_rule(data_dir, identifier: str, target_keys: list[str]) -> set[str] | None:
+    """用已有本地板块目录解析成员。None=没有成员映射数据, 空集合=目录在但未命中。"""
+    if data_dir is None:
+        return None
+    try:
+        from types import SimpleNamespace
+        from pathlib import Path
+
+        from app.services.sector_monitor import SectorMonitorService
+
+        repo = SimpleNamespace(store=SimpleNamespace(data_dir=Path(data_dir)))
+        service = SectorMonitorService(repo)
+        service.list_targets()
+        dim_targets = [
+            target
+            for target in service._targets_by_key.values()
+            if target.get("kind") in {"concept", "industry"}
+        ]
+        if not dim_targets:
+            return None
+        members: set[str] = set()
+        found = False
+        for key in target_keys:
+            if key in service._members_by_key:
+                found = True
+                members |= {str(item).upper() for item in service._members_by_key[key]}
+        needle = identifier.casefold()
+        if needle:
+            for key, target in service._targets_by_key.items():
+                if target.get("kind") not in {"concept", "industry"}:
+                    continue
+                haystacks = (
+                    str(target.get("name") or ""),
+                    str(target.get("value") or ""),
+                    str(key),
+                )
+                if any(needle == text.casefold() or needle in text.casefold() for text in haystacks if text):
+                    found = True
+                    members |= {str(item).upper() for item in service._members_by_key.get(key, set())}
+        return members if found else set()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("本地板块成员映射读取失败: %s", exc)
+        return None
+
+
+def apply_monitor_scope(df: pl.DataFrame, rule: dict, data_dir=None) -> pl.DataFrame:
+    """按 scope 过滤。sector 缺标识或成员时抛 SectorScopeError, 绝不返回全量。"""
+    scope = rule.get("scope", "symbols")
+    if scope == "all":
+        return df
+    if scope == "symbols":
+        symbols = rule.get("symbols", [])
+        if not symbols:
+            return df.head(0)
+        return df.filter(pl.col("symbol").is_in(symbols))
+    if scope == "sector":
+        return _apply_sector_scope(df, rule, data_dir=data_dir)
+    return df
+
+
+def _apply_sector_scope(df: pl.DataFrame, rule: dict, data_dir=None) -> pl.DataFrame:
+    identifier = _sector_identifier(rule)
+    explicit = _explicit_sector_members(rule)
+    if not identifier and explicit is None:
+        raise SectorScopeError("scope=sector 缺少板块标识或成员, 拒绝按全市场执行")
+
+    if explicit is not None:
+        if not explicit:
+            raise SectorScopeError("scope=sector 的成员列表为空, 拒绝按全市场执行")
+        return df.filter(pl.col("symbol").is_in(explicit))
+
+    if identifier:
+        filtered = _filter_df_by_sector_columns(df, identifier)
+        if filtered is not None:
+            return filtered
+
+    catalog = _catalog_members_for_rule(data_dir, identifier, _target_keys(rule))
+    if catalog:
+        return df.filter(pl.col("symbol").is_in(list(catalog)))
+    if catalog is not None:
+        raise SectorScopeError(
+            f"scope=sector 本地板块目录未找到 {identifier!r} 的成员, 拒绝按全市场执行"
+        )
+    raise SectorScopeError(
+        f"scope=sector 缺少板块成员映射或维度列, 无法过滤 {identifier!r}, 拒绝按全市场执行"
+    )
+
+
 @dataclass
 class StrategyAlert:
     """策略告警"""
@@ -321,6 +510,10 @@ class MonitorRuleEngine:
         # 本轮 evaluate() 产出的策略选股结果: strategy_id → {rows, total, as_of}
         # 供策略页实时回显复用 (/api/screener/cached 端点直接读取此内存结果), 避免重跑
         self._latest_strategy_results: dict[str, dict] = {}
+        self._rules_by_user: dict[str, dict[str, dict]] = {}
+        self._rules_version = 0
+        # (rule_id, symbol) → 上一轮异动条件是否成立; 用于边缘触发
+        self._abnormal_condition_state: dict[tuple[str, str], bool] = {}
 
     def set_strategy_engine(self, engine) -> None:
         """注入 StrategyEngine, type=strategy 规则据此跑选股。"""
@@ -348,28 +541,192 @@ class MonitorRuleEngine:
         self._name_map = name_map or {}
 
     # ── 规则管理 ───────────────────────────────────────
+    @staticmethod
+    def _current_user_id() -> str:
+        from app.services.user_context import current
+        return str(current().get("id") or "owner")
+
+    def _rebuild_flat_rules(self) -> None:
+        flat: dict[str, dict] = {}
+        for user_id, rules in self._rules_by_user.items():
+            for rule_id, rule in rules.items():
+                stored = dict(rule)
+                stored["_owner_user_id"] = user_id
+                flat[f"{user_id}:{rule_id}"] = stored
+        self._rules = flat
+
+    def set_rules_for_user(self, user_id: str, rules: list[dict]) -> None:
+        """只替换一名用户的规则切片, 不覆盖其他租户的进程内规则。"""
+        bucket: dict[str, dict] = {}
+        for rule in rules:
+            if rule.get("enabled") is not False:
+                stored = dict(rule)
+                stored["_owner_user_id"] = user_id
+                bucket[str(rule["id"])] = stored
+        self._rules_by_user[user_id] = bucket
+        self._rebuild_flat_rules()
+        active_prefixes = {f"{user_id}:{rule_id}" for rule_id in bucket}
+        self._last_fire = {
+            key: value
+            for key, value in self._last_fire.items()
+            if not key[0].startswith(f"{user_id}:") or key[0] in active_prefixes
+        }
+        logger.info("MonitorRuleEngine: 用户 %s 装载 %d 条规则 (进程合计 %d)", user_id, len(bucket), len(self._rules))
+        self._rules_version += 1
+
     def set_rules(self, rules: list[dict]) -> None:
-        """批量设置规则 (覆盖)。用于启动时 reload。"""
-        self._rules = {}
-        for r in rules:
-            if r.get("enabled") is not False:
-                self._rules[r["id"]] = r
-        logger.info("MonitorRuleEngine: 装载 %d 条规则", len(self._rules))
+        """批量设置当前请求用户的规则 (覆盖该用户切片, 不擦其他用户)。"""
+        self.set_rules_for_user(self._current_user_id(), rules)
 
     def add_rule(self, rule: dict) -> None:
-        if rule.get("enabled") is not False:
-            self._rules[rule["id"]] = rule
-        else:
-            self._rules.pop(rule["id"], None)
+        self.set_rules_for_user(
+            self._current_user_id(),
+            [*(self._rules_by_user.get(self._current_user_id(), {}).values()), rule],
+        )
 
     def remove_rule(self, rule_id: str) -> None:
-        self._rules.pop(rule_id, None)
-        # 清理对应的 cooldown 记录
-        self._last_fire = {k: v for k, v in self._last_fire.items() if k[0] != rule_id}
+        user_id = self._current_user_id()
+        remaining = [
+            rule for rid, rule in self._rules_by_user.get(user_id, {}).items() if rid != rule_id
+        ]
+        self.set_rules_for_user(user_id, remaining)
+        prefix = f"{user_id}:{rule_id}"
+        self._last_fire = {key: value for key, value in self._last_fire.items() if key[0] != prefix}
 
     def clear(self) -> None:
         self._rules.clear()
+        self._rules_by_user.clear()
         self._last_fire.clear()
+
+    def get_rule(self, rule_id: str, user_id: str | None = None) -> dict | None:
+        if user_id:
+            return self._rules.get(f"{user_id}:{rule_id}")
+        matches = [rule for rule in self._rules.values() if rule.get("id") == rule_id]
+        return matches[0] if len(matches) == 1 else None
+
+    def has_rule_type(self, rtype: str) -> bool:
+        return any(
+            r.get("enabled", True) and r.get("type") == rtype
+            for r in list(self._rules.values())
+        )
+
+    def min_abnormal_closeness(self) -> float:
+        """启用的 abnormal 规则中最小的接近度阈值 (小数)。"""
+        thresholds = [
+            float(r.get("threshold_pct", 70)) / 100
+            for r in list(self._rules.values())
+            if r.get("enabled", True) and r.get("type") == "abnormal"
+        ]
+        return min(thresholds) if thresholds else 1.0
+
+    def evaluate_abnormal(self, rows: list[dict], *, now: float | None = None) -> list[dict]:
+        """按异动边缘快照评估 type=abnormal 规则。rows 为空也评估, 用于清状态。"""
+        rules = [
+            rule for rule in list(self._rules.values())
+            if rule.get("enabled", True) and rule.get("type") == "abnormal"
+        ]
+        if not rules:
+            return []
+        timestamp = time.time() if now is None else now
+        events: list[dict] = []
+        for rule in rules:
+            try:
+                events.extend(self._evaluate_abnormal_rule(rule, rows, timestamp))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("异动规则评估失败 %s: %s", rule.get("id"), exc)
+        return events
+
+    def _evaluate_abnormal_rule(self, rule: dict, rows: list[dict], now: float) -> list[dict]:
+        events: list[dict] = []
+        threshold = float(rule.get("threshold_pct", 70)) / 100
+        if not 0 < threshold <= 1.5:
+            threshold = 0.7
+        direction = rule.get("direction", "both")
+        window_filter = str(rule.get("abnormal_window", "any"))
+        if rule.get("scope") == "symbols":
+            scope_symbols = {str(s) for s in rule.get("symbols", []) if s}
+        else:
+            scope_symbols = None
+
+        seen: set[str] = set()
+        for row in rows:
+            symbol = str(row.get("symbol") or "")
+            if not symbol or (scope_symbols is not None and symbol not in scope_symbols):
+                continue
+            seen.add(symbol)
+            best: tuple[str, float, float, float] | None = None
+            for key, win in (row.get("windows") or {}).items():
+                if window_filter != "any" and key != window_filter:
+                    continue
+                value = win.get("value")
+                if value is None:
+                    continue
+                if direction == "up" and value <= 0:
+                    continue
+                if direction == "down" and value >= 0:
+                    continue
+                closeness = float(win.get("closeness") or 0)
+                if best is None or closeness > best[1]:
+                    best = (key, closeness, float(value), float(win.get("threshold") or 0))
+            condition = best is not None and best[1] >= threshold
+            state_key = (str(rule["id"]), symbol)
+            previous = self._abnormal_condition_state.get(state_key)
+            self._abnormal_condition_state[state_key] = condition
+            if previous is None or previous or not condition:
+                continue
+            event_type = f"abnormal_{'up' if best[2] > 0 else 'down'}"
+            cooldown_key = (str(rule["id"]), symbol, event_type)
+            last = self._last_fire.get(cooldown_key)  # type: ignore[arg-type]
+            cooldown = int(rule.get("cooldown_seconds", 3600))
+            if last is not None and now - last < cooldown:
+                continue
+            self._last_fire[cooldown_key] = now  # type: ignore[index]
+            events.append({
+                "ts": int(now * 1000),
+                "rule_id": rule["id"],
+                "rule_name": rule.get("name", ""),
+                "strategy_id": None,
+                "source": "abnormal",
+                "type": event_type,
+                "symbol": symbol,
+                "name": row.get("name"),
+                "message": rule.get("message", "") or self._abnormal_message(row, best),
+                "price": row.get("close"),
+                "change_pct": row.get("rt_pct"),
+                "signals": [],
+                "severity": rule.get("severity", "info"),
+                "conditions": [],
+                "logic": "and",
+                "abnormal_window": best[0],
+                "abnormal_value": round(best[2], 4),
+                "abnormal_threshold": best[3],
+                "abnormal_closeness": round(best[1], 4),
+            })
+        for key, value in list(self._abnormal_condition_state.items()):
+            if key[0] == rule["id"] and key[1] not in seen and value:
+                self._abnormal_condition_state[key] = False
+        return events
+
+    @staticmethod
+    def _abnormal_message(row: dict, best: tuple[str, float, float, float]) -> str:
+        window, closeness, value, threshold = best
+        board = row.get("board") or ""
+        tag = f"{board}{'·ST' if row.get('st') else ''}"
+        state = "已达异常波动阈值" if closeness >= 1 else "接近异常波动阈值"
+        return (
+            f"{row.get('name') or row.get('symbol')} {window}偏离值 "
+            f"{value * 100:+.2f}%/阈值{threshold * 100:.0f}% ({tag}) "
+            f"接近度{closeness * 100:.0f}%, {state}"
+        )
+
+    def has_asset_rules(self, asset_type: str) -> bool:
+        """是否存在指定资产类型的 (已启用) 规则。供 quote_service 判断是否需要 ETF 评估轮。"""
+        if not self._rules:
+            return False
+        return any(
+            r.get("enabled", True) and r.get("asset_type", "stock") == asset_type
+            for r in list(self._rules.values())
+        )
 
     @property
     def rules(self) -> dict[str, dict]:
@@ -388,23 +745,30 @@ class MonitorRuleEngine:
         return self._latest_strategy_results
 
     # ── 评估 ───────────────────────────────────────────
-    def evaluate(self, df: pl.DataFrame) -> list[dict]:
-        """行情更新后评估所有规则。
+    def evaluate(
+        self,
+        df: pl.DataFrame,
+        asset_type: str = "stock",
+        reset_strategy_results: bool = True,
+    ) -> list[dict]:
+        """行情更新后评估匹配资产类型的规则。
 
         Args:
-            df: 实时 enriched 数据 (~5500行, 含 signal_/csg_/指标列)
-        Returns:
-            触发的 AlertEvent dict 列表 (含 ts/rule_id/source/type/symbol/...)
+            df: 实时 enriched 数据 (含 signal_/csg_/指标列)
+            asset_type: 只评估该资产类型的规则 (默认 stock)
+            reset_strategy_results: 多轮评估时仅首轮重置策略结果缓存
         """
         if not self._rules or df.is_empty():
             return []
 
         now = time.time()
         events: list[dict] = []
-        # 每轮重置: 只保留本次 evaluate 产出的策略结果
-        self._latest_strategy_results = {}
+        if reset_strategy_results:
+            self._latest_strategy_results = {}
 
         for rule_id, rule in self._rules.items():
+            if rule.get("asset_type", "stock") != asset_type:
+                continue
             try:
                 events.extend(self._evaluate_rule(df, rule, now))
             except Exception as e:
@@ -415,7 +779,11 @@ class MonitorRuleEngine:
     def _evaluate_rule(self, df: pl.DataFrame, rule: dict, now: float) -> list[dict]:
         """评估单条规则,返回触发的 events。"""
         # 1. 按 scope 过滤作用域
-        scoped = self._apply_scope(df, rule)
+        try:
+            scoped = self._apply_scope(df, rule)
+        except SectorScopeError as exc:
+            logger.warning("规则 %s 板块范围未执行: %s", rule.get("id"), exc)
+            return []
         if scoped.is_empty():
             return []
 
@@ -443,11 +811,13 @@ class MonitorRuleEngine:
         events: list[dict] = []
         for ev_type, sym, name, price, pct, hit_sigs in hit_rows:
             # cooldown 键: 批量事件用特殊键, 单只事件用 (rule_id, symbol)
+            owner = str(rule.get("_owner_user_id") or "owner")
+            namespaced_id = f"{owner}:{rule['id']}"
             is_batch = sym == "_batch"
             if is_batch:
-                key = (rule["id"], f"_{ev_type}_batch")
+                key = (namespaced_id, f"_{ev_type}_batch")
             else:
-                key = (rule["id"], sym)
+                key = (namespaced_id, sym)
             last = self._last_fire.get(key)
             if last is not None and (now - last) < cooldown:
                 continue  # 冷却期内, 跳过
@@ -468,6 +838,7 @@ class MonitorRuleEngine:
             ev = {
                 "ts": int(now * 1000),
                 "rule_id": rule["id"],
+                "owner_user_id": owner,
                 "rule_name": rule.get("name", ""),
                 "source": source,
                 "type": ev_type,
@@ -492,22 +863,9 @@ class MonitorRuleEngine:
 
         return events
 
-    @staticmethod
-    def _apply_scope(df: pl.DataFrame, rule: dict) -> pl.DataFrame:
-        """按 scope 过滤 DataFrame。"""
-        scope = rule.get("scope", "symbols")
-        if scope == "all":
-            return df
-        if scope == "symbols":
-            syms = rule.get("symbols", [])
-            if not syms:
-                return df.head(0)
-            return df.filter(pl.col("symbol").is_in(syms))
-        if scope == "sector":
-            # sector 过滤: 需 df 含板块列 (后续接入 ext_data JOIN)
-            # 当前先返回全量, sector 精确过滤第二步完善
-            return df
-        return df
+    def _apply_scope(self, df: pl.DataFrame, rule: dict) -> pl.DataFrame:
+        """按 scope 过滤 DataFrame。sector 缺标识或成员时 fail-closed, 绝不返回全量。"""
+        return apply_monitor_scope(df, rule, data_dir=self._data_dir)
 
     def _match_strategy(
         self, df: pl.DataFrame, rule: dict,
@@ -730,12 +1088,7 @@ class MonitorRuleEngine:
         # signal / price / market: 条件摘要 + 现价 + 涨跌幅
         # 条件摘要: 把 conditions (truth/比较) 拼成可读串, 如 "MA20金叉 且 量比>2"
         cond_text = self._format_conditions_text(rule, conditions)
-        price_text = f"现价 {price}" if price is not None else ""
-        pct_text = ""
-        if pct is not None:
-            sign = "+" if pct >= 0 else ""
-            pct_text = f"{sign}{pct * 100:.1f}%"
-        tail = " · ".join(s for s in (price_text, pct_text) if s)
+        tail = format_alert_quote(price, pct)
         if cond_text and tail:
             return f"{cond_text} · {tail}"
         return cond_text or tail or "监控触发"

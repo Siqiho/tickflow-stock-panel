@@ -184,6 +184,12 @@ def sync_cash_flow(data_dir: Path, capset: CapabilitySet) -> int:
     return _sync_table("cash_flow", symbols, data_dir, capset, latest_only=True)
 
 
+def sync_shares(data_dir: Path, capset: CapabilitySet) -> int:
+    """同步股本快照。与 metrics/income 等同源：走 _sync_table，latest_only=True。"""
+    symbols = _get_symbols(data_dir)
+    return _sync_table("shares", symbols, data_dir, capset, latest_only=True)
+
+
 def sync_all(data_dir: Path, capset: CapabilitySet) -> dict[str, int]:
     """同步所有财务表。返回 {table: rows}。"""
     if not capset.has(Cap.FINANCIAL) and not _use_public_financials():

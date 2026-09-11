@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import polars as pl
 
@@ -47,12 +47,15 @@ class StrategyDef:
     trailing_take_profit_activate: float | None
     trailing_take_profit_drawdown: float | None
     max_hold_days: int | None
-    alerts: list[dict]
-    filter_fn: Callable[[pl.DataFrame, dict], pl.Expr] | None
-    filter_history_fn: Callable[[pl.DataFrame, dict], pl.DataFrame] | None
-    lookback_days: int
-    source: str  # "builtin" | "custom" | "ai"
+    alerts: list[dict] = field(default_factory=list)
+    filter_fn: Callable[[pl.DataFrame, dict], pl.Expr] | None = None
+    filter_history_fn: Callable[[pl.DataFrame, dict], pl.DataFrame] | None = None
+    lookback_days: int = 1
+    source: str = "custom"  # "builtin" | "custom" | "ai"
     file_path: Path | None = None
+    execution_backend: str = "polars_expr"
+    required_features: frozenset[str] = field(default_factory=frozenset)
+    matrix_strategy: Any | None = None
 
 
 @dataclass
@@ -69,16 +72,19 @@ class StrategyResult:
 class StrategyEngine:
     """策略引擎 — 策略加载 + 执行 + 评分"""
 
-    def __init__(self, enriched_loader: Callable[[date], pl.DataFrame],
+    def __init__(self, enriched_loader: Callable[[date], pl.DataFrame] | None = None,
                  enriched_history_loader: Callable[[date, int], pl.DataFrame] | None = None,
-                 strategy_dirs: list[Path] | None = None):
+                 strategy_dirs: list[Path] | None = None,
+                 override_loader: Callable[[str], dict] | None = None):
         """
         Args:
             enriched_loader: (date) -> pl.DataFrame, 加载指定日期的 enriched 数据
             strategy_dirs:   策略文件搜索目录列表
+            override_loader: 可选。挖掘/叠加策略读用户覆盖；缺省时用策略默认参数。
         """
-        self._loader = enriched_loader
+        self._loader = enriched_loader or (lambda _as_of: pl.DataFrame())
         self._history_loader = enriched_history_loader
+        self._override_loader = override_loader
         self._strategies: dict[str, StrategyDef] = {}
         self._strategy_dirs = strategy_dirs or []
         self._load_all()
@@ -154,6 +160,11 @@ class StrategyEngine:
             lookback_days=int(getattr(mod, "LOOKBACK_DAYS", meta.get("lookback_days", 1)) or 1),
             source=source,
             file_path=path,
+            execution_backend=str(
+                getattr(mod, "EXECUTION_BACKEND", meta.get("execution_backend", "polars_expr"))
+            ),
+            required_features=frozenset(getattr(mod, "REQUIRED_FEATURES", ()) or ()),
+            matrix_strategy=getattr(mod, "MATRIX_STRATEGY", None),
         )
 
     def reload(self) -> None:
@@ -179,6 +190,27 @@ class StrategyEngine:
 
     def has(self, strategy_id: str) -> bool:
         return strategy_id in self._strategies
+
+    def strategy_definitions(self) -> tuple[StrategyDef, ...]:
+        return tuple(self._strategies.values())
+
+    @staticmethod
+    def resolve_params(
+        strategy: StrategyDef,
+        params: dict | None = None,
+        overrides: dict | None = None,
+    ) -> dict:
+        resolved = {
+            item["id"]: item.get("default")
+            for item in strategy.meta.get("params", [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        saved = (overrides or {}).get("params")
+        if isinstance(saved, dict):
+            resolved.update(saved)
+        if params:
+            resolved.update(params)
+        return resolved
 
     # ================================================================
     # 执行

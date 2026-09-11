@@ -28,7 +28,7 @@ import { api, type ExtDataField } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { cn } from '@/lib/cn'
 import type { DimensionGroup, QuoteMap } from '@/lib/analysis-adapter'
-import { computeQuoteMetrics } from '@/lib/analysis-adapter'
+import { computeQuoteMetrics, isUsableDimensionField } from '@/lib/analysis-adapter'
 import { fmtPct, priceColorClass } from '@/lib/format'
 
 // ===== 配置类型 =====
@@ -79,9 +79,7 @@ export function AnalysisConfigDialog({
     return schema?.columns.map(c => ({ name: c.name, dtype: c.type, label: c.label })) ?? []
   }, [draft.configId, schemaData])
 
-  const nonMetaFields = fieldsForConfig.filter(
-    f => !['symbol', 'code', 'date', 'name'].includes(f.name),
-  )
+  const nonMetaFields = fieldsForConfig.filter(isUsableDimensionField)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>

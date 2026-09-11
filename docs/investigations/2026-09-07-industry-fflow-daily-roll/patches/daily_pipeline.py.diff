@@ -1,0 +1,171 @@
+--- a/backend/app/jobs/daily_pipeline.py
++++ b/backend/app/jobs/daily_pipeline.py
+@@ -12,6 +12,7 @@
+ from __future__ import annotations
+ 
+ import logging
++import threading
+ from collections.abc import Callable
+ from datetime import date as Date
+ from pathlib import Path
+@@ -36,6 +37,123 @@
+ 
+ def _noop(stage: str, pct: int, msg: str, **kwargs) -> None:
+     pass
++
++
++_PIPELINE_GUARD = threading.Lock()
++_PIPELINE_IN_FLIGHT = False
++_PIPELINE_CANCEL = threading.Event()
++
++
++def pipeline_in_flight() -> bool:
++    return _PIPELINE_IN_FLIGHT
++
++
++def request_pipeline_cancel() -> None:
++    _PIPELINE_CANCEL.set()
++
++
++def should_force_fail_stale_pipeline_job(
++    *,
++    in_flight: bool,
++    elapsed_s: float,
++    stale_after_s: float = 600,
++) -> bool:
++    """Fail a job_store row only when the worker is gone (reload orphan)."""
++    try:
++        elapsed = float(elapsed_s)
++    except (TypeError, ValueError):
++        return False
++    return elapsed > float(stale_after_s) and not bool(in_flight)
++
++
++def _reset_pipeline_guard_for_tests() -> None:
++    global _PIPELINE_IN_FLIGHT
++    _PIPELINE_CANCEL.clear()
++    _PIPELINE_IN_FLIGHT = False
++    if _PIPELINE_GUARD.locked():
++        try:
++            _PIPELINE_GUARD.release()
++        except RuntimeError:
++            pass
++
++
++def _busy_pipeline_result() -> dict:
++    return {
++        "ok": False,
++        "status": "busy",
++        "reused": True,
++        "universe_size": 0,
++        "daily_days": 0,
++        "daily_source": None,
++        "skipped_stages": ["pipeline_in_flight"],
++        "quality": {
++            "ok": True,
++            "issues": [],
++            "note": "已有盘后任务在运行，未重跑日K",
++        },
++        "industry_fund_flow_daily": {
++            "ok": False,
++            "kind": "board",
++            "status": "busy",
++            "skipped_lock": True,
++            "note": "已有盘后任务在运行，未重跑日K或行业续更",
++        },
++    }
++
++
++def _run_industry_fund_flow_daily_roll(
++    data_dir: Path,
++    *,
++    cancel_event: threading.Event | None = None,
++    time_limit_s: float | None = None,
++) -> dict:
++    """Attach industry H5 daily continuation. Never raise into the daily-K path."""
++    try:
++        from app.services.free_sources.fund_flow import roll_industry_daily_from_h5
++
++        return roll_industry_daily_from_h5(
++            data_dir,
++            cancel_event=cancel_event,
++            time_limit_s=time_limit_s,
++        )
++    except Exception as e:
++        logger.warning("industry fund-flow daily roll failed: %s", e)
++        return {
++            "ok": False,
++            "kind": "board",
++            "status": "error",
++            "error": str(e),
++            "note": "行业日线续更失败，不影响已成功日K",
++        }
++
++
++def run_now(
++    repo: KlineRepository,
++    capset: CapabilitySet,
++    on_progress: ProgressCb | None = None,
++    override_start_date: Date | None = None,
++    industry_time_limit_s: float | None = None,
++) -> dict:
++    """Guard a single in-process pipeline. A second trigger does not redo daily K."""
++    global _PIPELINE_IN_FLIGHT
++    if not _PIPELINE_GUARD.acquire(blocking=False):
++        return _busy_pipeline_result()
++    _PIPELINE_IN_FLIGHT = True
++    _PIPELINE_CANCEL.clear()
++    try:
++        return _run_now_unlocked(
++            repo,
++            capset,
++            on_progress=on_progress,
++            override_start_date=override_start_date,
++            industry_time_limit_s=industry_time_limit_s,
++        )
++    finally:
++        _PIPELINE_IN_FLIGHT = False
++        try:
++            _PIPELINE_GUARD.release()
++        except RuntimeError:
++            pass
+ 
+ 
+ def _invalidate(table: str | None = None) -> None:
+@@ -126,11 +244,12 @@
+     }
+ 
+ 
+-def run_now(
++def _run_now_unlocked(
+     repo: KlineRepository,
+     capset: CapabilitySet,
+     on_progress: ProgressCb | None = None,
+     override_start_date: Date | None = None,
++    industry_time_limit_s: float | None = None,
+ ) -> dict:
+     """立即执行一次盘后管道,支持进度回调。
+ 
+@@ -835,6 +954,14 @@
+         )
+ 
+     quality_ok = bool(quality_report and quality_report.get("ok") is True)
++
++    # Industry continuation is after quality is decided and before done.
++    # Failure here must not flip quality_ok or rewrite daily_days.
++    industry_fund_flow_daily = _run_industry_fund_flow_daily_roll(
++        repo.store.data_dir,
++        cancel_event=_PIPELINE_CANCEL,
++        time_limit_s=industry_time_limit_s,
++    )
+     emit("done", 100, "完成" if quality_ok else "完成，但质量门禁未通过")
+     _invalidate(None)  # 兜底:全清
+ 
+@@ -864,6 +991,7 @@
+         "instruments_sync": instruments_result.as_dict(),
+         "skipped_stages": skipped,
+         "quality": quality_report,
++        "industry_fund_flow_daily": industry_fund_flow_daily,
+     }
+ 
+ 

@@ -1,0 +1,549 @@
+{
+  "corrupt_unreadable": {
+    "code": "valuation_offline_unreadable",
+    "dataset": "5_technical_derived/valuation",
+    "error": "估值文件损坏或无法解析: /private/var/folders/g_/cx_qfcqn1nd45brx4p137xnm0000gn/T/ot-val-boundary-08jlxqbj/root_corrupt/5_technical_derived/valuation/000001.SZ.parquet",
+    "layout": "by_symbol",
+    "ok": false,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "source": "offline_quantdb",
+    "status": "error",
+    "symbol": "000001.SZ"
+  },
+  "duplicate_key": {
+    "code": "valuation_offline_duplicate_key",
+    "dataset": "5_technical_derived/valuation",
+    "error": "重复 symbol+date: 000001.SZ 2026-07-21",
+    "layout": "by_symbol",
+    "ok": false,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "source": "offline_quantdb",
+    "status": "error",
+    "symbol": "000001.SZ"
+  },
+  "empty_symbol": {
+    "code": "valuation_offline_invalid_symbol",
+    "dataset": "5_technical_derived/valuation",
+    "error": "查询模式必须提供 --symbol",
+    "layout": "by_symbol",
+    "ok": false,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "source": "offline_quantdb",
+    "status": "error",
+    "symbol": ""
+  },
+  "empty_window": {
+    "as_of": "2026-08-27",
+    "code": "valuation_offline_empty_window",
+    "count": 0,
+    "coverage": {
+      "as_of": "2026-08-27",
+      "file_max_date": "2026-08-27",
+      "file_min_date": "2016-01-04",
+      "file_rows": 2588,
+      "historical_inventory": {
+        "as_of": "2026-09-06",
+        "cited_from": "/Users/simon/Trading/下载数据/stockdb_quantdb_integration_review_20260906/package_sanity.json",
+        "note": "Market-wide coverage is the 2026-09-06 inventory only. This round reads four by-symbol files and does not rescan the 80G packages.",
+        "this_round_full_market_scan": false,
+        "valuation_by_symbol": {
+          "bytes": 694488966,
+          "empty_files": 0,
+          "files": 5554,
+          "physical_rows": 10770127,
+          "time_max_native": "2026-08-27 00:00:00",
+          "time_min_native": "2016-01-04 00:00:00"
+        }
+      }
+    },
+    "data_count": 0,
+    "data_preview": [],
+    "dataset": "5_technical_derived/valuation",
+    "date": {
+      "end": "1990-01-02",
+      "start": "1990-01-01"
+    },
+    "fields": {
+      "mapped": {
+        "Symbol": "symbol",
+        "annual_net_profit": "annual_net_profit",
+        "circulating_capital": "float_share",
+        "close": "close",
+        "dividend_rate": "dividend_rate",
+        "equity": "equity",
+        "float_mv": "float_mv",
+        "net_profit_ttm": "net_profit_ttm",
+        "pb": "pb",
+        "pe_static": "pe_static",
+        "pe_ttm": "pe_ttm",
+        "ps_ttm": "ps_ttm",
+        "revenue_ttm": "revenue_ttm",
+        "time": "date",
+        "total_capital": "total_share",
+        "total_mv": "total_mv"
+      },
+      "missing_versus_project": [
+        "pcf_ttm",
+        "shares_pit_safe",
+        "shares_source",
+        "unit_version",
+        "unit_note",
+        "history_guarantee",
+        "fetched_at"
+      ],
+      "optional_absent": [],
+      "optional_present": [
+        "net_profit_ttm",
+        "revenue_ttm",
+        "equity",
+        "annual_net_profit",
+        "pe_static",
+        "dividend_rate"
+      ],
+      "original": [
+        "time",
+        "Symbol",
+        "close",
+        "total_capital",
+        "circulating_capital",
+        "total_mv",
+        "float_mv",
+        "net_profit_ttm",
+        "revenue_ttm",
+        "equity",
+        "annual_net_profit",
+        "pe_ttm",
+        "pe_static",
+        "pb",
+        "ps_ttm",
+        "dividend_rate"
+      ]
+    },
+    "layout": "by_symbol",
+    "limit": 5,
+    "message": "窗口内无估值记录",
+    "missing_fields": [
+      "pcf_ttm",
+      "shares_pit_safe",
+      "shares_source",
+      "unit_version",
+      "unit_note",
+      "history_guarantee",
+      "fetched_at"
+    ],
+    "ok": false,
+    "optional_absent": [],
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "quality": {
+      "anomalies": [],
+      "duplicate_keys": [],
+      "max_date": "2026-08-27",
+      "min_date": "2016-01-04",
+      "negative_pe_ttm": 0,
+      "non_finite_counts": {},
+      "null_counts": {
+        "Symbol": 0,
+        "annual_net_profit": 292,
+        "circulating_capital": 58,
+        "close": 0,
+        "dividend_rate": 0,
+        "equity": 72,
+        "float_mv": 58,
+        "net_profit_ttm": 292,
+        "pb": 72,
+        "pe_static": 292,
+        "pe_ttm": 292,
+        "ps_ttm": 292,
+        "revenue_ttm": 292,
+        "time": 0,
+        "total_capital": 58,
+        "total_mv": 58
+      },
+      "row_count": 2588
+    },
+    "source": "offline_quantdb",
+    "source_file": {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-27T18:19:36",
+      "mtime_ns": 1787825976537502100,
+      "path": "/Users/simon/Trading/下载数据/quant_data/5_technical_derived/valuation/000001.SZ.parquet",
+      "sha256": "a190a94b6f34f2307b2763e24ce5ffccfcf6dba125d8e19a22151ac3bd5d28e1",
+      "size": 164774
+    },
+    "status": "empty",
+    "symbol": "000001.SZ",
+    "unit_note": "No silent conversion. Daily-bar amount×10000 is not applied to valuation. Units for total_capital/circulating_capital and total_mv/float_mv remain unknown/unverified. total_mv == close * total_capital on finite rows is identity consistency only; it does not prove 股/元 versus 万股/万元 and is not a unit rewrite. PE/PB/PS formulas are not confirmed. dividend_rate ratio versus percent is not confirmed by appearance. Negative PE is kept. NaN/Inf is emitted as JSON null plus an anomaly mark."
+  },
+  "file_symlink_escape": {
+    "code": "valuation_offline_symlink_escape",
+    "dataset": "5_technical_derived/valuation",
+    "error": "估值路径越出 QuantDB root: 000001.SZ",
+    "layout": "by_symbol",
+    "ok": false,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "source": "offline_quantdb",
+    "status": "error",
+    "symbol": "000001.SZ"
+  },
+  "invalid_date": {
+    "code": "valuation_offline_invalid_date",
+    "dataset": "5_technical_derived/valuation",
+    "error": "start 必须是 YYYY-MM-DD: 2026/07/21",
+    "layout": "by_symbol",
+    "ok": false,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "source": "offline_quantdb",
+    "status": "error",
+    "symbol": "000001.SZ"
+  },
+  "invalid_limit_bool": {
+    "code": "valuation_offline_invalid_limit",
+    "dataset": "5_technical_derived/valuation",
+    "error": "limit 必须是整数",
+    "layout": "by_symbol",
+    "ok": false,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "source": "offline_quantdb",
+    "status": "error",
+    "symbol": "000001.SZ"
+  },
+  "invalid_limit_float": {
+    "code": "valuation_offline_invalid_limit",
+    "dataset": "5_technical_derived/valuation",
+    "error": "limit 必须是整数",
+    "layout": "by_symbol",
+    "ok": false,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "source": "offline_quantdb",
+    "status": "error",
+    "symbol": "000001.SZ"
+  },
+  "invalid_symbol": {
+    "code": "valuation_offline_invalid_symbol",
+    "dataset": "5_technical_derived/valuation",
+    "error": "非法 A 股 symbol: not-a-symbol",
+    "layout": "by_symbol",
+    "ok": false,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "source": "offline_quantdb",
+    "status": "error",
+    "symbol": "not-a-symbol"
+  },
+  "missing_file": {
+    "code": "valuation_offline_not_found",
+    "dataset": "5_technical_derived/valuation",
+    "error": "估值文件不存在: 999999.SZ",
+    "layout": "by_symbol",
+    "ok": false,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "source": "offline_quantdb",
+    "status": "error",
+    "symbol": "999999.SZ"
+  },
+  "missing_root": {
+    "code": "valuation_offline_root_missing",
+    "dataset": "5_technical_derived/valuation",
+    "error": "QuantDB root 不存在: /tmp/ot-offline-val-missing-root-does-not-exist",
+    "layout": "by_symbol",
+    "ok": false,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "source": "offline_quantdb",
+    "status": "error",
+    "symbol": "000001.SZ"
+  },
+  "nan_inf": {
+    "as_of": "2026-07-21",
+    "count": 1,
+    "coverage": {
+      "as_of": "2026-07-21",
+      "file_max_date": "2026-07-21",
+      "file_min_date": "2026-07-21",
+      "file_rows": 1,
+      "historical_inventory": {
+        "as_of": "2026-09-06",
+        "cited_from": "/Users/simon/Trading/下载数据/stockdb_quantdb_integration_review_20260906/package_sanity.json",
+        "note": "Market-wide coverage is the 2026-09-06 inventory only. This round reads four by-symbol files and does not rescan the 80G packages.",
+        "this_round_full_market_scan": false,
+        "valuation_by_symbol": {
+          "bytes": 694488966,
+          "empty_files": 0,
+          "files": 5554,
+          "physical_rows": 10770127,
+          "time_max_native": "2026-08-27 00:00:00",
+          "time_min_native": "2016-01-04 00:00:00"
+        }
+      }
+    },
+    "data_count": 1,
+    "data_preview": [
+      {
+        "close": 10.0,
+        "date": "2026-07-21",
+        "float_mv": 1000.0,
+        "float_share": 100.0,
+        "pb": null,
+        "pe_ttm": null,
+        "ps_ttm": 2.0,
+        "symbol": "000001.SZ",
+        "total_mv": 1000.0,
+        "total_share": 100.0,
+        "value_flags": {
+          "pb": "inf",
+          "pe_ttm": "nan"
+        }
+      }
+    ],
+    "dataset": "5_technical_derived/valuation",
+    "date": {
+      "end": null,
+      "start": null
+    },
+    "fields": {
+      "mapped": {
+        "Symbol": "symbol",
+        "annual_net_profit": "annual_net_profit",
+        "circulating_capital": "float_share",
+        "close": "close",
+        "dividend_rate": "dividend_rate",
+        "equity": "equity",
+        "float_mv": "float_mv",
+        "net_profit_ttm": "net_profit_ttm",
+        "pb": "pb",
+        "pe_static": "pe_static",
+        "pe_ttm": "pe_ttm",
+        "ps_ttm": "ps_ttm",
+        "revenue_ttm": "revenue_ttm",
+        "time": "date",
+        "total_capital": "total_share",
+        "total_mv": "total_mv"
+      },
+      "missing_versus_project": [
+        "pcf_ttm",
+        "shares_pit_safe",
+        "shares_source",
+        "unit_version",
+        "unit_note",
+        "history_guarantee",
+        "fetched_at"
+      ],
+      "optional_absent": [
+        "net_profit_ttm",
+        "revenue_ttm",
+        "equity",
+        "annual_net_profit",
+        "pe_static",
+        "dividend_rate"
+      ],
+      "optional_present": [],
+      "original": [
+        "time",
+        "Symbol",
+        "close",
+        "total_capital",
+        "circulating_capital",
+        "total_mv",
+        "float_mv",
+        "pe_ttm",
+        "pb",
+        "ps_ttm"
+      ]
+    },
+    "layout": "by_symbol",
+    "limit": 5,
+    "missing_fields": [
+      "pcf_ttm",
+      "shares_pit_safe",
+      "shares_source",
+      "unit_version",
+      "unit_note",
+      "history_guarantee",
+      "fetched_at"
+    ],
+    "ok": true,
+    "optional_absent": [
+      "net_profit_ttm",
+      "revenue_ttm",
+      "equity",
+      "annual_net_profit",
+      "pe_static",
+      "dividend_rate"
+    ],
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "quality": {
+      "anomalies": [
+        {
+          "date": "2026-07-21",
+          "field": "pe_ttm",
+          "kind": "nan",
+          "symbol": "000001.SZ"
+        },
+        {
+          "date": "2026-07-21",
+          "field": "pb",
+          "kind": "inf",
+          "symbol": "000001.SZ"
+        }
+      ],
+      "duplicate_keys": [],
+      "max_date": "2026-07-21",
+      "min_date": "2026-07-21",
+      "negative_pe_ttm": 0,
+      "non_finite_counts": {
+        "pb": 1,
+        "pe_ttm": 1
+      },
+      "null_counts": {
+        "Symbol": 0,
+        "circulating_capital": 0,
+        "close": 0,
+        "float_mv": 0,
+        "pb": 0,
+        "pe_ttm": 0,
+        "ps_ttm": 0,
+        "time": 0,
+        "total_capital": 0,
+        "total_mv": 0
+      },
+      "row_count": 1
+    },
+    "source": "offline_quantdb",
+    "source_file": {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-09-12T02:18:43",
+      "mtime_ns": 1789150723269023488,
+      "path": "/private/var/folders/g_/cx_qfcqn1nd45brx4p137xnm0000gn/T/ot-val-boundary-08jlxqbj/root_nan/5_technical_derived/valuation/000001.SZ.parquet",
+      "sha256": "bea37a562ba2111e74eaa19e409b7c8e7ec4c2feeeb29a5f52e2149300bd4523",
+      "size": 3353
+    },
+    "status": "ok",
+    "symbol": "000001.SZ",
+    "unit_note": "No silent conversion. Daily-bar amount×10000 is not applied to valuation. Units for total_capital/circulating_capital and total_mv/float_mv remain unknown/unverified. total_mv == close * total_capital on finite rows is identity consistency only; it does not prove 股/元 versus 万股/万元 and is not a unit rewrite. PE/PB/PS formulas are not confirmed. dividend_rate ratio versus percent is not confirmed by appearance. Negative PE is kept. NaN/Inf is emitted as JSON null plus an anomaly mark."
+  },
+  "parent_symlink_escape": {
+    "code": "valuation_offline_symlink_escape",
+    "dataset": "5_technical_derived/valuation",
+    "error": "估值路径越出 QuantDB root: 5_technical_derived",
+    "layout": "by_symbol",
+    "ok": false,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "source": "offline_quantdb",
+    "status": "error",
+    "symbol": "000001.SZ"
+  },
+  "permission": {
+    "code": "valuation_offline_permission",
+    "dataset": "5_technical_derived/valuation",
+    "error": "估值文件无读权限: /private/var/folders/g_/cx_qfcqn1nd45brx4p137xnm0000gn/T/ot-val-boundary-08jlxqbj/root_perm/5_technical_derived/valuation/000001.SZ.parquet",
+    "layout": "by_symbol",
+    "ok": false,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "source": "offline_quantdb",
+    "status": "error",
+    "symbol": "000001.SZ"
+  },
+  "write_evidence_denied_new_dir": {
+    "code": "valuation_offline_evidence_path_denied",
+    "dataset": "5_technical_derived/valuation",
+    "error": "详细证据只能写到 /Users/simon/Trading/one-trading/docs/investigations/2026-09-11-offline-valuation-readonly",
+    "layout": "by_symbol",
+    "ok": false,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "source": "offline_quantdb",
+    "status": "error",
+    "symbol": null
+  }
+}

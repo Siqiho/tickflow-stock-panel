@@ -1,0 +1,50 @@
+{
+  "dataset_id": "trading_calendar",
+  "run_id": "wp2-official",
+  "row_count": 2007,
+  "passed": true,
+  "checks": [
+    {
+      "code": "not_empty",
+      "passed": true,
+      "detail": "2007 rows"
+    },
+    {
+      "code": "required_columns",
+      "passed": true,
+      "detail": "ok"
+    },
+    {
+      "code": "pk_unique",
+      "passed": true,
+      "detail": "unique=2007 rows=2007"
+    },
+    {
+      "code": "enum:exchange",
+      "passed": true,
+      "detail": "ok"
+    },
+    {
+      "code": "enum:session_type",
+      "passed": true,
+      "detail": "ok"
+    },
+    {
+      "code": "calendar_session_consistency",
+      "passed": true,
+      "detail": "ok"
+    },
+    {
+      "code": "overlap_conflicts",
+      "passed": true,
+      "detail": "intersection=1824"
+    }
+  ],
+  "overlap": {
+    "prior_rows": 5109,
+    "intersection": 1824,
+    "conflicts": 0,
+    "conflict_details": []
+  },
+  "unit_version": "trading_calendar_v1"
+}

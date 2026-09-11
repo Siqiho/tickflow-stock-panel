@@ -1,0 +1,12 @@
+{
+  "absolute_path_recorded": true,
+  "contents_exposed": false,
+  "exists": true,
+  "is_symlink": false,
+  "mode": "0o600",
+  "mtime": "2026-09-09T16:12:23",
+  "mtime_ns": 1788941543163327462,
+  "path": ".env",
+  "sha256": "8855712d771c3fc3396eaf360a594b48f1fbab3332c73abcde87d6d317711d38",
+  "size": 1865
+}

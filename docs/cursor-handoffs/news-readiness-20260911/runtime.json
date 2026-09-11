@@ -1,0 +1,47 @@
+{
+  "purpose": "News readiness isolated_preview runtime. Not production.",
+  "created_at": "2026-09-11T14:35:00+08:00",
+  "started_by_this_task": false,
+  "note": "未由本任务启动；负责人确认待回填",
+  "owner_task": "01a07a79-1c8e-73e0-af8f-85939177bb8b",
+  "do_not_use_old_pids": true,
+  "observed_ports_this_round": {
+    "3011": "not listening (chief recheck)",
+    "3018": "not listening (chief recheck)",
+    "3041": "not listening (chief recheck)",
+    "3048": "not listening (chief recheck)"
+  },
+  "historical_only_do_not_reuse": {
+    "note": "9/9 closeout PIDs are not current. Do not copy into live fields.",
+    "old_isolated_backend_pid": 97934,
+    "old_isolated_frontend_pid": 97951
+  },
+  "pending_owner_fill": {
+    "DATA_DIR": null,
+    "NEWS_CACHE_MODE": "isolated_preview",
+    "ONE_TRADING_DISABLE_BACKGROUND": "1",
+    "backend_pid": null,
+    "backend_port": null,
+    "frontend_pid": null,
+    "frontend_port": null,
+    "background_jobs": null
+  },
+  "read_interfaces": [
+    "GET /api/news/market",
+    "GET /api/news/policy",
+    "GET /api/news/policy/departments",
+    "GET /api/news/policy/key-departments",
+    "/news",
+    "/news?tab=policy"
+  ],
+  "forbidden_this_round": [
+    "POST /api/news/*/refresh against formal or old isolated caches",
+    "live upstream fetch",
+    "start/stop/restart app services from this task"
+  ],
+  "model": {
+    "requested": "Grok 4.6 / Extra High",
+    "config_display": "Grok 4.6 Extra High requested via task",
+    "vendor_return_evidence": "未核验"
+  }
+}

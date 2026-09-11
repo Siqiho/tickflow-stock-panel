@@ -1,4 +1,4 @@
-"""内置扩展数据预设 — 概念/行业首次启动自动拉取。
+"""内置扩展数据预设 — 概念/行业启动时只创建配置, 等待用户手动获取 (#199)。
 
 设计原则:
   - 扩展数据通用逻辑零改动 (ExtConfig / fetch_and_ingest / API / 前端均不动)
@@ -51,7 +51,7 @@ def _concept_preset() -> ExtConfig:
             ExtField("股票简称", "string", "股票简称"),
             ExtField("所属概念", "string", "所属概念"),
         ],
-        description="同花顺概念分类 (首次启动自动拉取, 可在扩展数据页手动更新)",
+        description="同花顺概念分类 (启动仅创建配置, 在概念/行业页手动获取)",
         symbol_map={"type": "mapped", "col": "股票代码"},
         code_map={"type": "computed", "from": "symbol", "method": "strip_exchange"},
         pull=PullConfig(
@@ -80,7 +80,7 @@ def _industry_preset() -> ExtConfig:
             ExtField("股票简称", "string", "股票简称"),
             ExtField("所属同花顺行业", "string", "所属同花顺行业"),
         ],
-        description="同花顺行业分类 (首次启动自动拉取, 可在扩展数据页手动更新)",
+        description="同花顺行业分类 (启动仅创建配置, 在概念/行业页手动获取)",
         symbol_map={"type": "mapped", "col": "股票代码"},
         code_map={"type": "computed", "from": "symbol", "method": "strip_exchange"},
         pull=PullConfig(
@@ -156,8 +156,11 @@ async def _fetch_json(url: str) -> list[dict]:
     """请求 JSON 接口, 返回行数组。超时 30s, 失败抛异常由调用方兜底。"""
     import httpx
 
+    # 延迟导入避免与 ext_pull 循环依赖; 出站请求带 tsp 标识头
+    from app.services.ext_pull import outbound_headers
+
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url)
+        resp = await client.get(url, headers=outbound_headers())
         resp.raise_for_status()
         data = resp.json()
     if not isinstance(data, list):

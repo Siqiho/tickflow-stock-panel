@@ -17,9 +17,55 @@ import { Fragment, type ReactNode } from 'react'
  * 不追求完整 GFM,只覆盖 AI 报告会产出的结构。
  */
 
+export const OFFICIAL_A_SHARE_SYMBOL_RE = /\b(\d{6}\.(?:SH|SZ|BJ))\b/gi
+
+function normalizeOfficialSymbol(value: string): string | null {
+  const symbol = value.trim().toUpperCase()
+  return /^\d{6}\.(?:SH|SZ|BJ)$/.test(symbol) ? symbol : null
+}
+
+function renderPlainText(
+  text: string,
+  keyBase: string,
+  onSymbolClick?: (symbol: string) => void,
+): ReactNode {
+  if (!onSymbolClick || !text) return text
+
+  const nodes: ReactNode[] = []
+  const matcher = new RegExp(OFFICIAL_A_SHARE_SYMBOL_RE.source, 'gi')
+  let last = 0
+  let match: RegExpExecArray | null
+  let index = 0
+  while ((match = matcher.exec(text)) !== null) {
+    const symbol = normalizeOfficialSymbol(match[1] ?? match[0])
+    if (!symbol) continue
+    if (match.index > last) nodes.push(text.slice(last, match.index))
+    nodes.push(
+      <button
+        key={`${keyBase}-sym-${index}`}
+        type="button"
+        onClick={() => onSymbolClick(symbol)}
+        aria-label={`查看 ${symbol} 行情`}
+        className="inline rounded-sm bg-sky-500/10 px-0.5 font-mono text-[0.95em] font-medium text-sky-700 underline decoration-sky-400/50 underline-offset-2 transition-colors hover:bg-sky-500/16 hover:text-sky-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/40 dark:text-sky-300 dark:hover:text-sky-200"
+      >
+        {match[0]}
+      </button>,
+    )
+    last = match.index + match[0].length
+    index++
+  }
+  if (index === 0) return text
+  if (last < text.length) nodes.push(text.slice(last))
+  return nodes
+}
+
 // ===== 行内格式:加粗 / 行内代码 / 星号评级 =====
 
-function renderInline(text: string, keyBase: string): ReactNode[] {
+function renderInline(
+  text: string,
+  keyBase: string,
+  onSymbolClick?: (symbol: string) => void,
+): ReactNode[] {
   const nodes: ReactNode[] = []
   // 正则:匹配 **加粗** 或 `代码` 或 ★ 评级
   const re = /(\*\*([^*]+)\*\*)|(`([^`]+)`)/g
@@ -27,22 +73,53 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
   let m: RegExpExecArray | null
   let i = 0
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) nodes.push(<Fragment key={`${keyBase}-t-${i}`}>{text.slice(last, m.index)}</Fragment>)
+    if (m.index > last) {
+      nodes.push(
+        <Fragment key={`${keyBase}-t-${i}`}>
+          {renderPlainText(text.slice(last, m.index), `${keyBase}-t-${i}`, onSymbolClick)}
+        </Fragment>,
+      )
+    }
     if (m[1]) {
       // 加粗
-      nodes.push(<strong key={`${keyBase}-b-${i}`} className="font-semibold text-foreground">{m[2]}</strong>)
+      nodes.push(
+        <strong key={`${keyBase}-b-${i}`} className="font-semibold text-foreground">
+          {renderPlainText(m[2], `${keyBase}-b-${i}`, onSymbolClick)}
+        </strong>,
+      )
     } else if (m[3]) {
       // 行内代码
-      nodes.push(
-        <code key={`${keyBase}-c-${i}`} className="px-1 py-0.5 rounded bg-elevated text-[0.85em] font-mono text-accent">
-          {m[4]}
-        </code>,
-      )
+      const codeSymbol = normalizeOfficialSymbol(m[4] ?? '')
+      if (onSymbolClick && codeSymbol) {
+        nodes.push(
+          <button
+            key={`${keyBase}-c-${i}`}
+            type="button"
+            onClick={() => onSymbolClick(codeSymbol)}
+            aria-label={`查看 ${codeSymbol} 行情`}
+            className="inline rounded-sm bg-sky-500/10 px-1 py-0.5 font-mono text-[0.85em] font-medium text-sky-700 underline decoration-sky-400/50 underline-offset-2 transition-colors hover:bg-sky-500/16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/40 dark:text-sky-300"
+          >
+            {m[4]}
+          </button>,
+        )
+      } else {
+        nodes.push(
+          <code key={`${keyBase}-c-${i}`} className="px-1 py-0.5 rounded bg-elevated text-[0.85em] font-mono text-accent">
+            {m[4]}
+          </code>,
+        )
+      }
     }
     last = m.index + m[0].length
     i++
   }
-  if (last < text.length) nodes.push(<Fragment key={`${keyBase}-t-end`}>{text.slice(last)}</Fragment>)
+  if (last < text.length) {
+    nodes.push(
+      <Fragment key={`${keyBase}-t-end`}>
+        {renderPlainText(text.slice(last), `${keyBase}-t-end`, onSymbolClick)}
+      </Fragment>,
+    )
+  }
   return nodes
 }
 
@@ -70,7 +147,13 @@ function parseTable(lines: string[], start: number): { rows: string[][]; consume
 
 // ===== 主渲染 =====
 
-export function MarkdownRenderer({ content }: { content: string }) {
+export function MarkdownRenderer({
+  content,
+  onSymbolClick,
+}: {
+  content: string
+  onSymbolClick?: (symbol: string) => void
+}) {
   const lines = content.replace(/\r\n/g, '\n').split('\n')
   const blocks: ReactNode[] = []
   let i = 0
@@ -102,7 +185,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
       const mtCls = level <= 2 ? 'mt-6' : 'mt-5'
       blocks.push(
         <div key={key++} className={`${sizeCls} ${mtCls} mb-3 font-semibold text-foreground flex items-center gap-1.5`}>
-          {renderInline(text, `h-${key}`)}
+          {renderInline(text, `h-${key}`, onSymbolClick)}
         </div>,
       )
       i++
@@ -118,7 +201,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
       }
       blocks.push(
         <blockquote key={key++} className="my-4 pl-3 border-l-2 border-amber-400/40 bg-amber-400/[0.04] py-1.5 pr-2 rounded-r text-xs text-secondary">
-          {renderInline(quoteLines.join(' '), `q-${key}`)}
+          {renderInline(quoteLines.join(' '), `q-${key}`, onSymbolClick)}
         </blockquote>,
       )
       continue
@@ -144,7 +227,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
                 <tr className="bg-elevated/50">
                   {header.map((cell, ci) => (
                     <th key={ci} className="px-2.5 py-1.5 text-left font-medium text-foreground border-b border-border/40 whitespace-nowrap">
-                      {renderInline(cell, `th-${key}-${ci}`)}
+                      {renderInline(cell, `th-${key}-${ci}`, onSymbolClick)}
                     </th>
                   ))}
                 </tr>
@@ -154,7 +237,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
                   <tr key={ri} className="border-b border-border/20 last:border-0 hover:bg-elevated/20">
                     {row.map((cell, ci) => (
                       <td key={ci} className="px-2.5 py-1.5 text-foreground align-top break-words">
-                        {renderInline(cell, `td-${key}-${ri}-${ci}`)}
+                        {renderInline(cell, `td-${key}-${ri}-${ci}`, onSymbolClick)}
                       </td>
                     ))}
                   </tr>
@@ -180,7 +263,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
           {items.map((item, ii) => (
             <li key={ii} className="flex items-start gap-2 text-sm text-foreground leading-relaxed">
               <span className="mt-[7px] h-1 w-1 rounded-full bg-accent/60 shrink-0" />
-              <span>{renderInline(item, `li-${key}-${ii}`)}</span>
+              <span>{renderInline(item, `li-${key}-${ii}`, onSymbolClick)}</span>
             </li>
           ))}
         </ul>,
@@ -202,7 +285,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
               <span className="mt-0.5 h-4 w-4 rounded-full bg-accent/10 text-accent text-[10px] font-mono flex items-center justify-center shrink-0">
                 {ii + 1}
               </span>
-              <span className="flex-1 text-foreground">{renderInline(item, `ol-${key}-${ii}`)}</span>
+              <span className="flex-1 text-foreground">{renderInline(item, `ol-${key}-${ii}`, onSymbolClick)}</span>
             </li>
           ))}
         </ol>,
@@ -213,7 +296,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
     // 普通段落
     blocks.push(
       <p key={key++} className="my-3 text-sm text-foreground leading-relaxed">
-        {renderInline(trimmed, `p-${key}`)}
+        {renderInline(trimmed, `p-${key}`, onSymbolClick)}
       </p>,
     )
     i++

@@ -1,0 +1,118 @@
+{
+  "captured_at": "2026-09-12T01:55:38+08:00",
+  "restore_boundary": "/Users/simon/Trading/docs/audits/restore-whole-20260910-0019/restore-report.md",
+  "backup": {
+    "path": "/Users/simon/备份/codex/20260912-015545-fund-flow-window-chain-restore-before",
+    "readme": "/Users/simon/备份/codex/20260912-015545-fund-flow-window-chain-restore-before/README.md"
+  },
+  "pre_change_status": {
+    "has_roll_concept_daily_from_h5": false,
+    "has_concept_lock": false,
+    "has_run_now_concept": false,
+    "has_request_concept_roll_cancel": false,
+    "frontend_board_window_max_63": true,
+    "frontend_kind_specific_max": false,
+    "calendar_covers_today": true,
+    "calendar_freshness_helpers_present": true
+  },
+  "source_files_before": {
+    "/Users/simon/Trading/one-trading/backend/app/jobs/daily_pipeline.py": {
+      "bytes": 67109,
+      "sha256": "4a7f7085c034d9f9043b5ba0b9e44dcf9cbb074da570582d1ce3eaef8a011652"
+    },
+    "/Users/simon/Trading/one-trading/backend/app/services/free_sources/fund_flow.py": {
+      "bytes": 71940,
+      "sha256": "304ec3ff2d0a5a6d0175c641ff64d334e50f412d5ad670b1dcb9fa4b2100aa4c"
+    },
+    "/Users/simon/Trading/one-trading/backend/tests/free_sources/test_fund_flow.py": {
+      "bytes": 35111,
+      "sha256": "653ae6e1d2fdedabb0d0fbb9123af1ad08f440290b4feb78b58246f21d92763d",
+      "note": "not modified this package"
+    },
+    "/Users/simon/Trading/one-trading/docs/data-platform-development-log.md": {
+      "bytes": 214425,
+      "sha256": "099683ce3871f6df18af0eb3c2383eb3026cc5786c1c757a0cfdba2f1016038d"
+    },
+    "/Users/simon/Trading/one-trading/docs/workbench-development-log.md": {
+      "bytes": 275866,
+      "sha256": "9c3adf63390eb705503e921fcae128c38905a30a08f7da83bf3f0c05045481e7"
+    },
+    "/Users/simon/Trading/one-trading/frontend/src/components/SectorFundFlowPanel.tsx": {
+      "bytes": 20340,
+      "sha256": "f79dd28a35f38a7e94d909a6bfed93dbde51a65f0f87eb0f5b9e98468ad13f28"
+    },
+    "/Users/simon/Trading/one-trading/frontend/src/components/__tests__/SectorFundFlowPanel.history.test.tsx": {
+      "bytes": 15549,
+      "sha256": "fd16442083473be464eb396418b7fab7006accfa8a0ae5a4bb3da7b2031f846c"
+    },
+    "/Users/simon/Trading/one-trading/frontend/src/components/__tests__/SectorFundFlowPanel.industry-freshness.test.tsx": {
+      "bytes": 5911,
+      "sha256": "ef5ee2d7c122e42325830c4886722a9ab56f817052661064569780bac7314e88"
+    },
+    "/Users/simon/Trading/one-trading/frontend/src/lib/api.ts": {
+      "bytes": 145360,
+      "sha256": "3b56dec4300f4494edd1a7549955d4264e8c2677895b75282429ede66f8ba2f1",
+      "note": "read-only this package"
+    },
+    "/Users/simon/Trading/one-trading/backend/app/api/free_ext.py": {
+      "bytes": 21945,
+      "sha256": "352788fd1fa1d416a8cddaa4211c9b2c703ac30387604ff437e66353028a92b2",
+      "note": "read-only this package"
+    },
+    "/Users/simon/Trading/one-trading/backend/app/api/pipeline.py": {
+      "bytes": 4377,
+      "sha256": "aaa2e1cd391144bb5baa4f8f70aeb5f611e94c67540286d30a5c408b3d239be7",
+      "note": "read-only this package; cancel_job still calls request_industry_roll_cancel, which now also sets the concept cancel event"
+    }
+  },
+  "formal_data_metadata": {
+    "data_dir": "/Users/simon/Trading/one-trading/data",
+    "industry_snapshot": {
+      "rows": 128,
+      "codes": 128
+    },
+    "concept_snapshot": {
+      "rows": 504,
+      "codes": 504
+    },
+    "industry_daily": {
+      "partition_files": 136,
+      "rows": 17057,
+      "h5_rows": 16801,
+      "h5_dates": 134,
+      "h5_min": "2026-03-02",
+      "h5_max": "2026-09-10",
+      "h5_latest_codes": 128,
+      "sources": {
+        "eastmoney_fflow_day": 16801,
+        "go_stock_local_snapshot": 256
+      },
+      "units": {
+        "yuan": 17057
+      }
+    },
+    "concept_daily": {
+      "partition_files": 131,
+      "rows": 63042,
+      "h5_rows": 62770,
+      "h5_dates": 129,
+      "h5_min": "2026-03-09",
+      "h5_max": "2026-09-10",
+      "h5_latest_codes": 504,
+      "sources": {
+        "eastmoney_fflow_day": 62770,
+        "go_stock_local_snapshot": 272
+      },
+      "units": {
+        "yuan": 63042
+      }
+    },
+    "trading_calendar": {
+      "rows": 2007,
+      "min": "2025-01-01",
+      "max": "2026-10-31",
+      "covers_2026_09_12": true,
+      "sha256": "dfd9f647ab4a375a4648c52eab2aff0824d8a38b2b0cba45f672e458cb124e9b"
+    }
+  }
+}

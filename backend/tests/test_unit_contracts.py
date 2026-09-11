@@ -219,7 +219,13 @@ def test_builtin_manifests_are_local_ordered_and_cover_required_datasets(monkeyp
     assert all(manifest.entitlement_required is None for manifest in public)
     assert {
         manifest.history_guarantee for manifest in public
-    } <= {"snapshot", "cache", "no_formal_guarantee"}
+    } <= {
+        "snapshot",
+        "cache",
+        "no_formal_guarantee",
+        "single_symbol_exact_trade_date_on_demand",
+        "exact_trade_date_on_demand_no_fallback",
+    }
     assert {
         "stock_instruments",
         "etf_instruments",

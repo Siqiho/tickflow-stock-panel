@@ -33,7 +33,13 @@ export function useUpdateQuoteInterval() {
 export function useWatchlistBatchAdd() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (symbols: string[]) => api.watchlistBatchAdd(symbols),
+    mutationFn: (input: string[] | { symbols: string[]; groupId?: string | null; groupIds?: string[]; note?: string }) => {
+      const symbols = Array.isArray(input) ? input : input.symbols
+      const note = Array.isArray(input) ? '' : (input.note ?? '')
+      const groupId = Array.isArray(input) ? undefined : input.groupId
+      const groupIds = Array.isArray(input) ? undefined : input.groupIds
+      return api.watchlistBatchAdd(symbols, note, groupId, groupIds)
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.watchlist })
       qc.invalidateQueries({ queryKey: QK.watchlistEnriched() })

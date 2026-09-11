@@ -1,0 +1,18 @@
+{
+  "path": "/Users/simon/Trading/下载数据/stockdb_quantdb_integration_review_20260906/README.md",
+  "before": {
+    "sha256": "dcc80426264ca2a19035c63834c3e46b4bbc308cf96cc123d26f45578197778c",
+    "size": 22813,
+    "mtime": "2026-09-06T23:34:00"
+  },
+  "after": {
+    "written": false,
+    "reason": "this-round delivery is one-trading investigation dir + data-platform log only; external README left unchanged on purpose",
+    "sha256": "dcc80426264ca2a19035c63834c3e46b4bbc308cf96cc123d26f45578197778c"
+  },
+  "applied": false,
+  "this_round_delivery": false,
+  "acceptance_blocker": false,
+  "bridge_candidate_includes_external_file": false,
+  "note": "NOT APPLIED / 非本轮交付。新旧报告互相链接即可；未更新的外部旧报告不再写成待用户决策或验收阻断。"
+}

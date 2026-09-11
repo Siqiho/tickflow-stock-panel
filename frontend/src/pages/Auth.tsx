@@ -13,45 +13,58 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Eye, EyeOff, Loader2, Lock, ShieldCheck, ShieldAlert, Sparkles } from 'lucide-react'
+import { Eye, EyeOff, Loader2, Lock, ShieldCheck, ShieldAlert, Sparkles, UserPlus } from 'lucide-react'
 import { api } from '@/lib/api'
 import { Logo } from '@/components/Logo'
 import { cn } from '@/lib/cn'
+import { clearAccountLocalState } from '@/lib/accountLocalState'
+
+const MIN_PASSWORD_LENGTH = 6
 
 export function Auth() {
   const navigate = useNavigate()
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')  // 仅设密码时用
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [inviteCode, setInviteCode] = useState('')
+  const [registerMode, setRegisterMode] = useState(false)
   const [showPwd, setShowPwd] = useState(false)
   const [localError, setLocalError] = useState('')
 
   // 取认证状态(是否已设密码)
-  const [status, setStatus] = useState<{ configured: boolean } | null>(null)
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof api.authStatus>> | null>(null)
   useEffect(() => {
     api.authStatus().then(s => {
       setStatus(s)
       // 已登录的话直接进面板(避免登录页死循环)
-      if (s.authenticated) navigate('/', { replace: true })
-    }).catch(() => setStatus({ configured: false }))
+      if (s.authenticated) {
+        navigate(s.user?.role === 'admin' ? '/admin/users' : '/', { replace: true })
+      }
+    }).catch(() => setStatus({ configured: false, authenticated: false }))
   }, [navigate])
 
   const isSetup = !status?.configured  // configured=false → 设密码模式
+  const isRegister = !!status?.configured && registerMode
 
   // 登录 / 设密码 共用一个 mutation(按 isSetup 调不同接口)
   const submitMut = useMutation({
     mutationFn: async () => {
       if (isSetup) {
-        return api.authSetup(password)
+        await api.authSetup(password)
+        return api.authLogin(password)
       }
-      return api.authLogin(password)
+      if (isRegister) return api.authRegister(username, password, inviteCode)
+      return api.authLogin(password, username)
     },
-    onSuccess: () => {
-      // 成功: 跳回原页面(或首页)
-      const redirect = new URLSearchParams(window.location.search).get('redirect') || '/'
+    onSuccess: (result) => {
+      clearAccountLocalState()
+      // 明确 redirect 优先；否则管理员进入专属界面，普通用户进入工作台。
+      const explicitRedirect = new URLSearchParams(window.location.search).get('redirect')
+      const redirect = explicitRedirect || (result.user?.role === 'admin' ? '/admin/users' : '/')
       navigate(redirect, { replace: true })
     },
     onError: (err: any) => {
-      const msg = err?.message || (isSetup ? '设置失败' : '登录失败')
+      const msg = err?.message || (isSetup ? '设置失败' : isRegister ? '注册失败' : '登录失败')
       // 设密码/登录失败必须显示: 401(密码错)/403(公网设密码被拒)/429(限流) 都要提示
       setLocalError(msg)
     },
@@ -60,9 +73,14 @@ export function Auth() {
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
     setLocalError('')
-    if (isSetup) {
-      if (password.length < 6) { setLocalError('密码至少 6 位'); return }
+    if (isSetup || isRegister) {
+      if (isRegister && !username.trim()) { setLocalError('请输入用户名'); return }
+      if (password.length < MIN_PASSWORD_LENGTH) { setLocalError(`密码至少 ${MIN_PASSWORD_LENGTH} 位`); return }
       if (password !== confirmPassword) { setLocalError('两次密码不一致'); return }
+    }
+    if (!isSetup && !isRegister && !username.trim()) {
+      setLocalError('请输入用户名')
+      return
     }
     submitMut.mutate()
   }
@@ -99,19 +117,30 @@ export function Auth() {
               'grid h-9 w-9 place-items-center rounded-lg',
               isSetup ? 'bg-accent/15 text-accent' : 'bg-purple-500/15 text-purple-400',
             )}>
-              {isSetup ? <ShieldCheck className="h-5 w-5" /> : <Lock className="h-5 w-5" />}
+              {isSetup ? <ShieldCheck className="h-5 w-5" /> : isRegister ? <UserPlus className="h-5 w-5" /> : <Lock className="h-5 w-5" />}
             </div>
             <div>
               <div className="text-sm font-medium text-foreground">
-                {isSetup ? '设置访问密码' : '登录访问'}
+                {isSetup ? '设置管理员密码' : isRegister ? '创建账号' : '登录访问'}
               </div>
               <div className="text-[11px] text-muted">
-                {isSetup ? '首次使用, 请为面板设置访问密码' : '请输入访问密码以继续'}
+                {isSetup ? '首次使用, 请初始化服务器管理员' : isRegister ? '每位用户拥有独立的自选、偏好和报告' : '请输入用户名和密码以继续'}
               </div>
             </div>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-3">
+            {!isSetup && (
+              <input
+                type="text"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                placeholder={isRegister ? '用户名（3-32 位）' : '用户名（管理员与普通用户均需填写）'}
+                autoComplete="username"
+                autoFocus
+                className="h-10 w-full rounded-btn border border-border bg-base px-3 text-sm text-foreground outline-none transition-colors focus:border-accent/50"
+              />
+            )}
             {/* 密码输入 */}
             <div className="relative">
               <input
@@ -119,7 +148,8 @@ export function Auth() {
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="访问密码"
-                autoFocus
+                autoFocus={isSetup}
+                autoComplete={isRegister ? 'new-password' : 'current-password'}
                 className="h-10 w-full rounded-btn border border-border bg-base px-3 pr-9 text-sm text-foreground outline-none transition-colors focus:border-accent/50"
               />
               <button
@@ -133,12 +163,23 @@ export function Auth() {
             </div>
 
             {/* 确认密码(仅设密码模式) */}
-            {isSetup && (
+            {(isSetup || isRegister) && (
               <input
                 type={showPwd ? 'text' : 'password'}
                 value={confirmPassword}
                 onChange={e => setConfirmPassword(e.target.value)}
                 placeholder="再次输入密码"
+                autoComplete="new-password"
+                className="h-10 w-full rounded-btn border border-border bg-base px-3 text-sm text-foreground outline-none transition-colors focus:border-accent/50"
+              />
+            )}
+
+            {isRegister && status?.invite_required && (
+              <input
+                type="password"
+                value={inviteCode}
+                onChange={e => setInviteCode(e.target.value)}
+                placeholder="邀请码"
                 className="h-10 w-full rounded-btn border border-border bg-base px-3 text-sm text-foreground outline-none transition-colors focus:border-accent/50"
               />
             )}
@@ -159,10 +200,20 @@ export function Auth() {
               {submitMut.isPending ? (
                 <><Loader2 className="h-4 w-4 animate-spin" />处理中…</>
               ) : (
-                <>{isSetup ? '设置并进入' : '登录'}</>
+                <>{isSetup ? '设置并进入' : isRegister ? '注册并进入' : '登录'}</>
               )}
             </button>
           </form>
+
+          {!isSetup && status.registration_enabled && (
+            <button
+              type="button"
+              onClick={() => { setRegisterMode(v => !v); setLocalError(''); setPassword(''); setConfirmPassword('') }}
+              className="mt-4 w-full text-center text-xs text-accent hover:underline"
+            >
+              {isRegister ? '已有账号？返回登录' : '没有账号？创建一个'}
+            </button>
+          )}
 
           {/* 提示: 设密码模式告知本机限制 */}
           {isSetup && (
@@ -187,7 +238,7 @@ export function Auth() {
 
         <div className="mt-4 flex items-center justify-center gap-1.5 text-[10px] text-muted/60">
           <Sparkles className="h-3 w-3" />
-          自托管量化工作台 · 数据完全掌握在自己手里
+          多用户量化工作台 · 行情共享，个人数据隔离
         </div>
       </motion.div>
     </div>

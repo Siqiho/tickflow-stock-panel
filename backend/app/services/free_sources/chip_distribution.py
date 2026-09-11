@@ -6,6 +6,7 @@ turnover decay + VWAP/typical-price Gaussian kernel. Not exchange official chips
 from __future__ import annotations
 
 import math
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -196,6 +197,8 @@ def calculate_chip_distribution(symbol: str, bars: list[dict], bins: int = 80) -
     total = sum(dist)
     last = bars[-1]
     cur = float(last.get("close") or 0) or float(last.get("high") or 0)
+    last_date = last.get("date")
+    as_of = str(last_date)[:10] if last_date is not None else None
     items: list[dict] = []
     avg_cost = 0.0
     profit_vol = 0.0
@@ -213,6 +216,7 @@ def calculate_chip_distribution(symbol: str, bars: list[dict], bins: int = 80) -
 
     return {
         "symbol": symbol,
+        "as_of": as_of,
         "days": len(bars),
         "bins": bins,
         "current": _round(cur, 4),
@@ -237,6 +241,7 @@ def chips_for_symbol(
     *,
     days: int = 120,
     bins: int = 80,
+    as_of: date | None = None,
 ) -> dict:
-    bars = load_daily_bars_for_symbol(data_dir, symbol, days=days)
+    bars = load_daily_bars_for_symbol(data_dir, symbol, days=days, as_of=as_of)
     return calculate_chip_distribution(symbol, bars, bins=bins)

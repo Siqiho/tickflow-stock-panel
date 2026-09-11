@@ -70,7 +70,16 @@ export function useVersion() {
   })
 }
 
-/** 数据状态 — Data / Screener 共用 */
+/** 普通工作台只读数据就绪范围，不包含数据台目录、存储或调度信息。 */
+export function useDataReadiness(opts?: { staleTime?: number }) {
+  return useQuery({
+    queryKey: QK.dataReadiness,
+    queryFn: api.dataReadiness,
+    staleTime: opts?.staleTime,
+  })
+}
+
+/** 共享市场数据状态 — 所有已登录账户读取同一份服务器数据。 */
 export function useDataStatus(opts?: { staleTime?: number; refetchInterval?: number | false }) {
   return useQuery({
     queryKey: QK.dataStatus,

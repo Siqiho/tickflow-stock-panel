@@ -1,0 +1,15 @@
+{
+  "byte_stable": true,
+  "end": "2026-08-12",
+  "first_bytes": 7212,
+  "first_sha256": "a7247052e5036e72f684563939b8a9f6a2e83a871fd9533ab45161cc8a84189b",
+  "limit": 5,
+  "returncodes": [
+    0,
+    0
+  ],
+  "second_bytes": 7212,
+  "second_sha256": "a7247052e5036e72f684563939b8a9f6a2e83a871fd9533ab45161cc8a84189b",
+  "start": "2026-07-21",
+  "symbol": "000001.SZ"
+}

@@ -11,26 +11,44 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
+from app.config import background_jobs_disabled
 from app.api import (
+    admin,
+    ai_history,
     alerts,
     analysis,
     backtest,
     custom_sources,
     data,
     ext_data,
+    factors,
     financials,
     free_ext,
+    hermes_agent,
+    page_ai,
+    hermes_data,
+    hermes_model_proxy,
     indices,
     intraday,
     kline,
+    hithink,
+    lots,
+    mining,
+    abnormal,
+    market_pulse,
     market_recap,
+    news,
     monitor_rules,
     overview,
     pipeline,
+    portfolio,
+    reference_data,
     rps,
+    regime,
     screener,
     signals,
     stock_analysis,
+    stock_f10,
     strategy,
     watchlist,
 )
@@ -46,6 +64,7 @@ from app.data_catalog.service import CatalogService
 from app.jobs import daily_pipeline
 from app.services import runtime_logging as runtime_logging_service
 from app.services.quote_service import QuoteService
+from app.services.wecom_bot_service import WecomBotService
 from app.tickflow import client as tf_client
 from app.tickflow.capabilities import Cap, CapabilitySet
 from app.tickflow.policy import detect_capabilities
@@ -114,6 +133,7 @@ async def catalog_control_plane_lifespan(
         if not metadata:
             return
         status = job["status"]
+        result = job.get("result") if isinstance(job.get("result"), dict) else {}
         quality_status = {
             "succeeded": "healthy",
             "degraded": "degraded",
@@ -131,9 +151,10 @@ async def catalog_control_plane_lifespan(
                 quality_status=quality_status,
                 error_code=(
                     job.get("_catalog_error_code")
+                    or result.get("error_code")
                     or ("pipeline_failed" if status == "failed" else None)
                 ),
-                error_message=job.get("error"),
+                error_message=job.get("error") or result.get("error_message"),
             )
         )
         if status not in {"succeeded", "degraded", "failed"}:
@@ -201,7 +222,10 @@ async def lifespan(app: FastAPI):
         qs = QuoteService()
         app.state.quote_service = qs
         qs.set_repo(repo)
-        qs.boot_check()
+        if background_jobs_disabled():
+            logger.info("fixture mode: quote/daily/extpull/financial/minute/depth schedulers disabled")
+        else:
+            qs.boot_check()
 
         # QuoteService 需要访问 strategy_monitor 等单例
         # 先创建 strategy_monitor，再注入 app.state
@@ -220,24 +244,33 @@ async def lifespan(app: FastAPI):
         # 启动调度器(若 enriched 数据为空,首次启动可手动 POST /api/pipeline/run)
         try:
             daily_pipeline.set_app_state(app.state)  # 供 depth_finalize job 访问 depth_service
-            scheduler = daily_pipeline.start_scheduler(repo, capset)
-            app.state.scheduler = scheduler
+            if background_jobs_disabled():
+                app.state.scheduler = None
+            else:
+                scheduler = daily_pipeline.start_scheduler(repo, capset)
+                app.state.scheduler = scheduler
         except Exception as e:  # noqa: BLE001
             logger.warning("scheduler not started: %s", e)
             app.state.scheduler = None
 
         # depth sealed: 启动补跑(当天文件不存在) + 盘中轮询(有能力时)
         try:
-            depth_service.boot_check()
-            depth_service.start_polling()
+            if background_jobs_disabled():
+                logger.info("fixture mode: depth polling disabled")
+            else:
+                depth_service.boot_check()
+                depth_service.start_polling()
         except Exception as e:  # noqa: BLE001
             logger.warning("depth_service init failed: %s", e)
 
         # 扩展数据定时拉取
         from app.services.ext_pull import pull_scheduler
         app.state.pull_scheduler = pull_scheduler
-        pull_scheduler.start(store.data_dir)
-        pull_scheduler.refresh(store.data_dir)
+        if background_jobs_disabled():
+            logger.info("fixture mode: ext_pull scheduler disabled")
+        else:
+            pull_scheduler.start(store.data_dir)
+            pull_scheduler.refresh(store.data_dir)
 
         # 内置扩展表 (概念/行业): 只创建 config (含拉取配置), 不自动拉数据
         # 数据获取由用户在概念/行业页点「获取数据」手动触发 (POST /api/ext-data/presets/{id}/fetch)
@@ -251,7 +284,10 @@ async def lifespan(app: FastAPI):
         # 不启动自动调度——用户在「财务分析」页点「同步」手动拉取。
         from app.services.financial_sync import financial_scheduler
         app.state.financial_scheduler = financial_scheduler
-        financial_scheduler.start(store.data_dir, capset)
+        if background_jobs_disabled():
+            logger.info("fixture mode: financial scheduler disabled")
+        else:
+            financial_scheduler.start(store.data_dir, capset)
 
         # 策略引擎
         from app.services.screener import ScreenerService
@@ -297,12 +333,34 @@ async def lifespan(app: FastAPI):
             logger.warning("strategy monitor migration failed: %s", e)
 
         try:
-            rules = mr_store.load_all(store.data_dir)
-            monitor_engine.set_rules(rules)
+            for user_id, rules in mr_store.load_all_users(store.data_dir):
+                monitor_engine.set_rules_for_user(user_id, rules)
             logger.info("monitor engine loaded: %d rules", monitor_engine.rule_count)
         except Exception as e:  # noqa: BLE001
             logger.warning("monitor engine load failed: %s", e)
         app.state.monitor_engine = monitor_engine
+
+        try:
+            from app.services.mining_manager import MiningJobManager
+            mining_manager = MiningJobManager(store.data_dir)
+            recovered = mining_manager.recover_interrupted()
+            app.state.mining_manager = mining_manager
+            if recovered:
+                logger.warning("recovered %d interrupted mining runs", recovered)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("mining_manager init failed: %s", e)
+
+        try:
+            from app.services.minute_refresh import MinuteRefreshService
+            minute_refresh = MinuteRefreshService(repo)
+            minute_refresh.set_app_state(app.state)
+            app.state.minute_refresh = minute_refresh
+            if background_jobs_disabled():
+                logger.info("fixture mode: minute_refresh disabled")
+            else:
+                minute_refresh.start()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("minute_refresh init failed: %s", e)
 
         yield
     finally:
@@ -311,8 +369,10 @@ async def lifespan(app: FastAPI):
                 (getattr(app.state, "scheduler", None), "shutdown", {"wait": False}),
                 (getattr(app.state, "pull_scheduler", None), "stop", {}),
                 (getattr(app.state, "financial_scheduler", None), "stop", {}),
-                (getattr(app.state, "quote_service", None), "stop", {}),
+                (getattr(app.state, "quote_service", None), "stop", {"persist": False}),
                 (getattr(app.state, "depth_service", None), "stop_polling", {}),
+                (getattr(app.state, "minute_refresh", None), "stop", {}),
+                (getattr(app.state, "mining_manager", None), "shutdown", {}),
             )
             for resource, method_name, kwargs in resources:
                 if resource is None:
@@ -386,7 +446,7 @@ async def runtime_access_log_middleware(request: Request, call_next):
 #   2. 未设密码 + 公网       → 拒绝(403, 防裸奔也防抢占; 引导本机设密码)
 #   3. 已设密码              → 检查 session, 无效则 401(前端跳登录)
 # 白名单: /api/auth/* (设密码/登录本身)、/health 等探活。
-_AUTH_WHITELIST_PREFIX = ("/api/auth/",)
+_AUTH_WHITELIST_PREFIX = ("/api/auth/", "/api/hermes-xai/", "/api/hermes-data/")
 _AUTH_WHITELIST_EXACT = ("/health", "/api/health", "/openapi.json", "/docs", "/redoc")
 
 
@@ -399,6 +459,48 @@ async def auth_middleware(request: Request, call_next):
     # 白名单放行(设密码/登录/探活本身不拦)
     if path.startswith(_AUTH_WHITELIST_PREFIX) or path in _AUTH_WHITELIST_EXACT:
         return await call_next(request)
+
+    # Profile-scoped Hermes data queries make nested, GET-only requests to an
+    # exact view allowlist. Authenticate the profile credential, restore that
+    # product user's ContextVar, and apply the same role policy as a browser
+    # request. No cookie or shared owner fallback is accepted on this seam.
+    if request.method == "GET":
+        from ipaddress import ip_address
+
+        from app.services.authorization import require_request_access
+        from app.services.hermes_tenant import HermesTenantError, HermesTenantRegistry
+        from app.services.user_console_data import UserConsoleDataModule, is_user_console_read_path
+
+        host = request.client.host if request.client else ""
+        try:
+            is_loopback = ip_address(host).is_loopback
+        except ValueError:
+            is_loopback = False
+        profile = request.headers.get(UserConsoleDataModule.INTERNAL_PROFILE_HEADER)
+        internal_key = request.headers.get(UserConsoleDataModule.INTERNAL_KEY_HEADER)
+        if is_loopback and profile and internal_key and is_user_console_read_path(path):
+            try:
+                internal_user, _tenant = HermesTenantRegistry().authenticate_internal_data_headers(
+                    profile,
+                    internal_key,
+                )
+                require_request_access(internal_user, request.method, path)
+            except HermesTenantError as exc:
+                return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
+            except Exception as exc:
+                from fastapi import HTTPException
+
+                if isinstance(exc, HTTPException):
+                    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+                raise
+            from app.services import user_context
+
+            internal_token = user_context.bind(internal_user)
+            request.state.user = internal_user
+            try:
+                return await call_next(request)
+            finally:
+                user_context.reset(internal_token)
 
     from app.services import auth as auth_service
     # 情况 1+2: 未设密码
@@ -415,21 +517,43 @@ async def auth_middleware(request: Request, call_next):
             },
         )
 
-    # 情况 3: 已设密码, 检查会话
+    # 情况 3: 已设密码, 检查会话并绑定本次请求的租户上下文。
     token = request.cookies.get(auth_api.COOKIE_NAME)
-    if token and auth_service.is_valid_session(token):
-        return await call_next(request)
+    user = auth_service.authenticate_session(token or "")
+    if user:
+        from app.services import user_context
+        from app.services.authorization import require_request_access
+
+        try:
+            require_request_access(user, request.method, path)
+        except Exception as exc:
+            from fastapi import HTTPException
+
+            if isinstance(exc, HTTPException):
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+            raise
+        request.state.user = user
+        context_token = user_context.bind(user)
+        try:
+            return await call_next(request)
+        finally:
+            user_context.reset(context_token)
     # 未登录: 401(前端跳登录页)
     return JSONResponse(status_code=401, content={"detail": "未登录或会话已过期"})
 
 
 # 路由
 app.include_router(core_router)
+app.include_router(admin.router)
+app.include_router(ai_history.router)
 app.include_router(auth_api.router)
 app.include_router(kline.router)
 app.include_router(watchlist.router)
 app.include_router(screener.router)
 app.include_router(backtest.router)
+app.include_router(factors.router)
+app.include_router(mining.router)
+app.include_router(abnormal.router)
 app.include_router(intraday.router)
 app.include_router(indices.router)
 app.include_router(overview.router)
@@ -439,15 +563,27 @@ app.include_router(data.router)
 app.include_router(catalog_api.router)
 app.include_router(ext_data.router)
 app.include_router(financials.router)
+app.include_router(stock_f10.router)
+app.include_router(reference_data.router)
 app.include_router(stock_analysis.router)
+app.include_router(hithink.router)
+app.include_router(market_pulse.router)
 app.include_router(market_recap.router)
+app.include_router(news.router)
+app.include_router(portfolio.router)
 app.include_router(settings_api.router)
 app.include_router(strategy.router)
 app.include_router(signals.router)
 app.include_router(monitor_rules.router)
+app.include_router(lots.router)
 app.include_router(alerts.router)
 app.include_router(rps.router)
+app.include_router(regime.router)
 app.include_router(free_ext.router)
+app.include_router(hermes_agent.router)
+app.include_router(page_ai.router)
+app.include_router(hermes_data.router)
+app.include_router(hermes_model_proxy.router)
 app.include_router(custom_sources.router)
 app.include_router(runtime_logs_api.router)
 
@@ -467,21 +603,30 @@ async def capability_denied_handler(request: Request, exc: CapabilityDenied) -> 
 
 # 生产期静态文件(前端 dist)
 _static = Path(settings.static_dir)
+
+
+def _frontend_fallback(full_path: str):
+    """Serve the SPA for browser routes, never for unknown API routes."""
+    if full_path == "api" or full_path.startswith("api/"):
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    index = _static / "index.html"
+    if index.exists():
+        return FileResponse(
+            index,
+            headers={"Cache-Control": "no-store, must-revalidate"},
+        )
+    return {"error": "frontend not built"}
+
+
 if _static.exists():
     if (_static / "assets").exists():
         app.mount("/assets", StaticFiles(directory=_static / "assets"), name="assets")
 
     @app.get("/{full_path:path}", include_in_schema=False)
-    def spa_fallback(full_path: str):  # noqa: ARG001
+    def spa_fallback(full_path: str):
         """所有未匹配路径回退到 index.html — React Router 接管。
 
         index.html 禁止缓存 (Cache-Control: no-store), 确保浏览器每次拿到
         最新版本引用的 JS/CSS 文件名 (assets 带 hash, 可长缓存)。
         """
-        index = _static / "index.html"
-        if index.exists():
-            return FileResponse(
-                index,
-                headers={"Cache-Control": "no-store, must-revalidate"},
-            )
-        return {"error": "frontend not built"}
+        return _frontend_fallback(full_path)

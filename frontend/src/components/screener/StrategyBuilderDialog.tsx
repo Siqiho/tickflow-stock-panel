@@ -1,18 +1,19 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Sparkles, Save, Loader2, ChevronLeft, ChevronRight, AlertTriangle, Settings2, FileText, Copy, Check, Terminal } from 'lucide-react'
 import { api } from '@/lib/api'
 import { storage } from '@/lib/storage'
 import { cn } from '@/lib/cn'
 
-// ===== 工具函数 =====
+// ===== 安全声明式策略工具 =====
 
-function parsePyValue(v: string): any {
-  const s = v.trim()
-  if (s === 'True') return true
-  if (s === 'False') return false
-  if (s === 'None') return null
-  return JSON.parse(s)
+function parseDefinition(code: string): Record<string, any> {
+  try {
+    const parsed = JSON.parse(code)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
 }
 
 function slugId(): string {
@@ -20,51 +21,26 @@ function slugId(): string {
 }
 
 function parseParams(code: string): any[] {
-  const m = code.match(/"params"\s*:\s*\[([^\]]*)\]/)
-  if (!m) return []
-  const inner = m[1]
-  const blocks = inner.match(/\{[^}]+\}/g) ?? []
-  return blocks.map(b => {
-    const get = (key: string) => {
-      const re = new RegExp('"' + key + '"\\s*:\\s*(.+?)\\s*[,}]')
-      const r = b.match(re)
-      return r ? r[1].trim().replace(/^"(.*)"$/, '$1') : ''
-    }
-    const id = get('id'); if (!id) return null
-    const type = get('type')
-    return { id, type, label: get('label'), default: parsePyValue(get('default') || 'null'), min: parsePyValue(get('min') || 'null'), max: parsePyValue(get('max') || 'null'), step: parsePyValue(get('step') || 'null') }
-  }).filter(Boolean)
+  const params = parseDefinition(code).params
+  return Array.isArray(params) ? params : []
 }
 
 function parseStringList(code: string, key: string): string[] {
-  const re = new RegExp(key + '\\s*=\\s*\\[([^\\]]+)\\]')
-  const m = code.match(re)
-  if (!m) return []
-  const items = m[1].match(/"([^"]+)"/g)
-  return items ? items.map(x => x.replace(/"/g, '')) : []
+  const value = parseDefinition(code)[key.toLowerCase()]
+  return Array.isArray(value) ? value.filter(item => typeof item === 'string') : []
 }
 
 function parseScoring(code: string): Record<string, number> {
-  const m = code.match(/"scoring"\s*:\s*\{([^}]+)\}/)
-  if (!m) return {}
-  const items = m[1].match(/"([^"]+)"\s*:\s*([0-9.]+)/g)
-  if (!items) return {}
-  const result: Record<string, number> = {}
-  for (const item of items) {
-    const p = item.match(/"([^"]+)"\s*:\s*([0-9.]+)/)
-    if (p) result[p[1]] = parseFloat(p[2])
-  }
-  return result
+  const value = parseDefinition(code).scoring
+  return value && typeof value === 'object' ? value : {}
 }
 
 function parseRules(code: string): string {
-  const m = code.match(/RULES\s*=\s*"""\s*([\s\S]*?)\s*"""/)
-  return m ? m[1].trim() : ''
+  return String(parseDefinition(code).rules ?? '').trim()
 }
 
 function parseMetaField(code: string, field: string): string {
-  const m = code.match(new RegExp('"' + field + '"\\s*:\\s*"([^"]+)"'))
-  return m ? m[1] : ''
+  return String(parseDefinition(code)[field] ?? '')
 }
 
 // ===== 常量 =====
@@ -77,52 +53,49 @@ const DIRECTIONS = [
 
 // ===== 组件 =====
 
-const CUSTOM_TEMPLATE = `"""策略简短描述"""
-import polars as pl
+const CUSTOM_TEMPLATE = `{
+  "id": "custom_my_strategy",
+  "name": "我的策略",
+  "description": "收盘站上 MA20 且量比放大",
+  "source": "custom",
+  "direction": "long",
+  "rules": "收盘价高于 MA20，且 5 日量比大于 1.5",
+  "logic": "all",
+  "conditions": [
+    { "left": "close", "op": ">", "right": "field:ma20" },
+    { "left": "vol_ratio_5d", "op": ">", "right": 1.5 }
+  ],
+  "basic_filter": { "price_min": 3, "price_max": 200, "exclude_st": true },
+  "scoring": { "change_pct": 0.5, "vol_ratio_5d": 0.5 },
+  "entry_signals": [],
+  "exit_signals": ["signal_ma20_breakdown"],
+  "stop_loss": -0.05,
+  "max_hold_days": 20,
+  "order_by": "score",
+  "descending": true,
+  "limit": 100
+}`
 
-META = {
-    "id": "custom_my_strategy",
-    "name": "我的策略",
-    "description": "策略描述",
-    "tags": ["自定义"],
-    "basic_filter": {
-        "price_min": 3, "price_max": 200,
-        "market_cap_min": 10e8, "amount_min": 0.5e8,
-        "exclude_st": True, "exclude_new_days": 30,
-    },
-    "params": [],
-    "scoring": {
-        "change_pct": 0.5, "vol_ratio_5d": 0.5,
-    },
-    "order_by": "score",
-    "descending": True,
-    "limit": 100,
+interface Props {
+  open: boolean
+  onClose: () => void
+  onSavedId?: (id: string, researchOnly?: boolean) => void | Promise<void>
+  mode?: 'create' | 'modify'
+  stockContext?: { symbol: string; name: string }
+  existingStrategyIds?: Set<string>
 }
 
-ENTRY_SIGNALS = ["signal_n_day_high"]
-EXIT_SIGNALS = ["signal_ma20_breakdown"]
-STOP_LOSS = -0.05
-MAX_HOLD_DAYS = 20
-ALERTS = []
-
-RULES = """
-1. 规则一
-2. 规则二
-3. 规则三
-"""
-
-def filter(df: pl.DataFrame, params: dict) -> pl.Expr:
-    return (
-        (pl.col("close") > pl.col("ma20"))
-        & (pl.col("volume") > pl.col("vol_ma5") * 1.5)
-    )
-`
-
-interface Props { open: boolean; onClose: () => void; onSavedId?: (id: string) => void | Promise<void>; mode?: 'create' | 'modify' }
-
-export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create' }: Props) {
+export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create', stockContext, existingStrategyIds: _existingStrategyIds }: Props) {
   // 根据 mode 选择存储 key
   const draftStore = mode === 'modify' ? storage.strategyModify : storage.strategyDraft
+  const stockLabel = stockContext?.name?.trim() || stockContext?.symbol || ''
+  const stockSeed = useMemo(() => stockContext?.symbol
+    ? {
+        name: `${stockLabel}特征策略`,
+        description: `以${stockLabel}（${stockContext.symbol}）为参考标的生成可复用选股策略`,
+        rules: `参考${stockLabel}（${stockContext.symbol}）的走势、量价与技术指标特征，提炼可泛化的选股条件；不要把策略限定为只匹配这一只股票。`,
+      }
+    : null, [stockContext?.symbol, stockLabel])
   const [step, setStep] = useState(1)
   const [tab, setTab] = useState<'ai' | 'custom'>('ai')
   const [customCopied, setCustomCopied] = useState(false)
@@ -138,7 +111,7 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [aiStatus, setAiStatus] = useState<{ configured: boolean } | null>(null)
+  const [aiStatus, setAiStatus] = useState<{ configured: boolean; message?: string } | null>(null)
   const [checkedAi, setCheckedAi] = useState(false)
   const [loaded, setLoaded] = useState(false)
 
@@ -150,9 +123,12 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
       setStep(d.step ?? 1); setName(d.name ?? ''); setDescription(d.description ?? '')
       setDirection(d.direction ?? 'long')
       setRules(d.rules ?? ''); setCode(d.code ?? ''); setStrategyId(d.strategyId ?? '')
+    } else if (stockSeed) {
+      setStep(1); setName(stockSeed.name); setDescription(stockSeed.description)
+      setDirection('long'); setRules(stockSeed.rules); setCode(''); setStrategyId('')
     }
     setLoaded(true)
-  }, [open])
+  }, [draftStore, open, stockSeed])
 
   // 打开时检查 AI 状态
   useEffect(() => {
@@ -167,12 +143,12 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
     } else {
       draftStore.set({ name, description, direction, rules, code, step, strategyId })
     }
-  }, [name, description, direction, rules, code, step, strategyId])
+  }, [code, description, direction, draftStore, name, rules, step, strategyId])
   useEffect(() => { if (loaded) persist() }, [loaded, persist])
 
   const clearDraft = () => {
-    setName(''); setDescription(''); setDirection('long')
-    setRules(''); setCode(''); setStep(1); setError(''); setInstruction('')
+    setName(stockSeed?.name ?? ''); setDescription(stockSeed?.description ?? ''); setDirection('long')
+    setRules(stockSeed?.rules ?? ''); setCode(''); setStep(1); setError(''); setInstruction('')
     setStrategyId('')
   }
 
@@ -181,12 +157,15 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
   // Step 1: 生成
   const handleGenerate = async () => {
     if (!name.trim() || !rules.trim()) return
-    if (!aiStatus?.configured) { setError('AI 未配置，请在设置页面配置 API Key'); return }
+    if (!aiStatus?.configured) { setError(aiStatus?.message || 'AI 未配置，请在设置页面配置 API Key'); return }
     setLoading(true); setError('')
     try {
       const id = strategyId || slugId()
       setStrategyId(id)
-      const res = await api.strategyBuild(1, { name: name.trim(), description: description.trim(), direction, rules: rules.trim(), strategy_id: id })
+      const generationRules = stockSeed && !rules.includes(stockContext!.symbol)
+        ? `${rules.trim()}\n\n${stockSeed.rules}`
+        : rules.trim()
+      const res = await api.strategyBuild(1, { name: name.trim(), description: description.trim(), direction, rules: generationRules, strategy_id: id })
       if (!res.valid) { setError(res.error ?? '生成失败'); return }
       setCode(res.code); setStep(2)
       const genDesc = parseMetaField(res.code, 'description')
@@ -246,10 +225,9 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
   const entrySignals = parseStringList(code, 'ENTRY_SIGNALS')
   const exitSignals = parseStringList(code, 'EXIT_SIGNALS')
   const scoring = parseScoring(code)
-  const stopMatch = code.match(/STOP_LOSS\s*=\s*(-?[0-9.]+|None)/)
-  const codeStopLoss = stopMatch ? (stopMatch[1] === 'None' ? null : parseFloat(stopMatch[1])) : null
-  const holdMatch = code.match(/MAX_HOLD_DAYS\s*=\s*(-?[0-9.]+|None)/)
-  const codeHoldDays = holdMatch ? (holdMatch[1] === 'None' ? null : parseInt(holdMatch[1])) : null
+  const parsedDefinition = parseDefinition(code)
+  const codeStopLoss = typeof parsedDefinition.stop_loss === 'number' ? parsedDefinition.stop_loss : null
+  const codeHoldDays = typeof parsedDefinition.max_hold_days === 'number' ? parsedDefinition.max_hold_days : null
   const hasParams = params.length > 0 || entrySignals.length > 0 || exitSignals.length > 0 || Object.keys(scoring).length > 0
 
   return (
@@ -268,7 +246,7 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
                 <Sparkles className="h-3 w-3 inline mr-1" />AI 生成
               </button>
               <button onClick={() => setTab('custom')} className={cn('px-3 py-1 rounded-md text-xs font-medium transition-all cursor-pointer', tab === 'custom' ? 'bg-accent/15 text-accent' : 'text-muted hover:text-foreground')}>
-                <FileText className="h-3 w-3 inline mr-1" />自定义编写
+                <FileText className="h-3 w-3 inline mr-1" />安全结构
               </button>
             </div>
             {/* 中间：标题 */}
@@ -291,14 +269,19 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
           {/* Tab 描述 */}
           <div className="px-5 py-2 border-b border-border/30 bg-elevated/30">
             {tab === 'ai' ? (
-              <div className="flex items-center gap-2 text-[11px]">
-                <Sparkles className="h-3.5 w-3.5 text-amber-700 dark:text-amber-400 shrink-0" />
-                <span className="text-amber-700 dark:text-amber-400">步骤 1 描述策略规则 → 步骤 2 预览代码 → 保存</span>
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <Sparkles className="h-3.5 w-3.5 shrink-0 text-amber-700 dark:text-amber-400" />
+                <span className="text-amber-700 dark:text-amber-400">步骤 1 描述策略规则 → 步骤 2 预览安全定义 → 保存到个人空间</span>
+                {stockContext?.symbol && (
+                  <span aria-label="策略参考股票" className="ml-auto rounded-full bg-sky-500/10 px-2 py-0.5 text-sky-600 dark:text-sky-300">
+                    参考 {stockLabel} · {stockContext.symbol}
+                  </span>
+                )}
               </div>
             ) : (
               <div className="flex items-center gap-2 text-[11px]">
                 <Terminal className="h-3.5 w-3.5 text-accent shrink-0" />
-                <span className="text-muted">适合有 Python 基础的开发者，手动编写策略文件进行深度定制和二次开发</span>
+                <span className="text-muted">服务器只接受白名单字段、运算符和信号组成的 JSON，不执行用户 Python</span>
               </div>
             )}
           </div>
@@ -352,7 +335,7 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-0.5">
                     <button onClick={() => setPreviewTab('params')} className={'px-3 py-1 rounded text-xs font-medium transition-colors ' + (previewTab === 'params' ? 'bg-amber-400/15 text-amber-700 dark:text-amber-400' : 'text-muted hover:text-secondary')}>参数</button>
-                    <button onClick={() => setPreviewTab('code')} className={'px-3 py-1 rounded text-xs font-medium transition-colors ' + (previewTab === 'code' ? 'bg-amber-400/15 text-amber-700 dark:text-amber-400' : 'text-muted hover:text-secondary')}>代码</button>
+                    <button onClick={() => setPreviewTab('code')} className={'px-3 py-1 rounded text-xs font-medium transition-colors ' + (previewTab === 'code' ? 'bg-amber-400/15 text-amber-700 dark:text-amber-400' : 'text-muted hover:text-secondary')}>安全定义</button>
                   </div>
                 </div>
 
@@ -420,7 +403,7 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
                       </div>
                     </div>
                   ) : (
-                    <div className="rounded-xl border border-border/30 bg-surface/30 px-4 py-6 text-[11px] text-muted text-center">未检测到策略参数，切换「代码」查看完整内容</div>
+                    <div className="rounded-xl border border-border/30 bg-surface/30 px-4 py-6 text-[11px] text-muted text-center">未检测到可调参数，切换「安全定义」查看完整内容</div>
                   )
                 ) : (
                   <pre className="bg-base border border-border/30 rounded-lg p-3 text-[11px] font-mono text-foreground/80 overflow-auto max-h-96 whitespace-pre-wrap">{code}</pre>
@@ -449,21 +432,21 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
                 <div className="rounded-xl border border-border/40 bg-elevated/50 p-4 space-y-2.5">
                   <div className="flex items-center gap-2">
                     <Terminal className="h-4 w-4 text-accent" />
-                    <span className="text-sm font-medium text-foreground">自定义策略开发方式</span>
+                    <span className="text-sm font-medium text-foreground">声明式策略结构</span>
                   </div>
                   <div className="space-y-1.5 text-[11px] text-secondary leading-relaxed">
-                    <p>在项目目录 <code className="px-1 py-0.5 rounded bg-base text-xs font-mono text-foreground/80">data/strategies/custom/</code> 下创建 <code className="px-1 py-0.5 rounded bg-base text-xs font-mono text-foreground/80">.py</code> 文件。支持两种模式：</p>
+                    <p>每个账号的策略保存在自己的用户空间中。公开用户不能上传或执行 Python，只能使用下面这种经过服务器校验的 JSON 定义。</p>
                     <div className="space-y-1 pl-1">
                       <div className="flex items-start gap-1.5">
                         <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-accent/60 shrink-0" />
-                        <span><strong className="text-foreground/80">模式 A：单日过滤</strong> — <code className="text-[10px] font-mono text-foreground/80">filter(df, params) → pl.Expr</code></span>
+                        <span><strong className="text-foreground/80">条件</strong> — 字段、比较符、数字或另一个白名单字段</span>
                       </div>
                       <div className="flex items-start gap-1.5">
                         <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-amber-400/60 shrink-0" />
-                        <span><strong className="text-foreground/80">模式 B：历史窗口</strong> — <code className="text-[10px] font-mono text-foreground/80">filter_history(df, params) → pl.DataFrame</code> + <code className="text-[10px] font-mono text-foreground/80">LOOKBACK_DAYS</code></span>
+                        <span><strong className="text-foreground/80">回测</strong> — 买卖信号和风控参数复用现有安全引擎</span>
                       </div>
                     </div>
-                    <p>完整规范见 <span className="text-accent">docs/strategy-guide.md</span></p>
+                    <p>管理员可以只读查看并运行用户策略，但不能替用户改写或删除。</p>
                   </div>
                 </div>
                 <div className="space-y-2">

@@ -16,6 +16,32 @@ FRONTEND_DIR="$ROOT/frontend"
 BACKEND_PORT="${BACKEND_PORT:-3018}"
 FRONTEND_PORT="${FRONTEND_PORT:-3011}"
 
+dotenv_value() {
+  local key="$1"
+  [ -f "$ROOT/.env" ] || return 0
+  awk -v wanted="$key" '
+    index($0, wanted "=") == 1 {
+      value = substr($0, length(wanted) + 2)
+      sub(/[[:space:]]+#.*/, "", value)
+      gsub(/^[[:space:]\047\"]+|[[:space:]\047\"]+$/, "", value)
+      print value
+      exit
+    }
+  ' "$ROOT/.env"
+}
+
+HERMES_RUNTIME_ENABLED="${ONE_TRADING_HERMES_RUNTIME_ENABLED:-$(dotenv_value ONE_TRADING_HERMES_RUNTIME_ENABLED)}"
+HERMES_RUNTIME_ENABLED="${HERMES_RUNTIME_ENABLED:-false}"
+HERMES_BASE_URL="${ONE_TRADING_HERMES_BASE_URL:-$(dotenv_value ONE_TRADING_HERMES_BASE_URL)}"
+HERMES_BASE_URL="${HERMES_BASE_URL:-http://127.0.0.1:8651}"
+HERMES_PORT="$HERMES_BASE_URL"
+HERMES_PORT="${HERMES_PORT##*:}"
+HERMES_PORT="${HERMES_PORT%/}"
+if ! [[ "$HERMES_PORT" =~ ^[0-9]+$ ]] || [ "$HERMES_PORT" -lt 1 ] || [ "$HERMES_PORT" -gt 65535 ]; then
+  echo "[dev] Hermes 端口无效: $HERMES_BASE_URL" >&2
+  exit 1
+fi
+
 BLUE='\033[0;34m'
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -70,6 +96,9 @@ free_port() {
 }
 free_port backend  "$BACKEND_PORT"
 free_port frontend "$FRONTEND_PORT"
+if [ "$HERMES_RUNTIME_ENABLED" = "true" ]; then
+  free_port hermes "$HERMES_PORT"
+fi
 
 # ===== 3. 首次依赖安装 =====
 if [ ! -d "$BACKEND_DIR/.venv" ]; then
@@ -86,8 +115,14 @@ fi
 
 # ===== 4. 启动 + 日志前缀 =====
 PIDS=()
+CLEANING_UP=0
 
 cleanup() {
+  local exit_code="${1:-0}"
+  if [ "$CLEANING_UP" -eq 1 ]; then
+    exit "$exit_code"
+  fi
+  CLEANING_UP=1
   echo
   info "关闭服务..."
   for pid in "${PIDS[@]:-}"; do
@@ -98,9 +133,9 @@ cleanup() {
   # 等子进程退出,避免孤儿
   wait 2>/dev/null || true
   ok "已退出"
-  exit 0
+  exit "$exit_code"
 }
-trap cleanup INT TERM
+trap 'cleanup 0' INT TERM
 
 # 用 awk 加前缀(macOS sed 没有 -u line-buffered,改用 awk + fflush 兼容)
 prefix_awk() {
@@ -113,10 +148,36 @@ echo -e "${BLUE}│${NC}  ${GREEN}one-trading${NC}                              
 echo -e "${BLUE}│${NC}                                              ${BLUE}│${NC}"
 echo -e "${BLUE}│${NC}  backend   ${YELLOW}http://localhost:$BACKEND_PORT${NC}          ${BLUE}│${NC}"
 echo -e "${BLUE}│${NC}  frontend  ${YELLOW}http://localhost:$FRONTEND_PORT${NC}          ${BLUE}│${NC}"
+if [ "$HERMES_RUNTIME_ENABLED" = "true" ]; then
+  echo -e "${BLUE}│${NC}  hermes    ${YELLOW}http://127.0.0.1:$HERMES_PORT${NC}          ${BLUE}│${NC}"
+fi
 echo -e "${BLUE}│${NC}                                              ${BLUE}│${NC}"
 echo -e "${BLUE}│${NC}  Ctrl-C 同时关闭两端                          ${BLUE}│${NC}"
 echo -e "${BLUE}╰──────────────────────────────────────────────╯${NC}"
 echo
+
+if [ "$HERMES_RUNTIME_ENABLED" = "true" ]; then
+  (
+    cd "$BACKEND_DIR"
+    exec "$BACKEND_DIR/.venv/bin/python" scripts/start_local_hermes_gateway.py
+  ) > >(prefix_awk "$(printf "${YELLOW}[hermes  ]${NC} ")") 2>&1 &
+  PIDS+=("$!")
+
+  info "等待 Hermes multiplex gateway 就绪..."
+  hermes_ready=0
+  for _attempt in $(seq 1 180); do
+    if curl -fsS "http://127.0.0.1:$HERMES_PORT/health" >/dev/null 2>&1; then
+      hermes_ready=1
+      break
+    fi
+    sleep 0.25
+  done
+  if [ "$hermes_ready" -ne 1 ]; then
+    err "Hermes multiplex gateway 启动超时"
+    cleanup 1
+  fi
+  ok "Hermes multiplex gateway 已就绪"
+fi
 
 (
   cd "$BACKEND_DIR"
@@ -132,11 +193,15 @@ PIDS+=("$!")
 ) &
 PIDS+=("$!")
 
-# 等任一退出(bash 4.3+)或全部退出(老 bash)
-if wait -n 2>/dev/null; then
-  warn "其中一个进程退出,正在关闭另一个..."
-  cleanup
-else
-  # 老 bash 没有 wait -n,退化为 wait 全部
-  wait
-fi
+# macOS 自带 Bash 3.2 没有 `wait -n`。轮询监督所有子进程，任一
+# 退出都立即停止其余运行面，避免 Hermes 已掉线而页面仍假装正常。
+while true; do
+  for pid in "${PIDS[@]}"; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" 2>/dev/null || true
+      warn "其中一个进程退出,正在关闭其余服务..."
+      cleanup 1
+    fi
+  done
+  sleep 1
+done

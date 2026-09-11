@@ -1,0 +1,96 @@
+{
+  "captured_at": "2026-09-12T02:01:20+08:00",
+  "backup": "/Users/simon/备份/codex/20260912-015545-fund-flow-window-chain-restore-before",
+  "task_changes": {
+    "/Users/simon/Trading/one-trading/backend/app/jobs/daily_pipeline.py": {
+      "before": "4a7f7085c034d9f9043b5ba0b9e44dcf9cbb074da570582d1ce3eaef8a011652",
+      "after": "181073eefcd686faaee425ab13faf1c58ed4bc4cf198b3211d694b44e6c68c58"
+    },
+    "/Users/simon/Trading/one-trading/backend/app/services/free_sources/fund_flow.py": {
+      "before": "304ec3ff2d0a5a6d0175c641ff64d334e50f412d5ad670b1dcb9fa4b2100aa4c",
+      "after": "f8c4057d1a7fd90e626e64cba0603b7a1cf160d14874148f7cd16dd6d763664f"
+    },
+    "/Users/simon/Trading/one-trading/frontend/src/components/SectorFundFlowPanel.tsx": {
+      "before": "f79dd28a35f38a7e94d909a6bfed93dbde51a65f0f87eb0f5b9e98468ad13f28",
+      "after": "46f5c895b67242bf5fd5b1538e29d6b2f993f1b0caf52bc354c548c43eee5d9d"
+    },
+    "/Users/simon/Trading/one-trading/frontend/src/components/__tests__/SectorFundFlowPanel.history.test.tsx": {
+      "before": "fd16442083473be464eb396418b7fab7006accfa8a0ae5a4bb3da7b2031f846c",
+      "after": "d9a47576e87e61428e58a1251be67ac3efa8b70965957fbbbb77e927dcb3601f"
+    },
+    "/Users/simon/Trading/one-trading/frontend/src/components/__tests__/SectorFundFlowPanel.industry-freshness.test.tsx": {
+      "before": "ef5ee2d7c122e42325830c4886722a9ab56f817052661064569780bac7314e88",
+      "after": "0bb70936b9fecb7fe7cb85645804b63b38385f369fe5b9156d9c7163189a3f27"
+    },
+    "/Users/simon/Trading/one-trading/docs/data-platform-development-log.md": {
+      "before": "099683ce3871f6df18af0eb3c2383eb3026cc5786c1c757a0cfdba2f1016038d",
+      "after": "769f0d979d6b7097155954c809c810894aba456b14d2b0a8d18c652dcab7caa2"
+    },
+    "/Users/simon/Trading/one-trading/docs/workbench-development-log.md": {
+      "before": "9c3adf63390eb705503e921fcae128c38905a30a08f7da83bf3f0c05045481e7",
+      "after": "6523404754b2204ca45ef973a67706ac22bcc6ba87b30697deef625760ce8852"
+    }
+  },
+  "added_files": {
+    "/Users/simon/Trading/one-trading/backend/tests/free_sources/test_fund_flow_window_restore.py": "a1734bf5fef107925fa1365e112692f3c3d025a6ddf3bca48d2311d8074e1c16",
+    "/Users/simon/Trading/one-trading/docs/investigations/2026-09-12-fund-flow-window-chain-restore/verify_parquet_windows.py": "cab01c7a27fa688cf9710aa63ea6870bdc8a13748e1ca199cd49f8b6d7dcee36",
+    "/Users/simon/Trading/one-trading/docs/investigations/2026-09-12-fund-flow-window-chain-restore/evidence/baseline.json": "see file",
+    "/Users/simon/Trading/one-trading/docs/investigations/2026-09-12-fund-flow-window-chain-restore/evidence/parquet-vs-service.json": "2af73b54f9397b4c0b575e6cb395b0c889ef47bfaf09b6a9e3d0ab1f04892bcc"
+  },
+  "explicitly_not_modified": {
+    "/Users/simon/Trading/one-trading/backend/tests/free_sources/test_fund_flow.py": {
+      "sha256": "653ae6e1d2fdedabb0d0fbb9123af1ad08f440290b4feb78b58246f21d92763d",
+      "unchanged": true
+    },
+    "/Users/simon/Trading/one-trading/frontend/src/lib/api.ts": {
+      "sha256": "3b56dec4300f4494edd1a7549955d4264e8c2677895b75282429ede66f8ba2f1",
+      "unchanged": true
+    },
+    "/Users/simon/Trading/one-trading/backend/app/api/free_ext.py": {
+      "sha256": "352788fd1fa1d416a8cddaa4211c9b2c703ac30387604ff437e66353028a92b2",
+      "unchanged": true
+    },
+    "/Users/simon/Trading/one-trading/backend/app/api/pipeline.py": {
+      "sha256": "aaa2e1cd391144bb5baa4f8f70aeb5f611e94c67540286d30a5c408b3d239be7",
+      "unchanged": true
+    },
+    "/Users/simon/Trading/one-trading/.env": {
+      "sha256": "8855712d771c3fc3396eaf360a594b48f1fbab3332c73abcde87d6d317711d38",
+      "unchanged": true,
+      "matches_restore_report": true
+    },
+    "/Users/simon/Trading/one-trading/data/reference/trading_calendar/calendar.parquet": {
+      "sha256": "dfd9f647ab4a375a4648c52eab2aff0824d8a38b2b0cba45f672e458cb124e9b",
+      "unchanged": true
+    },
+    "/Users/simon/Trading/one-trading/backend/uv.lock": {
+      "sha256": "6063d646bc575d136f993e31d2d272878029f045c9c3b9bfcf27629318e0fab1",
+      "unchanged_this_package": true
+    },
+    "/Users/simon/Trading/one-trading/frontend/package.json": {
+      "sha256": "f3fba986b88e605ce3d0eb71dd901fad8229031c3b69c69bc0ab7b988dd60569",
+      "unchanged_this_package": true
+    },
+    "/Users/simon/Trading/one-trading/backend/pyproject.toml": {
+      "sha256": "1d9ffb94bbf4ebca3879a35cb1c886c3763c4dcc3f39bd424cb0cbb360da7820",
+      "unchanged_this_package": true
+    }
+  },
+  "formal_data_not_written": {
+    "industry_snapshot": "86bbfcf3fd06f5f7c73301077c3832524333bd8e4b1526df3f7f1d61aed1cb04",
+    "concept_snapshot": "7497909b4db8cc97b4d5bec8ea0762507c9c8adbb2995c681b554bd543b796ca",
+    "industry_daily_2026_09_10": "feabd498fe7775303bc4ebab9ce3121b646e09d77c8a8af57d8fcd7c3d72d04c",
+    "concept_daily_2026_09_10": "96b3283bd90a39f6165420a3bdf0e3b87a7938be0426d5ee6f9b9764a397fab2",
+    "note": "Fingerprints taken after tests and read-only verifier. Tests used tmp DATA_DIR. No write under one-trading/data."
+  },
+  "proof_no_out_of_scope": {
+    "data_dir_writes": false,
+    "env_writes": false,
+    "account_store_writes": false,
+    "package_lock_writes": false,
+    "scheduler_config_writes": false,
+    "deployment_writes": false,
+    "start_scheduler_edited": false,
+    "test_fund_flow_py_edited": false
+  }
+}

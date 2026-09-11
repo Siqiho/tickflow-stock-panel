@@ -1,0 +1,19 @@
+cwd=/Users/simon/Trading/one-trading/frontend
+config=/Users/simon/Trading/one-trading/docs/investigations/2026-09-07-industry-fflow-daily-roll/tests/vitest.overlay.ts
+aliases=
+  @/components/SectorFundFlowPanel -> overlay/frontend/src/components/SectorFundFlowPanel.tsx
+  @/lib/api -> overlay/frontend/src/lib/api.ts
+as_of=2026-09-07 18:45:07 +0800
+
+ Test Files  3 passed (3)
+      Tests  11 passed (11)
+   Duration  3.42s
+
+# 7 history + 3 industry freshness + 当时 1 条仍依赖测试专用导出的契约（已作废）。
+
+# 2026-09-07 18:47 总工意见后只重跑契约文件（不重跑 7+3 面板）：
+# pnpm exec vitest run --config $TASK/tests/vitest.overlay.ts \
+#   $TASK/tests/frontend/api.overlay-contract.test.tsx
+# 1 passed. 证明改为插件记录 overlay 绝对路径 + 业务字段，不再从 api.ts 导出测试常量。
+# 解析记录：results/vitest-resolved-paths.json
+# 隔离 tsc --noEmit：results/tsc-overlay-api.txt

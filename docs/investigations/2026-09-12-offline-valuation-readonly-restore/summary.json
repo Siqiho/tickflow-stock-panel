@@ -1,0 +1,124 @@
+{
+  "common_keys": 36,
+  "dataset": "5_technical_derived/valuation",
+  "historical_inventory": {
+    "as_of": "2026-09-06",
+    "cited_from": "/Users/simon/Trading/下载数据/stockdb_quantdb_integration_review_20260906/package_sanity.json",
+    "note": "Market-wide coverage is the 2026-09-06 inventory only. This round reads four by-symbol files and does not rescan the 80G packages.",
+    "this_round_full_market_scan": false,
+    "valuation_by_symbol": {
+      "bytes": 694488966,
+      "empty_files": 0,
+      "files": 5554,
+      "physical_rows": 10770127,
+      "time_max_native": "2026-08-27 00:00:00",
+      "time_min_native": "2016-01-04 00:00:00"
+    }
+  },
+  "join_boundary": {
+    "direct_concat": false,
+    "pit_verified": false,
+    "side_by_side_only": true,
+    "two_source_agreement_is_market_truth": false
+  },
+  "layout": "by_symbol",
+  "mode": "summary",
+  "ok": true,
+  "overlay": {
+    "default_overlay": false,
+    "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+    "preclose_candidates_loaded": false,
+    "project_null_overlay": false,
+    "stockdb_repair_loaded": false
+  },
+  "package_keys": 68,
+  "project_keys": 36,
+  "samples": [
+    {
+      "max_date": "2026-08-27",
+      "min_date": "2016-01-04",
+      "negative_pe_ttm": 0,
+      "non_finite_counts": {},
+      "rows": 2588,
+      "share_market_value": {
+        "checked_rows": 2530,
+        "conversion_applied": false,
+        "exact_rows": 2530,
+        "float_checked_rows": 2530,
+        "float_max_abs_error": 0.0,
+        "identity_consistent_on_checked_rows": true,
+        "inference": "unknown",
+        "max_abs_error": 0.0,
+        "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+        "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+        "units": "unknown/unverified"
+      },
+      "symbol": "000001.SZ"
+    },
+    {
+      "max_date": "2026-08-27",
+      "min_date": "2016-01-04",
+      "negative_pe_ttm": 0,
+      "non_finite_counts": {},
+      "rows": 2588,
+      "share_market_value": {
+        "checked_rows": 2530,
+        "conversion_applied": false,
+        "exact_rows": 2530,
+        "float_checked_rows": 2530,
+        "float_max_abs_error": 0.0,
+        "identity_consistent_on_checked_rows": true,
+        "inference": "unknown",
+        "max_abs_error": 0.0,
+        "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+        "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+        "units": "unknown/unverified"
+      },
+      "symbol": "000338.SZ"
+    },
+    {
+      "max_date": "2026-08-27",
+      "min_date": "2016-01-04",
+      "negative_pe_ttm": 0,
+      "non_finite_counts": {},
+      "rows": 2588,
+      "share_market_value": {
+        "checked_rows": 2530,
+        "conversion_applied": false,
+        "exact_rows": 2530,
+        "float_checked_rows": 2530,
+        "float_max_abs_error": 0.0,
+        "identity_consistent_on_checked_rows": true,
+        "inference": "unknown",
+        "max_abs_error": 0.0,
+        "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+        "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+        "units": "unknown/unverified"
+      },
+      "symbol": "600519.SH"
+    },
+    {
+      "max_date": "2026-08-27",
+      "min_date": "2018-06-11",
+      "negative_pe_ttm": 0,
+      "non_finite_counts": {},
+      "rows": 1995,
+      "share_market_value": {
+        "checked_rows": 1995,
+        "conversion_applied": false,
+        "exact_rows": 1995,
+        "float_checked_rows": 1995,
+        "float_max_abs_error": 0.0,
+        "identity_consistent_on_checked_rows": true,
+        "inference": "unknown",
+        "max_abs_error": 0.0,
+        "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+        "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+        "units": "unknown/unverified"
+      },
+      "symbol": "300750.SZ"
+    }
+  ],
+  "source": "offline_quantdb",
+  "status": "ok"
+}

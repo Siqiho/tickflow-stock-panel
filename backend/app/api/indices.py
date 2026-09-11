@@ -1,4 +1,4 @@
-"""指数 API。"""
+"""指数 API。本地保留全量列表/搜索; 核心四只只约束展示层, 不撤搜索面。"""
 from __future__ import annotations
 
 import logging
@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.indicators.pipeline import compute_enriched
 from app.services import index_sync, kline_sync
-from app.tickflow.capabilities import Cap
+from app.tickflow.capabilities import Cap, CapabilitySet
 
 logger = logging.getLogger(__name__)
 
@@ -123,9 +123,12 @@ def get_index_minute(
 ):
     """实时读取指数分钟 K。不写入股票分钟 parquet。"""
     repo = request.app.state.repo
+    capset = getattr(request.app.state, "capabilities", None)
+    if capset is None:
+        capset = CapabilitySet()
     info = _index_info(repo, symbol)
     day = trade_date or date.today()
-    df = kline_sync.fetch_minute_single(symbol, day)
+    df = kline_sync.fetch_minute_single(symbol, day, asset_type="index", capset=capset)
     return {
         "symbol": symbol,
         "name": info.get("name"),

@@ -3,7 +3,8 @@
 集中管理全市场行情拉取 + enriched 缓存，供盘中选股、自选股等所有模块复用。
 
 架构:
-  - 后台线程轮询 TickFlow get_by_universes(["CN_Equity_A", "CN_Index"])
+  - 后台线程轮询 TickFlow get_by_universes(["CN_Equity_A", "CN_ETF"]) + 核心指数按码拉取
+    (自定义源走 provider.get_realtime() + 可选 get_realtime_indices() 指数补充)
   - 拉取行情 → 写 kline_daily (不复权) + 增量计算 enriched → 写盘 + 更新缓存
   - _enriched_cache 是唯一的盘中数据源 (OHLCV + 全套技术指标)
   - _live_agg_cache 是递推状态 (只加载一次, 盘中不变)
@@ -26,9 +27,46 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from datetime import date, datetime, time as dt_time
 
 import polars as pl
+
+from app.market_time import cn_now
+from app.services.index_const import CORE_INDEX_SYMBOLS as AUTHORITY_CORE_INDEX_SYMBOLS
+from app.strategy.monitor import format_alert_quote
+
+# 告警来源 → 中文标签 (webhook 标题 / 系统通知标题共用)
+SOURCE_LABELS = {
+    "strategy": "策略", "signal": "信号", "price": "价格",
+    "market": "异动", "ladder": "连板梯队", "sector": "板块",
+    "volume_delta": "放量", "abnormal": "异动", "date": "日期提醒",
+}
+
+# Webhook 投递专用线程池 —— 与行情轮询线程隔离。
+# send_* 内置重试, 若在 _poll_loop 上同步投递会拖垮实时行情+告警。
+_WEBHOOK_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="feishu-webhook")
+
+
+def _submit_webhook(fn, *args):
+    """提交到线程池时复制当前 ContextVar, 避免把别人的通知配置发到错误用户。"""
+    ctx = copy_context()
+
+    def wrapped(*inner_args):
+        return ctx.run(fn, *inner_args)
+
+    wrapped.__name__ = getattr(fn, "__name__", "webhook")
+    wrapped.__qualname__ = getattr(fn, "__qualname__", wrapped.__name__)
+    return _WEBHOOK_EXECUTOR.submit(wrapped, *args)
+
+
+def _body_with_quote(body: str, ev: dict) -> str:
+    """推送正文尾部补上触发时的现价/涨跌幅 (日期提醒无行情, 自然为空)。"""
+    quote_tail = format_alert_quote(ev.get("price"), ev.get("change_pct"))
+    if not quote_tail or body.endswith(quote_tail):
+        return body
+    return f"{body} · {quote_tail}"
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +74,7 @@ logger = logging.getLogger(__name__)
 class QuoteService:
     """全局实时行情服务 — 单例。"""
 
-    CORE_INDEX_SYMBOLS = ("000001.SH", "399001.SZ", "399006.SZ", "000680.SH")
+    CORE_INDEX_SYMBOLS = AUTHORITY_CORE_INDEX_SYMBOLS
 
     # 档位 → 最小轮询间隔 (秒)
     TIER_MIN_INTERVAL = {
@@ -46,7 +84,7 @@ class QuoteService:
         "free": 6.0,
         "none": 8.0,  # public watchlist fallback
     }
-    DEFAULT_INTERVAL = 10.0
+    DEFAULT_INTERVAL = 15.0
     MAX_INTERVAL = 60.0
 
     def __init__(self) -> None:
@@ -76,10 +114,20 @@ class QuoteService:
         self._index_symbol_count: int = 0
         self._etf_symbol_count: int = 0
         self._index_quotes_cache: pl.DataFrame | None = None
+        self._abnormal_last_eval: float = 0.0
 
     # ================================================================
     # 生命周期
     # ================================================================
+
+    def _sync_interval_from_prefs(self) -> float:
+        """把内存间隔对齐到偏好文件，避免进程残留 8 秒而磁盘已是 15 秒。"""
+        from app.services import preferences
+        clamped = self._clamp_interval(preferences.get_realtime_quote_interval())
+        if clamped != self._interval:
+            logger.info("轮询间隔已从偏好同步为 %.1fs (原 %.1fs)", clamped, self._interval)
+            self._interval = clamped
+        return self._interval
 
     def start(self, interval: float = 0.0) -> None:
         """启动后台行情轮询线程。"""
@@ -96,14 +144,15 @@ class QuoteService:
         self._save_enabled(True)
         logger.info("行情服务已启动, 轮询间隔 %.1fs", self._interval)
 
-    def stop(self) -> None:
-        """停止后台行情轮询线程。"""
+    def stop(self, *, persist: bool = True) -> None:
+        """停止后台行情轮询线程; 运行时退出不应改写用户偏好。"""
         self._running = False
         self._enabled = False
         if self._thread:
             self._thread.join(timeout=10)
             self._thread = None
-        self._save_enabled(False)
+        if persist:
+            self._save_enabled(False)
         logger.info("行情服务已停止")
 
     def enable(self) -> bool:
@@ -116,13 +165,13 @@ class QuoteService:
             return False
         self._enabled = True
         self._save_enabled(True)
+        self._sync_interval_from_prefs()
         if not self._running:
-            from app.services import preferences
-            self._interval = self._clamp_interval(preferences.get_realtime_quote_interval())
             self._running = True
             self._thread = threading.Thread(target=self._poll_loop, daemon=True)
             self._thread.start()
         logger.info("行情服务已启用, 轮询间隔 %.1fs", self._interval)
+        return True
 
     def disable(self) -> None:
         """关闭自动行情。"""
@@ -309,8 +358,7 @@ class QuoteService:
         return df
 
     def status(self) -> dict:
-        """返回行情服务状态。"""
-        from app.services import preferences
+        """返回共享行情服务状态,不读取请求用户的个人自选。"""
         age = (time.perf_counter() - self._fetch_time) * 1000 if self._fetch_time else -1
         mode = self.realtime_mode()
         return {
@@ -318,8 +366,10 @@ class QuoteService:
             "running": self._running,
             "mode": mode,
             "realtime_allowed": mode != "none",
-            "watchlist_symbol_count": len(preferences.get_realtime_watchlist_symbols()),
-            "interval_s": self._interval,
+            # QuoteService 是服务器级单例。这里必须报告该单例实际缓存的
+            # 标的数量,不能在请求上下文中读取某个用户的私有自选列表。
+            "watchlist_symbol_count": self._symbol_count if mode == "watchlist" else 0,
+            "interval_s": self._sync_interval_from_prefs(),
             "symbol_count": self._symbol_count,
             "index_symbol_count": self._index_symbol_count,
             "etf_symbol_count": self._etf_symbol_count,
@@ -355,7 +405,9 @@ class QuoteService:
                 logger.warning("行情轮询异常: %s", e)
 
             waited = 0.0
-            # Off-hours poll less aggressively.
+            # Off-hours poll less aggressively. Re-read prefs so leftover memory (8s)
+            # cannot outlive the board clock written in preferences (15s).
+            self._sync_interval_from_prefs()
             interval = self._interval if self._is_trading_hours() else max(self._interval, 60.0)
             while self._running and self._enabled and waited < interval:
                 time.sleep(0.5)
@@ -443,7 +495,7 @@ class QuoteService:
 
         try:
             all_index_symbols = set(self._repo.get_index_symbol_set()) if self._repo else set()
-            core_index_symbols = set(preferences.get_realtime_index_symbols() or self.CORE_INDEX_SYMBOLS)
+            core_index_symbols = set(self.CORE_INDEX_SYMBOLS)
             all_index_symbols.update(core_index_symbols)
             if preferences.get_realtime_pull_index() and core_index_symbols:
                 self._bootstrap_core_index_quotes(core_index_symbols)
@@ -669,6 +721,7 @@ class QuoteService:
                     "ALL",
                     data_dir=self._repo.store.data_dir if self._repo else None,
                     default="ALL",
+                    include_watchlist=True,
                     refresh_pools_if_missing=False,
                 )
             except Exception as e:  # noqa: BLE001
@@ -681,6 +734,7 @@ class QuoteService:
                         scope,
                         data_dir=self._repo.store.data_dir if self._repo else None,
                         default=scope,
+                        include_watchlist=True,
                         refresh_pools_if_missing=True,
                     )
                 except Exception as e:  # noqa: BLE001
@@ -882,6 +936,17 @@ class QuoteService:
     # 工具
     # ================================================================
 
+    def _collect_monitor_index_symbols(self) -> set[str]:
+        """启用中的指数监控规则标的 (asset_type=index & scope=symbols)。"""
+        engine = getattr(self._app_state, "monitor_engine", None) if self._app_state else None
+        if not engine:
+            return set()
+        out: set[str] = set()
+        for _r in list(engine.rules.values()):
+            if _r.get("enabled", True) and _r.get("asset_type") == "index" and _r.get("scope") == "symbols":
+                out.update(s for s in _r.get("symbols", []) if s)
+        return out
+
     @staticmethod
     def _build_daily(records: list[dict]) -> pl.DataFrame:
         """将 API records 转为日K格式 DataFrame (只有 OHLCV, 写 kline_daily 用)。"""
@@ -906,6 +971,23 @@ class QuoteService:
         result = df.select(select_exprs).with_columns(
             pl.lit(date.today()).cast(pl.Date).alias("date"),
         )
+        # 停牌股回归: 实时源对停牌标的返回停牌前最后一份快照 — OHLCV 全为旧日
+        # 真实值, 仅 timestamp 停在旧日。这类记录不属于当日, 不过滤会把旧日 K 线
+        # 原样复制成当日假蜡烛 (如 301266.SZ 2026-09-04)。按 quote_ts 的北京
+        # 日期归属过滤; 时间戳缺失/为空的源无法判断, 维持原行为保留。
+        if "quote_ts" in result.columns:
+            day_start_ms = int(
+                datetime.combine(cn_today(), dt_time(0, 0), tzinfo=CN_TZ).timestamp() * 1000
+            )
+            result = result.filter(
+                pl.col("quote_ts").is_null()
+                | pl.col("quote_ts").is_between(day_start_ms, day_start_ms + 86_400_000, closed="left")
+            )
+        # 停牌/尚无集合竞价的记录 open/high 均为 0。必须在下方用 close 填充前
+        # 过滤, 否则零成交行会被伪装成有效日K, 并在 batch 同步后作为实时残留
+        # 反复触发历史完整性修复。
+        from app.indicators.pipeline import filter_halt_days
+        result = filter_halt_days(result)
         # 修复: API 在非交易时段可能返回 open/high/low=0 或 null,
         # 导致蜡烛从 0 开始。用 close 填充这些异常值。
         for col in ("open", "high", "low"):
@@ -1092,9 +1174,21 @@ class QuoteService:
         return now.weekday() < 5 and (morning or afternoon)
 
     @staticmethod
+    def _is_continuous_trading() -> bool:
+        """A股连续竞价(北京时间): 9:30-11:30 / 13:00-15:00。与 depth sealed 窗口对齐。
+
+        行情轮询仍走本地 _is_trading_hours 宽窗口, 不把 Catalog/HiThink 拉数改成只在连续竞价。
+        """
+        now = cn_now()
+        t = now.time()
+        morning = dt_time(9, 30) <= t <= dt_time(11, 30)
+        afternoon = dt_time(13, 0) <= t <= dt_time(15, 0)
+        return now.weekday() < 5 and (morning or afternoon)
+
+    @staticmethod
     def _save_enabled(enabled: bool) -> None:
         from app.services import preferences
-        preferences.save({"realtime_quotes_enabled": enabled})
+        preferences.save_server({"realtime_quotes_enabled": enabled})
 
     # ================================================================
     # 策略监控
@@ -1127,7 +1221,42 @@ class QuoteService:
                             })
                     except Exception as e:  # noqa: BLE001
                         logger.debug("name_map 构建失败 (不影响监控): %s", e)
-                    rule_events = engine.evaluate(enriched_today)
+                    rule_events = engine.evaluate(enriched_today, asset_type="stock")
+                    if engine.has_rule_type("abnormal") and self._repo is not None:
+                        now_ts = time.time()
+                        if now_ts - self._abnormal_last_eval >= 30.0:
+                            self._abnormal_last_eval = now_ts
+                            try:
+                                from app.services import abnormal_moves
+                                overview = abnormal_moves.build_overview(
+                                    self._repo, self,
+                                    min_closeness=engine.min_abnormal_closeness(),
+                                    limit=1000,
+                                )
+                                rule_events += engine.evaluate_abnormal(overview.get("rows") or [])
+                            except Exception as exc:  # noqa: BLE001
+                                logger.warning("异动监控规则评估失败 (不影响其他告警): %s", exc)
+                    if (
+                        hasattr(engine, "has_asset_rules")
+                        and engine.has_asset_rules("etf")
+                        and self._repo is not None
+                    ):
+                        try:
+                            etf_enriched, _ = self._repo.get_enriched_latest_asset(
+                                "etf",
+                                refresh=False,
+                            )
+                            if not etf_enriched.is_empty():
+                                rule_events = [
+                                    *rule_events,
+                                    *engine.evaluate(
+                                        etf_enriched,
+                                        asset_type="etf",
+                                        reset_strategy_results=False,
+                                    ),
+                                ]
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning("ETF 监控评估失败 (不影响股票告警): %s", e)
                     if rule_events:
                         # 落盘到 alerts.jsonl
                         try:
@@ -1183,49 +1312,83 @@ class QuoteService:
             logger.warning("监控评估失败: %s", e)
 
     def _maybe_send_webhook(self, rule_events: list[dict], engine) -> None:
-        """把告警通过 Webhook 推送到外部 IM (由规则 webhook_enabled 开关控制)。
+        """把告警通过 Webhook 推送到外部 IM (由规则 webhook_channels 指定渠道)。
 
-        - 全局飞书 URL 未配置: 直接返回
-        - 仅推送 webhook_enabled=True 的规则触发的告警
-        - 失败静默, 不阻断主流程
+        - 飞书 / 企业微信 / 第三方 Webhook / 邮件均按规则独立选择
+        - webhook_enabled=False 显式关闭时不推; 缺省时以 webhook_channels 为准
+        - 空渠道 + 未显式启用 = 不外发 (新通知默认关闭)
+        - 提交到独立线程池, 不阻塞行情轮询; 失败不阻断主流程
         - 去重: 复用 MonitorRuleEngine 的 cooldown, 此处不重复去重
-
-        注意: 用 rule_events (含 rule_id) 而非重建后的 all_alerts,
-        以便反查引擎规则判断是否启用推送。
         """
         try:
-            from app.services import preferences
-            from app.services import webhook_adapter
+            from app import secrets_store
+            from app.services import email_adapter, preferences, webhook_adapter
 
-            url = preferences.get_feishu_webhook_url()
-            if not url:
+            feishu_url = preferences.get_feishu_webhook_url()
+            feishu_secret = preferences.get_feishu_webhook_secret()
+            wecom_url = preferences.get_wecom_webhook_url()
+            custom_url = preferences.get_custom_webhook_url()
+            custom_secret = secrets_store.get_custom_webhook_secret()
+            email_config = preferences.get_email_smtp_config()
+            email_password = secrets_store.get_email_smtp_password()
+            default_channels = preferences.get_webhook_default_channels()
+            if not any((feishu_url, wecom_url, custom_url, email_adapter.is_configured(email_config))):
                 return
-            secret = preferences.get_feishu_webhook_secret()
 
-            # 反查规则, 过滤出启用推送的事件
-            source_labels = {
-                "strategy": "策略", "signal": "信号",
-                "price": "价格", "market": "异动",
-            }
-            rules = engine.rules if engine is not None else {}
-            pushed = 0
+            enqueued = 0
             for ev in rule_events:
-                rule = rules.get(ev.get("rule_id"))
-                if not rule or not rule.get("webhook_enabled"):
+                if engine is not None and hasattr(engine, "get_rule"):
+                    rule = engine.get_rule(ev.get("rule_id"), ev.get("owner_user_id"))
+                else:
+                    rules = engine.rules if engine is not None else {}
+                    rule = rules.get(ev.get("rule_id")) if isinstance(rules, dict) else None
+                if not rule:
+                    continue
+                if rule.get("webhook_enabled") is False:
+                    continue
+                channels = rule.get("webhook_channels") or (
+                    default_channels if rule.get("webhook_enabled") else None
+                )
+                if not channels:
                     continue
                 source = ev.get("source", "")
-                source_label = source_labels.get(source, source or "通知")
+                source_label = SOURCE_LABELS.get(source, source or "通知")
                 symbol = ev.get("symbol") or ""
                 name = ev.get("name") or ""
                 message = ev.get("message") or ""
-                title = f"TickFlow · {source_label}"
+                title = source_label
                 body = f"{symbol} {name} {message}".strip() if symbol else (message or name)
-                if webhook_adapter.send_feishu(url, title, body, secret):
-                    pushed += 1
-            if pushed:
-                logger.info("飞书 Webhook 推送: %d 条", pushed)
+                body = _body_with_quote(body, ev)
+                if feishu_url and "feishu" in channels:
+                    _submit_webhook(webhook_adapter.send_feishu, feishu_url, title, body, feishu_secret)
+                    enqueued += 1
+                if wecom_url and "wecom" in channels:
+                    _submit_webhook(webhook_adapter.send_wecom, wecom_url, title, body)
+                    enqueued += 1
+                if custom_url and "custom" in channels:
+                    _submit_webhook(
+                        webhook_adapter.send_custom,
+                        custom_url,
+                        title,
+                        body,
+                        "monitor_alert",
+                        ev,
+                        custom_secret,
+                    )
+                    enqueued += 1
+                if email_adapter.is_configured(email_config) and "email" in channels:
+                    _submit_webhook(
+                        email_adapter.send_email,
+                        email_config,
+                        email_password,
+                        title,
+                        body,
+                    )
+                    enqueued += 1
+            if enqueued:
+                logger.info("Webhook 已提交 %d 条 (异步投递, 按渠道独立投递, 失败记 WARNING)", enqueued)
         except Exception as e:  # noqa: BLE001
-            logger.debug("Webhook 推送异常 (不影响告警主流程): %s", e)
+            logger.warning("Webhook 提交异常 (不影响告警主流程): %s", e)
 
     def _maybe_send_system_notifications(self, all_alerts: list[dict]) -> None:
         """把告警转发到操作系统通知中心 (由 preferences 开关控制)。
@@ -1259,6 +1422,8 @@ class QuoteService:
                     body = f"{symbol} {name} {message}".strip()
                 else:
                     body = message or name
+                # 补上触发时的现价/涨跌幅 (日期提醒无行情, 自然为空)
+                body = _body_with_quote(body, ev)
 
                 title = f"TickFlow · {source_label}"
                 notify_adapter.notify(title, body)
@@ -1335,11 +1500,13 @@ class QuoteService:
                 table = "kline_etf_daily" if asset_type == "etf" else "kline_daily"
                 daily_glob = str(self._repo.store.data_dir / table / "**" / "*.parquet")
                 ohlcv_cols = ["symbol", "date", "open", "high", "low", "close", "volume", "amount"]
-                hist_df = (
-                    pl.scan_parquet(daily_glob)
+                from app.parquet import scan_daily_parquet
+                from app.polars_guard import guarded_collect
+                hist_df = guarded_collect(
+                    scan_daily_parquet(daily_glob)
                     .filter(pl.col("date") >= cutoff)
-                    .sort(["symbol", "date"])
-                    .collect()
+                    .sort(["symbol", "date"]),
+                    priority="background",
                 )
                 if hist_df.is_empty():
                     return
@@ -1365,6 +1532,18 @@ class QuoteService:
 
             if enriched_today.is_empty():
                 return
+
+            # 异动偏离列: 盘中路径不经过 _refresh_enriched 冷刷新,
+            # 需在此附着 (基准 = 历史帧 + 指数实时外推), 否则盘中异动列表为空
+            if asset_type == "stock":
+                from app.indicators.pipeline import attach_deviation_columns_today
+                try:
+                    index_quotes = self.get_index_quotes()
+                except Exception:
+                    index_quotes = None
+                enriched_today = attach_deviation_columns_today(
+                    enriched_today, self._repo.store.data_dir, index_quotes
+                )
 
             # Public intraday snapshots are published to the live cache only.
             if not persist:

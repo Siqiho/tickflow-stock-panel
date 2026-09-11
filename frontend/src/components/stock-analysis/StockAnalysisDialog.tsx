@@ -132,7 +132,7 @@ export function StockAnalysisDialog({ task, mode, minimized }: Props) {
                   </button>
                 )}
                 {!isHistory && isWorking && (
-                  <button onClick={minimizeDialog} title="最小化为气泡,后台继续生成"
+                  <button onClick={minimizeDialog} title="收起对话框，后台继续生成"
                     className="p-1.5 rounded-lg hover:bg-elevated text-muted hover:text-foreground transition-colors">
                     <Minimize2 className="h-4 w-4" />
                   </button>

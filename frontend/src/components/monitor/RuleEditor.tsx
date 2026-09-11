@@ -43,7 +43,7 @@ const emptyRule = (preset?: Partial<MonitorRule>): MonitorRule => ({
 export function RuleEditor({ rule, preset, simple, onClose, onSaved }: Props) {
   const qc = useQueryClient()
   const options = useQuery({ queryKey: QK.monitorRuleOptions, queryFn: api.monitorRuleOptions })
-  const strategies = useQuery({ queryKey: QK.screenerStrategies, queryFn: api.screenerStrategies })
+  const strategies = useQuery({ queryKey: QK.screenerStrategies(), queryFn: () => api.screenerStrategies() })
   const { data: prefs } = usePreferences()
   const feishuConfigured = !!(prefs?.feishu_webhook_url)
   const [editing] = useState(!!rule)
@@ -82,6 +82,9 @@ export function RuleEditor({ rule, preset, simple, onClose, onSaved }: Props) {
         }
       }
       if (d.scope === 'symbols' && d.symbols.length === 0) throw new Error('请选择至少一只股票')
+      if (d.scope === 'sector' && !String(d.sector || '').trim() && !(d.sector_targets && d.sector_targets.length)) {
+        throw new Error('板块范围必须填写板块名称, 缺少成员时不会按全市场执行')
+      }
       return api.monitorRuleSave(d)
     },
     onSuccess: () => {
@@ -263,7 +266,19 @@ export function RuleEditor({ rule, preset, simple, onClose, onSaved }: Props) {
             </div>
           )}
           {draft.scope === 'all' && <span className="text-[11px] text-muted">对全市场所有股票生效</span>}
-          {draft.scope === 'sector' && <span className="text-[11px] text-muted/60">板块精确过滤(开发中,当前等同全市场)</span>}
+          {draft.scope === 'sector' && (
+            <div className="flex min-w-0 flex-col gap-1">
+              <input
+                value={draft.sector ?? ''}
+                onChange={e => setDraft(d => ({ ...d, sector: e.target.value }))}
+                placeholder="板块名称，如 银行、半导体"
+                className="h-7 w-48 rounded border border-border bg-base px-2 text-[11px] text-foreground focus:outline-none focus:border-accent/50"
+              />
+              <span className="text-[11px] text-muted">
+                仅匹配已有行业/概念列或本地板块成员。缺少标识或成员数据时明确失败，不会退回全市场。
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -379,7 +394,7 @@ export function RuleEditor({ rule, preset, simple, onClose, onSaved }: Props) {
       {/* Webhook 推送 — 飞书可用, QMT/ptrade 待定 */}
       <div className="rounded-btn border border-border/40 bg-base/40 p-3 space-y-2">
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-medium text-foreground">Webhook 推送</span>
+          <span className="text-[11px] font-medium text-foreground">外部推送</span>
           <span className="text-[9px] text-muted">触发时推送告警到外部</span>
         </div>
 

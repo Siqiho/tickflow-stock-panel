@@ -1,0 +1,23 @@
+test_audit_summary_default_writes_nothing (__main__.OfflineValuationQueryTests.test_audit_summary_default_writes_nothing) ... ok
+test_cli_query_and_audit_stdout_only (__main__.OfflineValuationQueryTests.test_cli_query_and_audit_stdout_only) ... ok
+test_does_not_import_app_or_datastore (__main__.OfflineValuationQueryTests.test_does_not_import_app_or_datastore) ... ok
+test_empty_or_wrong_symbol_is_rejected_not_rewritten (__main__.OfflineValuationQueryTests.test_empty_or_wrong_symbol_is_rejected_not_rewritten) ... ok
+test_empty_window_is_not_missing_file (__main__.OfflineValuationQueryTests.test_empty_window_is_not_missing_file) ... ok
+test_invalid_symbol_date_limit_and_symlink_escape (__main__.OfflineValuationQueryTests.test_invalid_symbol_date_limit_and_symlink_escape) ... ok
+test_main_path_query_is_legal_json_and_stable (__main__.OfflineValuationQueryTests.test_main_path_query_is_legal_json_and_stable) ... ok
+test_missing_fields_corrupt_duplicate_permission (__main__.OfflineValuationQueryTests.test_missing_fields_corrupt_duplicate_permission) ... ok
+test_missing_root_and_file_are_distinct (__main__.OfflineValuationQueryTests.test_missing_root_and_file_are_distinct) ... ok
+test_nan_is_legal_json_and_keeps_anomaly_mark (__main__.OfflineValuationQueryTests.test_nan_is_legal_json_and_keeps_anomaly_mark) ... ok
+test_nulls_are_not_filled_and_overlay_is_not_used (__main__.OfflineValuationQueryTests.test_nulls_are_not_filled_and_overlay_is_not_used) ... ok
+test_optional_absent_is_not_claimed_in_original_fields (__main__.OfflineValuationQueryTests.test_optional_absent_is_not_claimed_in_original_fields) ... ok
+test_parent_and_file_symlink_escapes_fail_closed (__main__.OfflineValuationQueryTests.test_parent_and_file_symlink_escapes_fail_closed) ... ok
+test_reconcile_does_not_treat_project_null_as_equal_or_zero (__main__.OfflineValuationQueryTests.test_reconcile_does_not_treat_project_null_as_equal_or_zero) ... ok
+test_strict_schema_rejects_bad_types_and_duplicate_null_time (__main__.OfflineValuationQueryTests.test_strict_schema_rejects_bad_types_and_duplicate_null_time) ... ok
+test_strict_string_dates_and_integer_limit (__main__.OfflineValuationQueryTests.test_strict_string_dates_and_integer_limit) ... ok
+test_units_remain_unverified_and_identity_excludes_inf (__main__.OfflineValuationQueryTests.test_units_remain_unverified_and_identity_excludes_inf) ... ok
+test_write_evidence_rejects_other_paths (__main__.OfflineValuationQueryTests.test_write_evidence_rejects_other_paths) ... ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.290s
+
+OK

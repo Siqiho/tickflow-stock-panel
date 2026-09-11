@@ -20,12 +20,14 @@ from app.services.ext_data import (
     ExtField,
     PullConfig,
     ensure_utf8_csv,
+    ext_api_key_field,
     fix_symbol_format,
+    get_ext_api_key,
     normalize_symbol,
     write_ext_parquet,
     rows_to_parquet,
 )
-from app.services.ext_pull import fetch_and_ingest, pull_scheduler
+from app.services.ext_pull import _request_json, fetch_and_ingest, pull_scheduler
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ext-data", tags=["ext-data"])
@@ -65,6 +67,16 @@ class IngestReq(BaseModel):
     rows: list[dict] = Field(..., min_length=1)
 
 
+class PullAuthReq(BaseModel):
+    """拉取接口鉴权方式 (与自定义行情源 AuthConfig 同口径)。
+
+    Key 本体存 secrets_store (secrets.json), 不写入 config.json。
+    """
+    type: Literal["none", "bearer", "header", "query"] = "none"
+    header: str = Field("Authorization", min_length=1, max_length=64)  # bearer/header 用
+    param: str = Field("token", min_length=1, max_length=64)          # query 用
+
+
 class PullConfigReq(BaseModel):
     """定时拉取配置请求。"""
     url: str = Field(..., min_length=1)
@@ -75,6 +87,15 @@ class PullConfigReq(BaseModel):
     field_map: dict[str, str] | None = None  # external → internal field name
     schedule_minutes: int = Field(1440, ge=1)
     enabled: bool = False
+    time_window_start: str | None = None
+    time_window_end: str | None = None
+    date_param: str | None = Field(None, min_length=1, max_length=16, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    auth: PullAuthReq | None = None
+
+
+class ApiKeyReq(BaseModel):
+    """设置拉取接口 API Key; 空串 = 清除。"""
+    key: str = Field(..., max_length=4096)
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +382,7 @@ def create_config(request: Request, body: CreateExtReq):
         code_map=body.code_map,
     )
     store.upsert(config)
+    _refresh_views(request)
     return config.to_dict()
 
 
@@ -382,6 +404,7 @@ def update_config(request: Request, config_id: str, body: UpdateExtReq):
     if body.code_map is not None:
         config.code_map = body.code_map
     store.upsert(config)
+    _refresh_views(request)
     return config.to_dict()
 
 
@@ -391,6 +414,11 @@ def delete_config(request: Request, config_id: str):
     store = _store(request)
     if not store.delete(config_id):
         raise HTTPException(404, f"配置 '{config_id}' 不存在")
+    # 同步清掉 secrets.json 里残留的拉取 API Key, 避免同名重建配置时误用旧 Key
+    from app import secrets_store
+
+    secrets_store.clear(ext_api_key_field(config_id))
+    _refresh_views(request)
     return {"status": "deleted"}
 
 
@@ -443,6 +471,30 @@ def list_rows(
 # 文件上传
 # ---------------------------------------------------------------------------
 
+# 扩展数据 CSV/Excel 上传上限(与自选截图 OCR 的 12MB 上限属同类保护, 见 watchlist.py)。
+# 通过分块写入临时文件, 超限即拒绝, 避免 `await file.read()` 把整个文件读入内存。
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+async def _write_upload_capped(file: UploadFile, dest: Path, max_bytes: int) -> None:
+    """分块把上传文件写入 dest, 累计超过 max_bytes 立即拒绝(413)。
+
+    避免一次性 `await file.read()` 把整个文件读入内存(大文件可能触发高内存占用、
+    进程 OOM 或服务不可用); 超限时停止继续读取与落盘。
+    """
+    total = 0
+    with dest.open("wb") as f:
+        while True:
+            chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise HTTPException(413, f"文件过大(上限 {max_bytes // (1024 * 1024)}MB)")
+            f.write(chunk)
+
+
 @router.post("/{config_id}/upload")
 async def upload_data(
     request: Request,
@@ -465,9 +517,7 @@ async def upload_data(
     tmp_dir = Path(tempfile.mkdtemp())
     tmp_path = tmp_dir / f"upload{suffix}"
     try:
-        with tmp_path.open("wb") as f:
-            content = await file.read()
-            f.write(content)
+        await _write_upload_capped(file, tmp_path, _MAX_UPLOAD_BYTES)
 
         # 直接读取文件，不做列重命名
         if suffix == ".csv":
@@ -553,7 +603,7 @@ def configure_pull(request: Request, config_id: str, body: PullConfigReq):
     if not config:
         raise HTTPException(404, f"配置 '{config_id}' 不存在")
 
-    # 保留历史状态字段
+    # 保留历史状态字段; auth 缺省时沿用现有配置 (关闭鉴权需显式传 {"type":"none"})
     old_pull = config.pull
     config.pull = PullConfig(
         url=body.url,
@@ -568,6 +618,10 @@ def configure_pull(request: Request, config_id: str, body: PullConfigReq):
         last_status=old_pull.last_status if old_pull else None,
         last_message=old_pull.last_message if old_pull else None,
         last_rows=old_pull.last_rows if old_pull else None,
+        time_window_start=body.time_window_start if body.time_window_start is not None else (old_pull.time_window_start if old_pull else None),
+        time_window_end=body.time_window_end if body.time_window_end is not None else (old_pull.time_window_end if old_pull else None),
+        date_param=body.date_param if body.date_param is not None else (old_pull.date_param if old_pull else None),
+        auth=body.auth.model_dump() if body.auth is not None else (old_pull.auth if old_pull else None),
     )
     store.upsert(config)
 
@@ -584,6 +638,38 @@ def configure_pull(request: Request, config_id: str, body: PullConfigReq):
     return {"status": "ok", "pull": config.pull.to_dict()}
 
 
+@router.get("/{config_id}/api-key")
+def get_pull_api_key(request: Request, config_id: str):
+    """查询拉取接口 API Key 状态。只返回脱敏值, 不返回明文。"""
+    store = _store(request)
+    config = store.get(config_id)
+    if not config:
+        raise HTTPException(404, f"配置 '{config_id}' 不存在")
+
+    from app import secrets_store
+
+    key = get_ext_api_key(config_id)
+    return {"key_set": bool(key), "masked_key": secrets_store.mask(key) if key else ""}
+
+
+@router.put("/{config_id}/api-key")
+def set_pull_api_key(request: Request, config_id: str, body: ApiKeyReq):
+    """设置 (或空串清除) 拉取接口的 API Key, 存 secrets.json (权限 0600)。"""
+    store = _store(request)
+    config = store.get(config_id)
+    if not config:
+        raise HTTPException(404, f"配置 '{config_id}' 不存在")
+
+    from app import secrets_store
+
+    value = body.key.strip()
+    if value:
+        secrets_store.save({ext_api_key_field(config_id): value})
+    else:
+        secrets_store.clear(ext_api_key_field(config_id))
+    return {"status": "ok", "key_set": bool(value), "masked_key": secrets_store.mask(value) if value else ""}
+
+
 @router.post("/{config_id}/pull/test")
 async def test_pull(request: Request, config_id: str):
     """测试拉取：请求外部 API 并返回预览数据，不写入。"""
@@ -594,23 +680,12 @@ async def test_pull(request: Request, config_id: str):
     if not config.pull or not config.pull.url:
         raise HTTPException(400, "拉取未配置或 URL 为空")
 
-    # 临时构建一个带新配置的 config 用于测试
-    from app.services.ext_pull import _extract_rows, _apply_field_map
-    import httpx
+    # 复用正式拉取的请求实现 (UA 标识头 + 鉴权注入同一套口径), 不带日期参数
+    from app.services.ext_pull import _apply_field_map, _extract_rows
 
     pull = config.pull
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            headers = pull.headers or {}
-            kwargs: dict = {"headers": headers}
-            if pull.method.upper() == "POST" and pull.body:
-                kwargs["content"] = pull.body
-                if "content-type" not in {k.lower() for k in headers}:
-                    kwargs["headers"]["Content-Type"] = "application/json"
-            resp = await client.request(pull.method.upper(), pull.url, **kwargs)
-            resp.raise_for_status()
-            data = resp.json()
-
+        data = await _request_json(pull, config.id)
         rows = _extract_rows(data, pull.response_path)
         preview = _apply_field_map(rows[:5], pull.field_map)
         return {
@@ -656,6 +731,38 @@ async def run_pull(request: Request, config_id: str):
             failed.pull.last_message = str(e)[:200]
             store.upsert(failed)
         raise HTTPException(400, f"拉取失败: {e}") from e
+
+
+@router.post("/{config_id}/backfill")
+async def backfill_history_ep(
+    request: Request,
+    config_id: str,
+    start: str = Query(..., description="开始日期 YYYY-MM-DD"),
+    end: str = Query(..., description="结束日期 YYYY-MM-DD (含)"),
+):
+    """历史回补: 按本地交易日逐日拉取并写入 timeseries 分区。
+
+    前提: 配置为 timeseries 模式且拉取配置了 date_param (接口支持按日期
+    查询)。幂等 —— 已存在的分区跳过, 失败单日不中断, 结果逐项返回。
+    """
+    store = _store(request)
+    config = store.get(config_id)
+    if not config:
+        raise HTTPException(404, f"配置 '{config_id}' 不存在")
+    try:
+        start_d = date.fromisoformat(start)
+        end_d = date.fromisoformat(end)
+    except ValueError as e:
+        raise HTTPException(422, f"日期格式错误 (应为 YYYY-MM-DD): {e}") from e
+
+    from app.services.ext_pull import backfill_history
+
+    try:
+        result = await backfill_history(config, _data_dir(request), start_d, end_d)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    _refresh_views(request)
+    return {"status": "ok", **result}
 
 
 # ---------------------------------------------------------------------------
@@ -708,9 +815,7 @@ async def detect_fields(
     tmp_dir = Path(tempfile.mkdtemp())
     tmp_path = tmp_dir / f"upload{suffix}"
     try:
-        with tmp_path.open("wb") as f:
-            content = await file.read()
-            f.write(content)
+        await _write_upload_capped(file, tmp_path, _MAX_UPLOAD_BYTES)
 
         # 直接读取，不要求 symbol 列
         if suffix == ".csv":
@@ -868,3 +973,9 @@ def _refresh_views(request: Request) -> None:
                     db.execute(sql)
             except Exception:
                 pass
+
+    # 扩展列已接入 enriched 帧 (compute_signals/compute_enriched_today 注入):
+    # repo 内存 enriched 缓存 (_enriched_cache/_etf_/_index_) 持有含旧扩展列的
+    # 帧, 必须一并清理, 否则写入后监控/列表仍用旧值 (服务层已清扩展帧与策略缓存)。
+    if hasattr(repo, "clear_cache"):
+        repo.clear_cache()

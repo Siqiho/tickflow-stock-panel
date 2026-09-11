@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from app.config import settings
+from pathlib import Path
+
+import polars as pl
+
 from app.services.financial_normalize import (
     local_financials_ready,
     normalize_financial_record,
@@ -59,8 +62,14 @@ def test_cash_and_metrics_aliases():
     assert m["net_income_yoy"] == 8.0
 
 
-def test_local_ready_and_rows():
-    assert local_financials_ready(settings.data_dir) is True
+def test_local_ready_and_rows(tmp_path: Path):
+    financials_dir = tmp_path / "financials" / "metrics"
+    financials_dir.mkdir(parents=True)
+    pl.DataFrame({"symbol": ["600519.SH"]}).write_parquet(
+        financials_dir / "part.parquet"
+    )
+
+    assert local_financials_ready(tmp_path) is True
     rows = normalize_financial_rows(
         "balance_sheet",
         [{"monetary_funds": 9.0, "total_assets": 100.0, "period_end": "2025-12-31"}],

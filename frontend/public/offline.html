@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>one-trading · 连接失败</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        color: #f4f4f5;
+        background: #0a0a0b;
+      }
+      main { width: min(420px, 100%); text-align: center; }
+      .mark {
+        width: 72px;
+        height: 72px;
+        margin: 0 auto 24px;
+        display: grid;
+        place-items: center;
+        border: 1px solid #27272a;
+        border-radius: 20px;
+        color: #a78bfa;
+        font: 700 32px/1 ui-monospace, monospace;
+      }
+      h1 { margin: 0 0 12px; font-size: 22px; }
+      p { margin: 0 0 24px; color: #a1a1aa; line-height: 1.65; }
+      .actions { display: grid; gap: 12px; }
+      button {
+        width: 100%;
+        padding: 13px 18px;
+        border: 1px solid transparent;
+        border-radius: 12px;
+        color: white;
+        background: #7c3aed;
+        font: inherit;
+        font-weight: 650;
+      }
+      button.secondary {
+        border-color: #3f3f46;
+        background: #18181b;
+      }
+      button:disabled { cursor: wait; opacity: 0.65; }
+      .hint { margin: 16px 0 0; font-size: 13px; }
+      .status { min-height: 22px; margin: 12px 0 0; color: #c4b5fd; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark">[▮]</div>
+      <h1>暂时无法连接私人服务器</h1>
+      <p>请检查网络后重试主线路，或手动使用备用线路。你的行情数据与账户状态仍保存在服务器上。</p>
+      <div class="actions">
+        <button type="button" data-endpoint="https://one-trading-private-simon.zeabur.app" data-label="主线路">
+          重试主线路
+        </button>
+        <button
+          class="secondary"
+          type="button"
+          data-endpoint="https://one-trading-backup.siqiho.workers.dev"
+          data-label="备用线路"
+        >
+          使用备用线路
+        </button>
+      </div>
+      <p class="hint">备用线路使用独立域名，首次切换时可能需要重新登录。</p>
+      <p class="status" role="status" aria-live="polite"></p>
+    </main>
+    <script>
+      (() => {
+        const allowedEndpoints = new Set([
+          'https://one-trading-private-simon.zeabur.app',
+          'https://one-trading-backup.siqiho.workers.dev',
+        ])
+        const status = document.querySelector('.status')
+
+        document.querySelectorAll('button[data-endpoint]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const endpoint = button.dataset.endpoint
+            if (!endpoint || !allowedEndpoints.has(endpoint)) return
+
+            document.querySelectorAll('button[data-endpoint]').forEach((item) => {
+              item.disabled = true
+            })
+            status.textContent = `正在连接${button.dataset.label}…`
+            window.location.replace(endpoint)
+          })
+        })
+      })()
+    </script>
+  </body>
+</html>

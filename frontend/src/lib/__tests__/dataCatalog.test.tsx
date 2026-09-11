@@ -107,12 +107,14 @@ describe('data catalog client', () => {
     await api.rescanDataCatalog('daily / stock')
     await api.dataCatalogRuns()
     await api.dataCatalogRuns('daily / stock')
+    await api.dataControlSummary()
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       '/api/data/catalog/rescan',
       '/api/data/catalog/rescan?dataset_id=daily%20%2F%20stock',
       '/api/data/runs',
       '/api/data/runs?dataset_id=daily%20%2F%20stock',
+      '/api/data/control-summary',
     ])
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'POST' })
     expect(fetchMock.mock.calls[0][1]?.body).toBeUndefined()

@@ -1,0 +1,230 @@
+{
+  "5": {
+    "http_status": 200,
+    "start": "2026-09-03",
+    "end": "2026-09-09",
+    "window_complete": true,
+    "full_count": 128,
+    "covered_count": 128,
+    "calendar_covers": true,
+    "freshness_status": "fresh",
+    "freshness_note": "足够新",
+    "expected_trading_day": "2026-09-09",
+    "http_match_aggregate": true,
+    "http_match_parquet": true,
+    "items": [
+      {
+        "code": "BK0448",
+        "name": "通信设备",
+        "main_net": 17973387520.0
+      },
+      {
+        "code": "BK0459",
+        "name": "元件",
+        "main_net": 15576527104.0
+      },
+      {
+        "code": "BK1287",
+        "name": "工业金属",
+        "main_net": 3117584992.0
+      },
+      {
+        "code": "BK1034",
+        "name": "其他电源设备Ⅱ",
+        "main_net": 2514179440.0
+      },
+      {
+        "code": "BK0450",
+        "name": "航运港口",
+        "main_net": 2240672400.0
+      },
+      {
+        "code": "BK1230",
+        "name": "航海装备Ⅱ",
+        "main_net": 2049476656.0
+      },
+      {
+        "code": "BK1036",
+        "name": "半导体",
+        "main_net": -19208416512.0
+      },
+      {
+        "code": "BK0735",
+        "name": "计算机设备",
+        "main_net": -9211827936.0
+      },
+      {
+        "code": "BK1238",
+        "name": "IT服务Ⅱ",
+        "main_net": -7572815536.0
+      },
+      {
+        "code": "BK1037",
+        "name": "消费电子",
+        "main_net": -4017224960.0
+      },
+      {
+        "code": "BK0475",
+        "name": "银行Ⅱ",
+        "main_net": -3909425648.0
+      },
+      {
+        "code": "BK1033",
+        "name": "电池",
+        "main_net": -3457187184.0
+      }
+    ]
+  },
+  "63": {
+    "http_status": 200,
+    "start": "2026-06-12",
+    "end": "2026-09-09",
+    "window_complete": true,
+    "full_count": 128,
+    "covered_count": 128,
+    "calendar_covers": true,
+    "freshness_status": "fresh",
+    "freshness_note": "足够新",
+    "expected_trading_day": "2026-09-09",
+    "http_match_aggregate": true,
+    "http_match_parquet": true,
+    "items": [
+      {
+        "code": "BK1261",
+        "name": "种植业",
+        "main_net": 1894485435.0
+      },
+      {
+        "code": "BK1274",
+        "name": "炼化及贸易",
+        "main_net": 809858592.0
+      },
+      {
+        "code": "BK0732",
+        "name": "贵金属",
+        "main_net": 544161888.0
+      },
+      {
+        "code": "BK1249",
+        "name": "焦炭Ⅱ",
+        "main_net": 381443909.0
+      },
+      {
+        "code": "BK1045",
+        "name": "房地产服务",
+        "main_net": 294560014.0
+      },
+      {
+        "code": "BK1260",
+        "name": "渔业",
+        "main_net": 77359340.0
+      },
+      {
+        "code": "BK1036",
+        "name": "半导体",
+        "main_net": -326656155904.0
+      },
+      {
+        "code": "BK0448",
+        "name": "通信设备",
+        "main_net": -202361614848.0
+      },
+      {
+        "code": "BK0459",
+        "name": "元件",
+        "main_net": -82674570496.0
+      },
+      {
+        "code": "BK1038",
+        "name": "光学光电子",
+        "main_net": -78687308656.0
+      },
+      {
+        "code": "BK1033",
+        "name": "电池",
+        "main_net": -78215373360.0
+      },
+      {
+        "code": "BK1037",
+        "name": "消费电子",
+        "main_net": -71203759872.0
+      }
+    ]
+  },
+  "126": {
+    "http_status": 200,
+    "start": "2026-03-11",
+    "end": "2026-09-09",
+    "window_complete": true,
+    "full_count": 128,
+    "covered_count": 128,
+    "calendar_covers": true,
+    "freshness_status": "fresh",
+    "freshness_note": "足够新",
+    "expected_trading_day": "2026-09-09",
+    "http_match_aggregate": true,
+    "http_match_parquet": true,
+    "items": [
+      {
+        "code": "BK1257",
+        "name": "农业综合Ⅱ",
+        "main_net": -267410972.0
+      },
+      {
+        "code": "BK1016",
+        "name": "汽车服务",
+        "main_net": -317133983.0
+      },
+      {
+        "code": "BK1243",
+        "name": "其他家电Ⅱ",
+        "main_net": -502250496.0
+      },
+      {
+        "code": "BK1240",
+        "name": "厨卫电器",
+        "main_net": -662833388.0
+      },
+      {
+        "code": "BK1260",
+        "name": "渔业",
+        "main_net": -883386528.0
+      },
+      {
+        "code": "BK1045",
+        "name": "房地产服务",
+        "main_net": -907915952.0
+      },
+      {
+        "code": "BK1036",
+        "name": "半导体",
+        "main_net": -571916437504.0
+      },
+      {
+        "code": "BK0448",
+        "name": "通信设备",
+        "main_net": -361398154752.0
+      },
+      {
+        "code": "BK1033",
+        "name": "电池",
+        "main_net": -212084098096.0
+      },
+      {
+        "code": "BK0459",
+        "name": "元件",
+        "main_net": -161657199616.0
+      },
+      {
+        "code": "BK1238",
+        "name": "IT服务Ⅱ",
+        "main_net": -152166224624.0
+      },
+      {
+        "code": "BK0457",
+        "name": "电网设备",
+        "main_net": -149333791584.0
+      }
+    ]
+  }
+}

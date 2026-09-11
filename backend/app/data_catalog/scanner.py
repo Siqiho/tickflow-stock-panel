@@ -27,25 +27,28 @@ from .models import (
 
 _MARKETS = ("SH", "SZ", "BJ", "OTHER")
 _MAX_SCAN_ERRORS = 20
+_FILE_CHANGED = "file changed during scan"
+_PARQUET_READ_ATTEMPTS = 3
 _OPERATIONAL_CATEGORIES = {
-    "lineage": "Lineage",
-    "job_store": "Job store",
-    "logs": "Logs",
-    "user_data": "User data",
-    "control": "SQLite control files",
-    "operational_other": "Other operational files",
+    "lineage": "血缘",
+    "job_store": "任务库",
+    "logs": "日志",
+    "user_data": "用户数据",
+    "control": "控制库",
+    "operational_other": "其他运行文件",
 }
 _MANAGED_TITLES = {
-    "stocks": "Stocks",
-    "etfs": "ETFs",
-    "indices": "Indices",
-    "quote_snapshot": "Quote snapshot",
-    "sealed_l1": "Sealed L1",
-    "depth5": "True depth5",
-    "pools": "Pools",
-    "financials": "Financials",
-    "ext_data": "External data",
-    "reference": "Reference data",
+    "stocks": "股票",
+    "etfs": "ETF",
+    "indices": "指数",
+    "quote_snapshot": "行情快照",
+    "sealed_l1": "封板 L1",
+    "depth5": "五档盘口",
+    "pools": "股票池",
+    "financials": "财务",
+    "f10": "股票 F10",
+    "ext_data": "扩展数据",
+    "reference": "参考数据",
 }
 
 
@@ -218,19 +221,7 @@ class CatalogScanner:
                     relative = PurePosixPath(path.relative_to(self.data_dir).as_posix())
                 except ValueError as error:
                     raise ValueError(f"scan root is outside data_dir: {root}") from error
-                files.append(
-                    _FileSnapshot(
-                        path=path,
-                        relative=relative,
-                        bytes=file_stat.st_size,
-                        published_at=datetime.fromtimestamp(file_stat.st_mtime, UTC)
-                        .isoformat()
-                        .replace("+00:00", "Z"),
-                        device=file_stat.st_dev,
-                        inode=file_stat.st_ino,
-                        mtime_ns=file_stat.st_mtime_ns,
-                    )
-                )
+                files.append(self._file_snapshot(path, relative, file_stat))
         return tuple(files)
 
     def _is_safe_directory(self, path: Path) -> bool:
@@ -256,20 +247,24 @@ class CatalogScanner:
         file: _FileSnapshot,
         fact_cache: dict[Path, _ParquetFacts | Exception],
     ) -> str | None:
-        matches: list[DatasetDefinition] = []
+        scored: list[tuple[int, DatasetDefinition]] = []
         for definition in self.definitions:
-            if any(
-                _has_path_prefix(file.relative.parts, PurePosixPath(root).parts)
-                for root in definition.roots
-            ):
-                matches.append(definition)
-        if not matches:
+            matching_len = 0
+            for root in definition.roots:
+                parts = PurePosixPath(root).parts
+                if _has_path_prefix(file.relative.parts, parts):
+                    matching_len = max(matching_len, len(parts))
+            if matching_len:
+                scored.append((matching_len, definition))
+        if not scored:
             return None
-        if len(matches) == 1:
-            return matches[0].descriptor.dataset_id
-        if {item.descriptor.dataset_id for item in matches} != {"sealed_l1", "depth5"}:
-            raise RuntimeError(f"ambiguous dataset ownership: {file.relative.as_posix()}")
-        return "depth5" if self._has_true_depth_schema(file, fact_cache) else "sealed_l1"
+        longest = max(length for length, _definition in scored)
+        winners = [definition for length, definition in scored if length == longest]
+        if len(winners) == 1:
+            return winners[0].descriptor.dataset_id
+        if {item.descriptor.dataset_id for item in winners} == {"sealed_l1", "depth5"}:
+            return "depth5" if self._has_true_depth_schema(file, fact_cache) else "sealed_l1"
+        raise RuntimeError(f"ambiguous dataset ownership: {file.relative.as_posix()}")
 
     def _has_true_depth_schema(
         self,
@@ -355,10 +350,11 @@ class CatalogScanner:
         fatal_errors.extend(lineage_errors)
         artifact_paths = {artifact.path for artifact in artifacts}
         lineage = tuple(item for item in lineage if item.artifact_path in artifact_paths)
+        current_lineage = self._current_artifact_lineage(tuple(artifacts), lineage)
         unit_version, unit_errors, unit_failed = self._admit_units(
             definition,
             tuple(artifacts),
-            lineage,
+            current_lineage,
         )
         errors.extend(fatal_errors)
         errors.extend(unit_errors)
@@ -366,7 +362,7 @@ class CatalogScanner:
         coverage = self._coverage(symbols, expected_by_market)
         quality_status = self._quality_status(
             bool(artifacts),
-            lineage,
+            current_lineage,
             has_fatal_errors=bool(fatal_errors) or unit_failed,
             units_verified=(definition.unit_policy == "reference" or not unit_errors),
         )
@@ -430,44 +426,79 @@ class CatalogScanner:
             }
             if required <= set(cached.columns) or not required:
                 return cached
-        try:
-            with file.path.open("rb") as handle:
-                before = os.fstat(handle.fileno())
-                self._assert_same_file(file, before)
-                parquet = pq.ParquetFile(handle)
-                schema = parquet.schema_arrow
-                columns = tuple(schema.names)
-                requested = (
-                    definition.symbol_column,
-                    definition.time_column,
-                    "name",
+        current = file
+        last_error: Exception | None = None
+        for _attempt in range(_PARQUET_READ_ATTEMPTS):
+            try:
+                with current.path.open("rb") as handle:
+                    before = os.fstat(handle.fileno())
+                    self._assert_same_file(current, before)
+                    parquet = pq.ParquetFile(handle)
+                    schema = parquet.schema_arrow
+                    columns = tuple(schema.names)
+                    requested = (
+                        definition.symbol_column,
+                        definition.time_column,
+                        "name",
+                    )
+                    selected = [column for column in requested if column and column in columns]
+                    table = parquet.read(columns=list(dict.fromkeys(selected))) if selected else None
+                    row_count = parquet.metadata.num_rows
+                    handle.seek(0)
+                    digest = _sha256_handle(handle)
+                    after = os.fstat(handle.fileno())
+                    self._assert_same_file(current, after)
+                    latest = current.path.stat(follow_symlinks=False)
+                    self._assert_same_file(current, latest)
+                symbols = _column_strings(table, definition.symbol_column)
+                times = _column_strings(table, definition.time_column)
+                names = _column_strings(table, "name")
+                facts = _ParquetFacts(
+                    columns=columns,
+                    schema=schema,
+                    row_count=row_count,
+                    symbols=tuple(symbols),
+                    times=tuple(times),
+                    named_count=sum(bool(value.strip()) for value in names),
+                    sha256=digest,
                 )
-                selected = [column for column in requested if column and column in columns]
-                table = parquet.read(columns=list(dict.fromkeys(selected))) if selected else None
-                row_count = parquet.metadata.num_rows
-                handle.seek(0)
-                digest = _sha256_handle(handle)
-                after = os.fstat(handle.fileno())
-                self._assert_same_file(file, after)
-                current = file.path.stat(follow_symlinks=False)
-                self._assert_same_file(file, current)
-            symbols = _column_strings(table, definition.symbol_column)
-            times = _column_strings(table, definition.time_column)
-            names = _column_strings(table, "name")
-            facts = _ParquetFacts(
-                columns=columns,
-                schema=schema,
-                row_count=row_count,
-                symbols=tuple(symbols),
-                times=tuple(times),
-                named_count=sum(bool(value.strip()) for value in names),
-                sha256=digest,
-            )
-            cache[file.path] = facts
-            return facts
-        except (OSError, pa.ArrowException, ValueError) as error:
-            cache[file.path] = error
-            return error
+                cache[file.path] = facts
+                return facts
+            except (OSError, pa.ArrowException, ValueError) as error:
+                last_error = error
+                if _is_file_changed(error):
+                    refreshed = self._refresh_file_snapshot(current)
+                    if refreshed is not None:
+                        current = refreshed
+                        continue
+                cache[file.path] = error
+                return error
+        assert last_error is not None
+        cache[file.path] = last_error
+        return last_error
+
+    @staticmethod
+    def _file_snapshot(path: Path, relative: PurePosixPath, file_stat: os.stat_result) -> _FileSnapshot:
+        return _FileSnapshot(
+            path=path,
+            relative=relative,
+            bytes=file_stat.st_size,
+            published_at=datetime.fromtimestamp(file_stat.st_mtime, UTC)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            device=file_stat.st_dev,
+            inode=file_stat.st_ino,
+            mtime_ns=file_stat.st_mtime_ns,
+        )
+
+    def _refresh_file_snapshot(self, file: _FileSnapshot) -> _FileSnapshot | None:
+        try:
+            file_stat = file.path.stat(follow_symlinks=False)
+        except OSError:
+            return None
+        if not stat.S_ISREG(file_stat.st_mode):
+            return None
+        return self._file_snapshot(file.path, file.relative, file_stat)
 
     @staticmethod
     def _assert_same_file(file: _FileSnapshot, observed: os.stat_result) -> None:
@@ -479,7 +510,7 @@ class CatalogScanner:
         )
         expected = (file.device, file.inode, file.bytes, file.mtime_ns)
         if identity != expected:
-            raise OSError("file changed during scan")
+            raise OSError(_FILE_CHANGED)
 
     @staticmethod
     def _schema_error(
@@ -595,6 +626,43 @@ class CatalogScanner:
         )
         return tuple(summaries), errors
 
+    @staticmethod
+    def _current_artifact_lineage(
+        artifacts: tuple[ArtifactRecord, ...],
+        lineage: tuple[LineageSummary, ...],
+    ) -> tuple[LineageSummary, ...]:
+        """Choose the lineage record that describes each current artifact.
+
+        Several datasets publish by atomically replacing one stable path. Their
+        lineage history therefore contains records for older byte/row versions
+        of the same path. Unit admission must not let those superseded records
+        invalidate the current file. Prefer an exact current row-count match;
+        fall back only to legacy records that predate row-count capture.
+        """
+        by_artifact: dict[str, list[LineageSummary]] = {}
+        for summary in lineage:
+            if summary.artifact_path is not None:
+                by_artifact.setdefault(summary.artifact_path, []).append(summary)
+
+        selected: list[LineageSummary] = []
+        for artifact in artifacts:
+            candidates = by_artifact.get(artifact.path, [])
+            exact = [item for item in candidates if item.row_count == artifact.row_count]
+            legacy = [item for item in candidates if item.row_count is None]
+            current = exact or legacy
+            if not current:
+                continue
+            selected.append(max(current, key=_lineage_recency_key))
+        return tuple(
+            sorted(
+                selected,
+                key=lambda item: (
+                    item.artifact_path or "",
+                    _lineage_recency_key(item),
+                ),
+            )
+        )
+
     def _lineage_ids(self, definition: DatasetDefinition) -> tuple[str, ...]:
         return tuple(
             dict.fromkeys(
@@ -661,6 +729,9 @@ class CatalogScanner:
         updated: dict[str, DatasetScanResult] = {}
         for dataset_id, result in results.items():
             definition = self._by_id[dataset_id]
+            if definition.coverage_policy == "on_demand":
+                updated[dataset_id] = result
+                continue
             asset_types = definition.descriptor.asset_types
             expected_by_market = expected.get(asset_types[0]) if len(asset_types) == 1 else None
             if expected_by_market is None:
@@ -706,7 +777,7 @@ class CatalogScanner:
     ) -> str:
         if has_fatal_errors:
             return "failed"
-        statuses = {item.quality_status for item in lineage}
+        statuses = {_current_quality_word(item.quality_status, item.source) for item in lineage}
         if "failed" in statuses:
             return "failed"
         if "degraded" in statuses:
@@ -802,6 +873,18 @@ def _calendar_day(value: str) -> str:
     return value[:10]
 
 
+def _lineage_recency_key(item: LineageSummary) -> tuple[datetime, str, str]:
+    value = item.fetched_at
+    try:
+        stamp = datetime.fromisoformat((value or "").replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        stamp = stamp.astimezone(UTC)
+    except (TypeError, ValueError):
+        stamp = datetime.min.replace(tzinfo=UTC)
+    return stamp, item.run_id or "", item.source
+
+
 def _quality_word(value: Any) -> str:
     text = str(value or "").strip().lower()
     if "fail" in text or "error" in text:
@@ -810,7 +893,20 @@ def _quality_word(value: Any) -> str:
         return "degraded"
     if text in {"healthy", "pass", "passed", "success", "succeeded"}:
         return "healthy"
+    if text in {"pending_gate", "pending"}:
+        return "unknown"
     return "unknown"
+
+
+def _current_quality_word(value: Any, source: str | None = None) -> str:
+    """Map a currently selected lineage record to dataset-level quality."""
+    raw = str(value or "").strip().lower()
+    src = str(source or "").strip().lower()
+    if raw in {"pending_gate", "pending"}:
+        return "healthy"
+    if src == "legacy_local_artifact" and raw in {"degraded", "unknown", ""}:
+        return "healthy"
+    return _quality_word(value)
 
 
 def _optional_text(value: Any) -> str | None:
@@ -827,6 +923,10 @@ def _optional_nonnegative_int(value: Any) -> int | None:
         return max(0, int(value))
     except (TypeError, ValueError):
         return None
+
+
+def _is_file_changed(error: Exception) -> bool:
+    return isinstance(error, OSError) and _FILE_CHANGED in str(error)
 
 
 def _utc_now() -> str:

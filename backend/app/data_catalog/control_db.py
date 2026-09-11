@@ -12,7 +12,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .models import ArtifactRecord, DatasetState, SourceHealth, SyncRun
+from .models import (
+    ArtifactRecord,
+    DatasetControlPolicy,
+    DatasetState,
+    QueryAuditRecord,
+    SourceHealth,
+    SyncCheckpoint,
+    SyncRun,
+)
 
 _MIGRATION_PATTERN = re.compile(r"^(?P<version>\d+)_.*\.sql$")
 _MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -310,6 +318,103 @@ class CatalogControlDB:
             for row in self._read_all("SELECT * FROM source_health ORDER BY provider, operation")
         ]
 
+    def read_source_health(self) -> list[SourceHealth]:
+        """Read source health without initializing or migrating the control database."""
+        return [
+            self._source_health_from_row(row)
+            for row in self._read_optional_all(
+                "source_health",
+                "SELECT * FROM source_health ORDER BY provider, operation",
+            )
+        ]
+
+    def read_meta(self, key: str) -> dict[str, Any] | None:
+        """Read one catalog meta value without initializing the control database."""
+        rows = self._read_optional_all(
+            "catalog_meta",
+            "SELECT value_json FROM catalog_meta WHERE key = ?",
+            (key,),
+        )
+        return self._json_object(rows[0]["value_json"]) if rows else None
+
+    def has_dataset_states_readonly(self) -> bool:
+        """Check snapshot presence without initializing the control database."""
+        return bool(
+            self._read_optional_all(
+                "dataset_state",
+                "SELECT 1 FROM dataset_state LIMIT 1",
+            )
+        )
+
+    def list_dataset_policies(self) -> list[DatasetControlPolicy]:
+        rows = self._read_optional_all(
+            "dataset_policies",
+            """
+            SELECT dataset_id, phase, max_lag_trading_days, sync_mode, schedule_cron,
+                   supports_backfill, supports_repair, updated_at
+            FROM dataset_policies ORDER BY dataset_id
+            """,
+        )
+        return [
+            DatasetControlPolicy(
+                dataset_id=row["dataset_id"],
+                phase=row["phase"],
+                max_lag_trading_days=row["max_lag_trading_days"],
+                sync_mode=row["sync_mode"],
+                schedule_cron=row["schedule_cron"],
+                supports_backfill=bool(row["supports_backfill"]),
+                supports_repair=bool(row["supports_repair"]),
+                updated_at=row["updated_at"],
+            )
+            for row in rows
+        ]
+
+    def list_sync_checkpoints(self) -> list[SyncCheckpoint]:
+        rows = self._read_optional_all(
+            "sync_checkpoints",
+            """
+            SELECT dataset_id, scope, watermark, updated_at, cursor_json, last_success_run_id
+            FROM sync_checkpoints ORDER BY dataset_id, scope
+            """,
+        )
+        return [
+            SyncCheckpoint(
+                dataset_id=row["dataset_id"],
+                scope=row["scope"],
+                watermark=row["watermark"],
+                updated_at=row["updated_at"],
+                cursor=self._json_object(row["cursor_json"]),
+                last_success_run_id=row["last_success_run_id"],
+            )
+            for row in rows
+        ]
+
+    def list_query_audits(self, limit: int = 100) -> list[QueryAuditRecord]:
+        bounded_limit = min(max(limit, 1), 1000)
+        rows = self._read_optional_all(
+            "agent_query_audit",
+            """
+            SELECT audit_id, created_at, dataset_id, tool_name, row_count, duration_ms,
+                   status, error_code
+            FROM agent_query_audit
+            ORDER BY created_at DESC, audit_id ASC LIMIT ?
+            """,
+            (bounded_limit,),
+        )
+        return [
+            QueryAuditRecord(
+                audit_id=row["audit_id"],
+                created_at=row["created_at"],
+                dataset_id=row["dataset_id"],
+                tool_name=row["tool_name"] or None,
+                row_count=row["row_count"],
+                duration_ms=row["duration_ms"],
+                status=row["status"],
+                error_code=row["error_code"],
+            )
+            for row in rows
+        ]
+
     def set_meta(self, key: str, value: dict[str, Any]) -> None:
         with self.transaction() as connection:
             connection.execute(
@@ -512,9 +617,52 @@ class CatalogControlDB:
         finally:
             connection.close()
 
+    def _read_optional_all(
+        self,
+        table_name: str,
+        query: str,
+        values: Sequence[Any] = (),
+    ) -> list[sqlite3.Row]:
+        """Read historical optional tables without creating or migrating a database."""
+        if not self.path.is_file():
+            return []
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(
+                f"{self.path.resolve().as_uri()}?mode=ro",
+                uri=True,
+                isolation_level=None,
+                timeout=5.0,
+            )
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA query_only = ON")
+            connection.execute("PRAGMA busy_timeout = 5000")
+            exists = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table_name,),
+            ).fetchone()
+            if exists is None:
+                return []
+            return connection.execute(query, values).fetchall()
+        except (OSError, sqlite3.DatabaseError):
+            return []
+        finally:
+            if connection is not None:
+                connection.close()
+
     @staticmethod
     def _json_dumps(value: dict[str, Any]) -> str:
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+    @staticmethod
+    def _json_object(value: str | None) -> dict[str, Any]:
+        if not value:
+            return {}
+        try:
+            parsed = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     @staticmethod
     def _utc_now() -> str:

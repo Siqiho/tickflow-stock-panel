@@ -1,0 +1,1305 @@
+{
+  "audit": {
+    "dataset": "5_technical_derived/valuation",
+    "historical_inventory": {
+      "as_of": "2026-09-06",
+      "cited_from": "/Users/simon/Trading/下载数据/stockdb_quantdb_integration_review_20260906/package_sanity.json",
+      "note": "Market-wide coverage is the 2026-09-06 inventory only. This round reads four by-symbol files and does not rescan the 80G packages.",
+      "this_round_full_market_scan": false,
+      "valuation_by_symbol": {
+        "bytes": 694488966,
+        "empty_files": 0,
+        "files": 5554,
+        "physical_rows": 10770127,
+        "time_max_native": "2026-08-27 00:00:00",
+        "time_min_native": "2016-01-04 00:00:00"
+      }
+    },
+    "layout": "by_symbol",
+    "mode": "audit",
+    "ok": true,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "reconcile": {
+      "common_keys": 36,
+      "comparable_fields": {
+        "close": {
+          "both_null": 0,
+          "both_present": 36,
+          "differ_when_both_present": 0,
+          "equal_when_both_present": 36,
+          "examples": [],
+          "null_equals_value": false,
+          "null_filled_with_zero": false,
+          "package_present_project_null": 0,
+          "project_present_package_null": 0
+        },
+        "float_mv": {
+          "both_null": 0,
+          "both_present": 0,
+          "differ_when_both_present": 0,
+          "equal_when_both_present": 0,
+          "examples": [],
+          "null_equals_value": false,
+          "null_filled_with_zero": false,
+          "package_present_project_null": 36,
+          "project_present_package_null": 0
+        },
+        "float_share": {
+          "both_null": 0,
+          "both_present": 0,
+          "differ_when_both_present": 0,
+          "equal_when_both_present": 0,
+          "examples": [],
+          "null_equals_value": false,
+          "null_filled_with_zero": false,
+          "package_present_project_null": 36,
+          "project_present_package_null": 0
+        },
+        "pb": {
+          "both_null": 0,
+          "both_present": 0,
+          "differ_when_both_present": 0,
+          "equal_when_both_present": 0,
+          "examples": [],
+          "null_equals_value": false,
+          "null_filled_with_zero": false,
+          "package_present_project_null": 36,
+          "project_present_package_null": 0
+        },
+        "pe_ttm": {
+          "both_null": 0,
+          "both_present": 0,
+          "differ_when_both_present": 0,
+          "equal_when_both_present": 0,
+          "examples": [],
+          "null_equals_value": false,
+          "null_filled_with_zero": false,
+          "package_present_project_null": 36,
+          "project_present_package_null": 0
+        },
+        "ps_ttm": {
+          "both_null": 0,
+          "both_present": 0,
+          "differ_when_both_present": 0,
+          "equal_when_both_present": 0,
+          "examples": [],
+          "null_equals_value": false,
+          "null_filled_with_zero": false,
+          "package_present_project_null": 36,
+          "project_present_package_null": 0
+        },
+        "total_mv": {
+          "both_null": 0,
+          "both_present": 0,
+          "differ_when_both_present": 0,
+          "equal_when_both_present": 0,
+          "examples": [],
+          "null_equals_value": false,
+          "null_filled_with_zero": false,
+          "package_present_project_null": 36,
+          "project_present_package_null": 0
+        },
+        "total_share": {
+          "both_null": 0,
+          "both_present": 0,
+          "differ_when_both_present": 0,
+          "equal_when_both_present": 0,
+          "examples": [],
+          "null_equals_value": false,
+          "null_filled_with_zero": false,
+          "package_present_project_null": 36,
+          "project_present_package_null": 0
+        }
+      },
+      "join_boundary": {
+        "direct_concat": false,
+        "pit_verified": false,
+        "side_by_side_only": true,
+        "two_source_agreement_is_market_truth": false
+      },
+      "overlay": {
+        "default_overlay": false,
+        "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+        "preclose_candidates_loaded": false,
+        "project_null_overlay": false,
+        "stockdb_repair_loaded": false
+      },
+      "package_keys": 68,
+      "package_only_keys": [
+        {
+          "date": "2026-08-03",
+          "symbol": "000001.SZ"
+        },
+        {
+          "date": "2026-08-04",
+          "symbol": "000001.SZ"
+        },
+        {
+          "date": "2026-08-05",
+          "symbol": "000001.SZ"
+        },
+        {
+          "date": "2026-08-06",
+          "symbol": "000001.SZ"
+        },
+        {
+          "date": "2026-08-07",
+          "symbol": "000001.SZ"
+        },
+        {
+          "date": "2026-08-10",
+          "symbol": "000001.SZ"
+        },
+        {
+          "date": "2026-08-11",
+          "symbol": "000001.SZ"
+        },
+        {
+          "date": "2026-08-12",
+          "symbol": "000001.SZ"
+        },
+        {
+          "date": "2026-08-03",
+          "symbol": "000338.SZ"
+        },
+        {
+          "date": "2026-08-04",
+          "symbol": "000338.SZ"
+        },
+        {
+          "date": "2026-08-05",
+          "symbol": "000338.SZ"
+        },
+        {
+          "date": "2026-08-06",
+          "symbol": "000338.SZ"
+        },
+        {
+          "date": "2026-08-07",
+          "symbol": "000338.SZ"
+        },
+        {
+          "date": "2026-08-10",
+          "symbol": "000338.SZ"
+        },
+        {
+          "date": "2026-08-11",
+          "symbol": "000338.SZ"
+        },
+        {
+          "date": "2026-08-12",
+          "symbol": "000338.SZ"
+        },
+        {
+          "date": "2026-08-03",
+          "symbol": "300750.SZ"
+        },
+        {
+          "date": "2026-08-04",
+          "symbol": "300750.SZ"
+        },
+        {
+          "date": "2026-08-05",
+          "symbol": "300750.SZ"
+        },
+        {
+          "date": "2026-08-06",
+          "symbol": "300750.SZ"
+        },
+        {
+          "date": "2026-08-07",
+          "symbol": "300750.SZ"
+        },
+        {
+          "date": "2026-08-10",
+          "symbol": "300750.SZ"
+        },
+        {
+          "date": "2026-08-11",
+          "symbol": "300750.SZ"
+        },
+        {
+          "date": "2026-08-12",
+          "symbol": "300750.SZ"
+        },
+        {
+          "date": "2026-08-03",
+          "symbol": "600519.SH"
+        },
+        {
+          "date": "2026-08-04",
+          "symbol": "600519.SH"
+        },
+        {
+          "date": "2026-08-05",
+          "symbol": "600519.SH"
+        },
+        {
+          "date": "2026-08-06",
+          "symbol": "600519.SH"
+        },
+        {
+          "date": "2026-08-07",
+          "symbol": "600519.SH"
+        },
+        {
+          "date": "2026-08-10",
+          "symbol": "600519.SH"
+        },
+        {
+          "date": "2026-08-11",
+          "symbol": "600519.SH"
+        },
+        {
+          "date": "2026-08-12",
+          "symbol": "600519.SH"
+        }
+      ],
+      "project_keys": 36,
+      "project_null_policy": "valuation_daily_v2 PE/PB/PS/PCF stay null without an admitted historical feed; market value is close * PIT-safe shares only. Observed project rows for these four symbols have pe/pb/ps/mv/shares null and shares_pit_safe=false. Null is not equal to a package value and is not filled with 0. Project null is not overlaid onto the package.",
+      "project_only_keys": [],
+      "sample_originals": {
+        "package": [
+          {
+            "close": 10.84,
+            "date": "2026-07-21",
+            "float_mv": 210356711078.52,
+            "float_share": 19405600653.0,
+            "pb": 0.3866324683298688,
+            "pe_ttm": 4.885279917935904,
+            "ps_ttm": 1.5815363752072777,
+            "symbol": "000001.SZ",
+            "total_mv": 210360153266.32,
+            "total_share": 19405918198.0
+          },
+          {
+            "close": 10.98,
+            "date": "2026-07-22",
+            "float_mv": 213073495169.94,
+            "float_share": 19405600653.0,
+            "pb": 0.3916258765924317,
+            "pe_ttm": 4.948373939016257,
+            "ps_ttm": 1.601962121750545,
+            "symbol": "000001.SZ",
+            "total_mv": 213076981814.04,
+            "total_share": 19405918198.0
+          },
+          {
+            "close": 11.08,
+            "date": "2026-07-23",
+            "float_mv": 215014055235.24,
+            "float_share": 19405600653.0,
+            "pb": 0.3951925967799766,
+            "pe_ttm": 4.993441096930794,
+            "ps_ttm": 1.6165519407100217,
+            "symbol": "000001.SZ",
+            "total_mv": 215017573633.84,
+            "total_share": 19405918198.0
+          },
+          {
+            "close": 11.1,
+            "date": "2026-07-24",
+            "float_mv": 215402167248.3,
+            "float_share": 19405600653.0,
+            "pb": 0.39590594081748554,
+            "pe_ttm": 5.002454528513701,
+            "ps_ttm": 1.619469904501917,
+            "symbol": "000001.SZ",
+            "total_mv": 215405691997.8,
+            "total_share": 19405918198.0
+          }
+        ],
+        "project": [
+          {
+            "close": 10.84,
+            "date": "2026-07-21",
+            "float_mv": null,
+            "float_share": null,
+            "pb": null,
+            "pe_ttm": null,
+            "ps_ttm": null,
+            "shares_pit_safe": false,
+            "symbol": "000001.SZ",
+            "total_mv": null,
+            "total_share": null,
+            "unit_version": "valuation_daily_v2"
+          },
+          {
+            "close": 10.98,
+            "date": "2026-07-22",
+            "float_mv": null,
+            "float_share": null,
+            "pb": null,
+            "pe_ttm": null,
+            "ps_ttm": null,
+            "shares_pit_safe": false,
+            "symbol": "000001.SZ",
+            "total_mv": null,
+            "total_share": null,
+            "unit_version": "valuation_daily_v2"
+          },
+          {
+            "close": 11.08,
+            "date": "2026-07-23",
+            "float_mv": null,
+            "float_share": null,
+            "pb": null,
+            "pe_ttm": null,
+            "ps_ttm": null,
+            "shares_pit_safe": false,
+            "symbol": "000001.SZ",
+            "total_mv": null,
+            "total_share": null,
+            "unit_version": "valuation_daily_v2"
+          },
+          {
+            "close": 11.1,
+            "date": "2026-07-24",
+            "float_mv": null,
+            "float_share": null,
+            "pb": null,
+            "pe_ttm": null,
+            "ps_ttm": null,
+            "shares_pit_safe": false,
+            "symbol": "000001.SZ",
+            "total_mv": null,
+            "total_share": null,
+            "unit_version": "valuation_daily_v2"
+          }
+        ]
+      },
+      "symbols": [
+        "000001.SZ",
+        "000338.SZ",
+        "600519.SH",
+        "300750.SZ"
+      ],
+      "unit_evidence": {
+        "close": "Project close is raw unadjusted close in CNY. Package close matched project close on every common key in this sample; still not a claim of market truth.",
+        "ratios": "Package PE/PB/PS are present on the overlap window; project ratios are null by design. Do not treat two-source presence as PIT acceptance.",
+        "shares_and_mv": "Package total_mv == close * total_capital on finite checked sample rows is identity consistency only. Units remain unknown/unverified and are not rewritten. Identity does not prove 股/元 versus 万股/万元. Project total_share/total_mv were null here, so they are not directly joinable. Daily-bar amount×10000 is not used."
+      },
+      "window": {
+        "end": "2026-08-12",
+        "start": "2026-07-21"
+      }
+    },
+    "samples": [
+      {
+        "columns": [
+          "time",
+          "Symbol",
+          "close",
+          "total_capital",
+          "circulating_capital",
+          "total_mv",
+          "float_mv",
+          "net_profit_ttm",
+          "revenue_ttm",
+          "equity",
+          "annual_net_profit",
+          "pe_ttm",
+          "pe_static",
+          "pb",
+          "ps_ttm",
+          "dividend_rate"
+        ],
+        "dataset": "5_technical_derived/valuation",
+        "dtypes": {
+          "Symbol": "String",
+          "annual_net_profit": "Float64",
+          "circulating_capital": "Float64",
+          "close": "Float64",
+          "dividend_rate": "Float64",
+          "equity": "Float64",
+          "float_mv": "Float64",
+          "net_profit_ttm": "Float64",
+          "pb": "Float64",
+          "pe_static": "Float64",
+          "pe_ttm": "Float64",
+          "ps_ttm": "Float64",
+          "revenue_ttm": "Float64",
+          "time": "Datetime(time_unit='ns', time_zone=None)",
+          "total_capital": "Float64",
+          "total_mv": "Float64"
+        },
+        "fields": {
+          "mapped": {
+            "Symbol": "symbol",
+            "annual_net_profit": "annual_net_profit",
+            "circulating_capital": "float_share",
+            "close": "close",
+            "dividend_rate": "dividend_rate",
+            "equity": "equity",
+            "float_mv": "float_mv",
+            "net_profit_ttm": "net_profit_ttm",
+            "pb": "pb",
+            "pe_static": "pe_static",
+            "pe_ttm": "pe_ttm",
+            "ps_ttm": "ps_ttm",
+            "revenue_ttm": "revenue_ttm",
+            "time": "date",
+            "total_capital": "total_share",
+            "total_mv": "total_mv"
+          },
+          "missing_versus_project": [
+            "pcf_ttm",
+            "shares_pit_safe",
+            "shares_source",
+            "unit_version",
+            "unit_note",
+            "history_guarantee",
+            "fetched_at"
+          ],
+          "optional_absent": [],
+          "optional_present": [
+            "net_profit_ttm",
+            "revenue_ttm",
+            "equity",
+            "annual_net_profit",
+            "pe_static",
+            "dividend_rate"
+          ],
+          "original": [
+            "time",
+            "Symbol",
+            "close",
+            "total_capital",
+            "circulating_capital",
+            "total_mv",
+            "float_mv",
+            "net_profit_ttm",
+            "revenue_ttm",
+            "equity",
+            "annual_net_profit",
+            "pe_ttm",
+            "pe_static",
+            "pb",
+            "ps_ttm",
+            "dividend_rate"
+          ]
+        },
+        "layout": "by_symbol",
+        "overlay": {
+          "default_overlay": false,
+          "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+          "preclose_candidates_loaded": false,
+          "project_null_overlay": false,
+          "stockdb_repair_loaded": false
+        },
+        "quality": {
+          "anomalies": [],
+          "duplicate_keys": [],
+          "max_date": "2026-08-27",
+          "min_date": "2016-01-04",
+          "negative_pe_ttm": 0,
+          "non_finite_counts": {},
+          "null_counts": {
+            "Symbol": 0,
+            "annual_net_profit": 292,
+            "circulating_capital": 58,
+            "close": 0,
+            "dividend_rate": 0,
+            "equity": 72,
+            "float_mv": 58,
+            "net_profit_ttm": 292,
+            "pb": 72,
+            "pe_static": 292,
+            "pe_ttm": 292,
+            "ps_ttm": 292,
+            "revenue_ttm": 292,
+            "time": 0,
+            "total_capital": 58,
+            "total_mv": 58
+          },
+          "row_count": 2588
+        },
+        "schema": [
+          [
+            "time",
+            "Symbol",
+            "close",
+            "total_capital",
+            "circulating_capital",
+            "total_mv",
+            "float_mv",
+            "net_profit_ttm",
+            "revenue_ttm",
+            "equity",
+            "annual_net_profit",
+            "pe_ttm",
+            "pe_static",
+            "pb",
+            "ps_ttm",
+            "dividend_rate"
+          ],
+          [
+            "Datetime(time_unit='ns', time_zone=None)",
+            "String",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64"
+          ]
+        ],
+        "share_market_value": {
+          "checked_rows": 2530,
+          "conversion_applied": false,
+          "exact_rows": 2530,
+          "float_checked_rows": 2530,
+          "float_max_abs_error": 0.0,
+          "identity_consistent_on_checked_rows": true,
+          "inference": "unknown",
+          "max_abs_error": 0.0,
+          "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+          "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+          "units": "unknown/unverified"
+        },
+        "source": "offline_quantdb",
+        "source_file": {
+          "exists": true,
+          "is_symlink": false,
+          "mode": "0o644",
+          "mtime": "2026-08-27T18:19:36",
+          "mtime_ns": 1787825976537502100,
+          "path": "/Users/simon/Trading/下载数据/quant_data/5_technical_derived/valuation/000001.SZ.parquet",
+          "sha256": "a190a94b6f34f2307b2763e24ce5ffccfcf6dba125d8e19a22151ac3bd5d28e1",
+          "size": 164774
+        },
+        "symbol": "000001.SZ",
+        "unit_note": "No silent conversion. Daily-bar amount×10000 is not applied to valuation. Units for total_capital/circulating_capital and total_mv/float_mv remain unknown/unverified. total_mv == close * total_capital on finite rows is identity consistency only; it does not prove 股/元 versus 万股/万元 and is not a unit rewrite. PE/PB/PS formulas are not confirmed. dividend_rate ratio versus percent is not confirmed by appearance. Negative PE is kept. NaN/Inf is emitted as JSON null plus an anomaly mark."
+      },
+      {
+        "columns": [
+          "time",
+          "Symbol",
+          "close",
+          "total_capital",
+          "circulating_capital",
+          "total_mv",
+          "float_mv",
+          "net_profit_ttm",
+          "revenue_ttm",
+          "equity",
+          "annual_net_profit",
+          "pe_ttm",
+          "pe_static",
+          "pb",
+          "ps_ttm",
+          "dividend_rate"
+        ],
+        "dataset": "5_technical_derived/valuation",
+        "dtypes": {
+          "Symbol": "String",
+          "annual_net_profit": "Float64",
+          "circulating_capital": "Float64",
+          "close": "Float64",
+          "dividend_rate": "Float64",
+          "equity": "Float64",
+          "float_mv": "Float64",
+          "net_profit_ttm": "Float64",
+          "pb": "Float64",
+          "pe_static": "Float64",
+          "pe_ttm": "Float64",
+          "ps_ttm": "Float64",
+          "revenue_ttm": "Float64",
+          "time": "Datetime(time_unit='ns', time_zone=None)",
+          "total_capital": "Float64",
+          "total_mv": "Float64"
+        },
+        "fields": {
+          "mapped": {
+            "Symbol": "symbol",
+            "annual_net_profit": "annual_net_profit",
+            "circulating_capital": "float_share",
+            "close": "close",
+            "dividend_rate": "dividend_rate",
+            "equity": "equity",
+            "float_mv": "float_mv",
+            "net_profit_ttm": "net_profit_ttm",
+            "pb": "pb",
+            "pe_static": "pe_static",
+            "pe_ttm": "pe_ttm",
+            "ps_ttm": "ps_ttm",
+            "revenue_ttm": "revenue_ttm",
+            "time": "date",
+            "total_capital": "total_share",
+            "total_mv": "total_mv"
+          },
+          "missing_versus_project": [
+            "pcf_ttm",
+            "shares_pit_safe",
+            "shares_source",
+            "unit_version",
+            "unit_note",
+            "history_guarantee",
+            "fetched_at"
+          ],
+          "optional_absent": [],
+          "optional_present": [
+            "net_profit_ttm",
+            "revenue_ttm",
+            "equity",
+            "annual_net_profit",
+            "pe_static",
+            "dividend_rate"
+          ],
+          "original": [
+            "time",
+            "Symbol",
+            "close",
+            "total_capital",
+            "circulating_capital",
+            "total_mv",
+            "float_mv",
+            "net_profit_ttm",
+            "revenue_ttm",
+            "equity",
+            "annual_net_profit",
+            "pe_ttm",
+            "pe_static",
+            "pb",
+            "ps_ttm",
+            "dividend_rate"
+          ]
+        },
+        "layout": "by_symbol",
+        "overlay": {
+          "default_overlay": false,
+          "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+          "preclose_candidates_loaded": false,
+          "project_null_overlay": false,
+          "stockdb_repair_loaded": false
+        },
+        "quality": {
+          "anomalies": [],
+          "duplicate_keys": [],
+          "max_date": "2026-08-27",
+          "min_date": "2016-01-04",
+          "negative_pe_ttm": 0,
+          "non_finite_counts": {},
+          "null_counts": {
+            "Symbol": 0,
+            "annual_net_profit": 301,
+            "circulating_capital": 58,
+            "close": 0,
+            "dividend_rate": 0,
+            "equity": 79,
+            "float_mv": 58,
+            "net_profit_ttm": 301,
+            "pb": 79,
+            "pe_static": 301,
+            "pe_ttm": 301,
+            "ps_ttm": 301,
+            "revenue_ttm": 301,
+            "time": 0,
+            "total_capital": 58,
+            "total_mv": 58
+          },
+          "row_count": 2588
+        },
+        "schema": [
+          [
+            "time",
+            "Symbol",
+            "close",
+            "total_capital",
+            "circulating_capital",
+            "total_mv",
+            "float_mv",
+            "net_profit_ttm",
+            "revenue_ttm",
+            "equity",
+            "annual_net_profit",
+            "pe_ttm",
+            "pe_static",
+            "pb",
+            "ps_ttm",
+            "dividend_rate"
+          ],
+          [
+            "Datetime(time_unit='ns', time_zone=None)",
+            "String",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64"
+          ]
+        ],
+        "share_market_value": {
+          "checked_rows": 2530,
+          "conversion_applied": false,
+          "exact_rows": 2530,
+          "float_checked_rows": 2530,
+          "float_max_abs_error": 0.0,
+          "identity_consistent_on_checked_rows": true,
+          "inference": "unknown",
+          "max_abs_error": 0.0,
+          "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+          "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+          "units": "unknown/unverified"
+        },
+        "source": "offline_quantdb",
+        "source_file": {
+          "exists": true,
+          "is_symlink": false,
+          "mode": "0o644",
+          "mtime": "2026-08-27T18:19:47",
+          "mtime_ns": 1787825987005545800,
+          "path": "/Users/simon/Trading/下载数据/quant_data/5_technical_derived/valuation/000338.SZ.parquet",
+          "sha256": "8edf492ecab841d064d90f7efecf6c3c02f657307be3cb4a42aabfdd7e0c734f",
+          "size": 176957
+        },
+        "symbol": "000338.SZ",
+        "unit_note": "No silent conversion. Daily-bar amount×10000 is not applied to valuation. Units for total_capital/circulating_capital and total_mv/float_mv remain unknown/unverified. total_mv == close * total_capital on finite rows is identity consistency only; it does not prove 股/元 versus 万股/万元 and is not a unit rewrite. PE/PB/PS formulas are not confirmed. dividend_rate ratio versus percent is not confirmed by appearance. Negative PE is kept. NaN/Inf is emitted as JSON null plus an anomaly mark."
+      },
+      {
+        "columns": [
+          "time",
+          "Symbol",
+          "close",
+          "total_capital",
+          "circulating_capital",
+          "total_mv",
+          "float_mv",
+          "net_profit_ttm",
+          "revenue_ttm",
+          "equity",
+          "annual_net_profit",
+          "pe_ttm",
+          "pe_static",
+          "pb",
+          "ps_ttm",
+          "dividend_rate"
+        ],
+        "dataset": "5_technical_derived/valuation",
+        "dtypes": {
+          "Symbol": "String",
+          "annual_net_profit": "Float64",
+          "circulating_capital": "Float64",
+          "close": "Float64",
+          "dividend_rate": "Float64",
+          "equity": "Float64",
+          "float_mv": "Float64",
+          "net_profit_ttm": "Float64",
+          "pb": "Float64",
+          "pe_static": "Float64",
+          "pe_ttm": "Float64",
+          "ps_ttm": "Float64",
+          "revenue_ttm": "Float64",
+          "time": "Datetime(time_unit='ns', time_zone=None)",
+          "total_capital": "Float64",
+          "total_mv": "Float64"
+        },
+        "fields": {
+          "mapped": {
+            "Symbol": "symbol",
+            "annual_net_profit": "annual_net_profit",
+            "circulating_capital": "float_share",
+            "close": "close",
+            "dividend_rate": "dividend_rate",
+            "equity": "equity",
+            "float_mv": "float_mv",
+            "net_profit_ttm": "net_profit_ttm",
+            "pb": "pb",
+            "pe_static": "pe_static",
+            "pe_ttm": "pe_ttm",
+            "ps_ttm": "ps_ttm",
+            "revenue_ttm": "revenue_ttm",
+            "time": "date",
+            "total_capital": "total_share",
+            "total_mv": "total_mv"
+          },
+          "missing_versus_project": [
+            "pcf_ttm",
+            "shares_pit_safe",
+            "shares_source",
+            "unit_version",
+            "unit_note",
+            "history_guarantee",
+            "fetched_at"
+          ],
+          "optional_absent": [],
+          "optional_present": [
+            "net_profit_ttm",
+            "revenue_ttm",
+            "equity",
+            "annual_net_profit",
+            "pe_static",
+            "dividend_rate"
+          ],
+          "original": [
+            "time",
+            "Symbol",
+            "close",
+            "total_capital",
+            "circulating_capital",
+            "total_mv",
+            "float_mv",
+            "net_profit_ttm",
+            "revenue_ttm",
+            "equity",
+            "annual_net_profit",
+            "pe_ttm",
+            "pe_static",
+            "pb",
+            "ps_ttm",
+            "dividend_rate"
+          ]
+        },
+        "layout": "by_symbol",
+        "overlay": {
+          "default_overlay": false,
+          "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+          "preclose_candidates_loaded": false,
+          "project_null_overlay": false,
+          "stockdb_repair_loaded": false
+        },
+        "quality": {
+          "anomalies": [],
+          "duplicate_keys": [],
+          "max_date": "2026-08-27",
+          "min_date": "2016-01-04",
+          "negative_pe_ttm": 0,
+          "non_finite_counts": {},
+          "null_counts": {
+            "Symbol": 0,
+            "annual_net_profit": 311,
+            "circulating_capital": 58,
+            "close": 0,
+            "dividend_rate": 0,
+            "equity": 72,
+            "float_mv": 58,
+            "net_profit_ttm": 311,
+            "pb": 72,
+            "pe_static": 311,
+            "pe_ttm": 311,
+            "ps_ttm": 311,
+            "revenue_ttm": 311,
+            "time": 0,
+            "total_capital": 58,
+            "total_mv": 58
+          },
+          "row_count": 2588
+        },
+        "schema": [
+          [
+            "time",
+            "Symbol",
+            "close",
+            "total_capital",
+            "circulating_capital",
+            "total_mv",
+            "float_mv",
+            "net_profit_ttm",
+            "revenue_ttm",
+            "equity",
+            "annual_net_profit",
+            "pe_ttm",
+            "pe_static",
+            "pb",
+            "ps_ttm",
+            "dividend_rate"
+          ],
+          [
+            "Datetime(time_unit='ns', time_zone=None)",
+            "String",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64"
+          ]
+        ],
+        "share_market_value": {
+          "checked_rows": 2530,
+          "conversion_applied": false,
+          "exact_rows": 2530,
+          "float_checked_rows": 2530,
+          "float_max_abs_error": 0.0,
+          "identity_consistent_on_checked_rows": true,
+          "inference": "unknown",
+          "max_abs_error": 0.0,
+          "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+          "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+          "units": "unknown/unverified"
+        },
+        "source": "offline_quantdb",
+        "source_file": {
+          "exists": true,
+          "is_symlink": false,
+          "mode": "0o644",
+          "mtime": "2026-08-27T18:27:13",
+          "mtime_ns": 1787826433859212300,
+          "path": "/Users/simon/Trading/下载数据/quant_data/5_technical_derived/valuation/600519.SH.parquet",
+          "sha256": "e7a3337d7be135c55a300dfa645abd1f709f9d441f4f2a05a7d4a5101f578b55",
+          "size": 201468
+        },
+        "symbol": "600519.SH",
+        "unit_note": "No silent conversion. Daily-bar amount×10000 is not applied to valuation. Units for total_capital/circulating_capital and total_mv/float_mv remain unknown/unverified. total_mv == close * total_capital on finite rows is identity consistency only; it does not prove 股/元 versus 万股/万元 and is not a unit rewrite. PE/PB/PS formulas are not confirmed. dividend_rate ratio versus percent is not confirmed by appearance. Negative PE is kept. NaN/Inf is emitted as JSON null plus an anomaly mark."
+      },
+      {
+        "columns": [
+          "time",
+          "Symbol",
+          "close",
+          "total_capital",
+          "circulating_capital",
+          "total_mv",
+          "float_mv",
+          "net_profit_ttm",
+          "revenue_ttm",
+          "equity",
+          "annual_net_profit",
+          "pe_ttm",
+          "pe_static",
+          "pb",
+          "ps_ttm",
+          "dividend_rate"
+        ],
+        "dataset": "5_technical_derived/valuation",
+        "dtypes": {
+          "Symbol": "String",
+          "annual_net_profit": "Float64",
+          "circulating_capital": "Float64",
+          "close": "Float64",
+          "dividend_rate": "Float64",
+          "equity": "Float64",
+          "float_mv": "Float64",
+          "net_profit_ttm": "Float64",
+          "pb": "Float64",
+          "pe_static": "Float64",
+          "pe_ttm": "Float64",
+          "ps_ttm": "Float64",
+          "revenue_ttm": "Float64",
+          "time": "Datetime(time_unit='ns', time_zone=None)",
+          "total_capital": "Float64",
+          "total_mv": "Float64"
+        },
+        "fields": {
+          "mapped": {
+            "Symbol": "symbol",
+            "annual_net_profit": "annual_net_profit",
+            "circulating_capital": "float_share",
+            "close": "close",
+            "dividend_rate": "dividend_rate",
+            "equity": "equity",
+            "float_mv": "float_mv",
+            "net_profit_ttm": "net_profit_ttm",
+            "pb": "pb",
+            "pe_static": "pe_static",
+            "pe_ttm": "pe_ttm",
+            "ps_ttm": "ps_ttm",
+            "revenue_ttm": "revenue_ttm",
+            "time": "date",
+            "total_capital": "total_share",
+            "total_mv": "total_mv"
+          },
+          "missing_versus_project": [
+            "pcf_ttm",
+            "shares_pit_safe",
+            "shares_source",
+            "unit_version",
+            "unit_note",
+            "history_guarantee",
+            "fetched_at"
+          ],
+          "optional_absent": [],
+          "optional_present": [
+            "net_profit_ttm",
+            "revenue_ttm",
+            "equity",
+            "annual_net_profit",
+            "pe_static",
+            "dividend_rate"
+          ],
+          "original": [
+            "time",
+            "Symbol",
+            "close",
+            "total_capital",
+            "circulating_capital",
+            "total_mv",
+            "float_mv",
+            "net_profit_ttm",
+            "revenue_ttm",
+            "equity",
+            "annual_net_profit",
+            "pe_ttm",
+            "pe_static",
+            "pb",
+            "ps_ttm",
+            "dividend_rate"
+          ]
+        },
+        "layout": "by_symbol",
+        "overlay": {
+          "default_overlay": false,
+          "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+          "preclose_candidates_loaded": false,
+          "project_null_overlay": false,
+          "stockdb_repair_loaded": false
+        },
+        "quality": {
+          "anomalies": [],
+          "duplicate_keys": [],
+          "max_date": "2026-08-27",
+          "min_date": "2018-06-11",
+          "negative_pe_ttm": 0,
+          "non_finite_counts": {},
+          "null_counts": {
+            "Symbol": 0,
+            "annual_net_profit": 0,
+            "circulating_capital": 0,
+            "close": 0,
+            "dividend_rate": 0,
+            "equity": 0,
+            "float_mv": 0,
+            "net_profit_ttm": 0,
+            "pb": 0,
+            "pe_static": 0,
+            "pe_ttm": 0,
+            "ps_ttm": 0,
+            "revenue_ttm": 0,
+            "time": 0,
+            "total_capital": 0,
+            "total_mv": 0
+          },
+          "row_count": 1995
+        },
+        "schema": [
+          [
+            "time",
+            "Symbol",
+            "close",
+            "total_capital",
+            "circulating_capital",
+            "total_mv",
+            "float_mv",
+            "net_profit_ttm",
+            "revenue_ttm",
+            "equity",
+            "annual_net_profit",
+            "pe_ttm",
+            "pe_static",
+            "pb",
+            "ps_ttm",
+            "dividend_rate"
+          ],
+          [
+            "Datetime(time_unit='ns', time_zone=None)",
+            "String",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64",
+            "Float64"
+          ]
+        ],
+        "share_market_value": {
+          "checked_rows": 1995,
+          "conversion_applied": false,
+          "exact_rows": 1995,
+          "float_checked_rows": 1995,
+          "float_max_abs_error": 0.0,
+          "identity_consistent_on_checked_rows": true,
+          "inference": "unknown",
+          "max_abs_error": 0.0,
+          "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+          "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+          "units": "unknown/unverified"
+        },
+        "source": "offline_quantdb",
+        "source_file": {
+          "exists": true,
+          "is_symlink": false,
+          "mode": "0o644",
+          "mtime": "2026-08-27T18:25:12",
+          "mtime_ns": 1787826312316471300,
+          "path": "/Users/simon/Trading/下载数据/quant_data/5_technical_derived/valuation/300750.SZ.parquet",
+          "sha256": "79964e0983d924b6869fd5ecc15a18a2a17e25262560b2cff9bd5c93b57c62cc",
+          "size": 164998
+        },
+        "symbol": "300750.SZ",
+        "unit_note": "No silent conversion. Daily-bar amount×10000 is not applied to valuation. Units for total_capital/circulating_capital and total_mv/float_mv remain unknown/unverified. total_mv == close * total_capital on finite rows is identity consistency only; it does not prove 股/元 versus 万股/万元 and is not a unit rewrite. PE/PB/PS formulas are not confirmed. dividend_rate ratio versus percent is not confirmed by appearance. Negative PE is kept. NaN/Inf is emitted as JSON null plus an anomaly mark."
+      }
+    ],
+    "source": "offline_quantdb",
+    "status": "ok",
+    "symbols": [
+      "000001.SZ",
+      "000338.SZ",
+      "600519.SH",
+      "300750.SZ"
+    ],
+    "unit_note": "No silent conversion. Daily-bar amount×10000 is not applied to valuation. Units for total_capital/circulating_capital and total_mv/float_mv remain unknown/unverified. total_mv == close * total_capital on finite rows is identity consistency only; it does not prove 股/元 versus 万股/万元 and is not a unit rewrite. PE/PB/PS formulas are not confirmed. dividend_rate ratio versus percent is not confirmed by appearance. Negative PE is kept. NaN/Inf is emitted as JSON null plus an anomaly mark."
+  },
+  "summary": {
+    "common_keys": 36,
+    "dataset": "5_technical_derived/valuation",
+    "historical_inventory": {
+      "as_of": "2026-09-06",
+      "cited_from": "/Users/simon/Trading/下载数据/stockdb_quantdb_integration_review_20260906/package_sanity.json",
+      "note": "Market-wide coverage is the 2026-09-06 inventory only. This round reads four by-symbol files and does not rescan the 80G packages.",
+      "this_round_full_market_scan": false,
+      "valuation_by_symbol": {
+        "bytes": 694488966,
+        "empty_files": 0,
+        "files": 5554,
+        "physical_rows": 10770127,
+        "time_max_native": "2026-08-27 00:00:00",
+        "time_min_native": "2016-01-04 00:00:00"
+      }
+    },
+    "join_boundary": {
+      "direct_concat": false,
+      "pit_verified": false,
+      "side_by_side_only": true,
+      "two_source_agreement_is_market_truth": false
+    },
+    "layout": "by_symbol",
+    "mode": "summary",
+    "ok": true,
+    "overlay": {
+      "default_overlay": false,
+      "note": "Project and package are compared side by side only. Existing repair SQL keeps exact identity, original-null-only fill, and opt-in preclose. This reader does not load those views.",
+      "preclose_candidates_loaded": false,
+      "project_null_overlay": false,
+      "stockdb_repair_loaded": false
+    },
+    "package_keys": 68,
+    "project_keys": 36,
+    "samples": [
+      {
+        "max_date": "2026-08-27",
+        "min_date": "2016-01-04",
+        "negative_pe_ttm": 0,
+        "non_finite_counts": {},
+        "rows": 2588,
+        "share_market_value": {
+          "checked_rows": 2530,
+          "conversion_applied": false,
+          "exact_rows": 2530,
+          "float_checked_rows": 2530,
+          "float_max_abs_error": 0.0,
+          "identity_consistent_on_checked_rows": true,
+          "inference": "unknown",
+          "max_abs_error": 0.0,
+          "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+          "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+          "units": "unknown/unverified"
+        },
+        "symbol": "000001.SZ"
+      },
+      {
+        "max_date": "2026-08-27",
+        "min_date": "2016-01-04",
+        "negative_pe_ttm": 0,
+        "non_finite_counts": {},
+        "rows": 2588,
+        "share_market_value": {
+          "checked_rows": 2530,
+          "conversion_applied": false,
+          "exact_rows": 2530,
+          "float_checked_rows": 2530,
+          "float_max_abs_error": 0.0,
+          "identity_consistent_on_checked_rows": true,
+          "inference": "unknown",
+          "max_abs_error": 0.0,
+          "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+          "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+          "units": "unknown/unverified"
+        },
+        "symbol": "000338.SZ"
+      },
+      {
+        "max_date": "2026-08-27",
+        "min_date": "2016-01-04",
+        "negative_pe_ttm": 0,
+        "non_finite_counts": {},
+        "rows": 2588,
+        "share_market_value": {
+          "checked_rows": 2530,
+          "conversion_applied": false,
+          "exact_rows": 2530,
+          "float_checked_rows": 2530,
+          "float_max_abs_error": 0.0,
+          "identity_consistent_on_checked_rows": true,
+          "inference": "unknown",
+          "max_abs_error": 0.0,
+          "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+          "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+          "units": "unknown/unverified"
+        },
+        "symbol": "600519.SH"
+      },
+      {
+        "max_date": "2026-08-27",
+        "min_date": "2018-06-11",
+        "negative_pe_ttm": 0,
+        "non_finite_counts": {},
+        "rows": 1995,
+        "share_market_value": {
+          "checked_rows": 1995,
+          "conversion_applied": false,
+          "exact_rows": 1995,
+          "float_checked_rows": 1995,
+          "float_max_abs_error": 0.0,
+          "identity_consistent_on_checked_rows": true,
+          "inference": "unknown",
+          "max_abs_error": 0.0,
+          "note": "Identity consistency is recorded separately from units. It does not prove 股/元 versus 万股/万元 and is not a rewrite.",
+          "rule": "total_mv == close * total_capital; float_mv == close * circulating_capital",
+          "units": "unknown/unverified"
+        },
+        "symbol": "300750.SZ"
+      }
+    ],
+    "source": "offline_quantdb",
+    "status": "ok"
+  }
+}

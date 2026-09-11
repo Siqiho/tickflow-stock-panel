@@ -1,13 +1,15 @@
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Play, FlaskConical, Clock, Loader2, Square, Search, Plus, X, SlidersHorizontal, BarChart3, Gauge, Zap, ListPlus } from 'lucide-react'
+import { Play, FlaskConical, Clock, History, Loader2, Square, Search, Plus, X, SlidersHorizontal, BarChart3, Gauge, Zap, ListPlus } from 'lucide-react'
 import {
   api,
   type StrategyBacktestResult,
   type StrategyBacktestTrade,
   type StrategyDetail,
   type StrategyParamDef,
+  type ResearchCandidate,
 } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { tierRank } from '@/lib/capability-labels'
@@ -17,13 +19,15 @@ import { boardTag } from '@/lib/board'
 import { BUILTIN_COLUMNS } from '@/lib/watchlist-columns'
 import { SignalPicker } from '@/components/screener/SignalPicker'
 import { startBacktest, stopBacktest, tryReconnect, useBacktestTask } from '@/lib/backtestTask'
-import { useDataStatus, useCapabilities } from '@/lib/useSharedQueries'
+import { useDataReadiness, useCapabilities, useSettings } from '@/lib/useSharedQueries'
+import { toast } from '@/components/Toast'
 import { EmptyState } from '@/components/EmptyState'
 import { WarmupBadge } from '@/components/WarmupBadge'
 import { DatePicker } from '@/components/DatePicker'
 import { StrategyNavChart } from './charts/StrategyNavChart'
 import { ReturnDistributionChart } from './charts/ReturnDistributionChart'
 import { TradeKlineModal } from './components/TradeKlineModal'
+import { PicksSymbolKlineModal } from './components/PicksSymbolKlineModal'
 import { SignalTriggerActions } from '@/components/signals/SignalTriggerActions'
 
 const formatDate = (date: Date) => date.toISOString().slice(0, 10)
@@ -109,13 +113,14 @@ Object.assign(FIELD_LABEL, {
   boll_upper: '布林上轨', boll_lower: '布林下轨',
 })
 const BOARD_OPTIONS = ['沪主板', '深主板', '创业板', '科创板', '北交所']
-const BASIC_FILTER_FIELDS = [
-  { key: 'price_min', label: '最低价', unit: '元' },
-  { key: 'price_max', label: '最高价', unit: '元' },
-  { key: 'amount_min', label: '最低成交额', unit: '亿', scale: 1e8 },
-  { key: 'market_cap_min', label: '最低总市值', unit: '亿', scale: 1e8 },
-  { key: 'turnover_min', label: '最低换手率', unit: '%' },
-  { key: 'turnover_max', label: '最高换手率', unit: '%' },
+// 与策略编辑器「基础参数」对齐 (engine._basic_filter_expr 支持的全部数值界),
+// 每项 min~max 成对, 面板可见即可改, 避免策略里已生效的界在回测侧不可见。
+const BASIC_FILTER_RANGES = [
+  { minKey: 'price_min', maxKey: 'price_max', label: '价格', unit: '元', step: '1' },
+  { minKey: 'float_cap_min', maxKey: 'float_cap_max', label: '流通市值', unit: '亿', scale: 1e8, step: '5' },
+  { minKey: 'market_cap_min', maxKey: 'market_cap_max', label: '总市值', unit: '亿', scale: 1e8, step: '5' },
+  { minKey: 'amount_min', maxKey: 'amount_max', label: '成交额', unit: '亿', scale: 1e8, step: '0.5' },
+  { minKey: 'turnover_min', maxKey: 'turnover_max', label: '换手率', unit: '%', step: '0.5' },
 ]
 type AdvancedSettingsTab = 'params' | 'filter' | 'entry' | 'exit' | 'scoring' | 'risk' | 'range'
 type StrategyGroup = 'all' | 'custom' | 'ai' | 'builtin'
@@ -135,6 +140,30 @@ const ADVANCED_TABS: { id: AdvancedSettingsTab; label: string }[] = [
   { id: 'range', label: '回测范围' },
 ]
 const toSignalId = (sig: string) => (sig.startsWith('signal_') || sig.startsWith('csg_')) ? sig : `signal_${sig}`
+
+/** 环境数据缺口的一键补算入口: 补算区间后自动重跑回测。仅管理员可见, 后端仍校验写权限。 */
+function RegimeRecomputeButton({ from, to, pending, onClick }: {
+  from: string
+  to?: string
+  pending: boolean
+  onClick: () => void
+}) {
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <button
+        onClick={onClick}
+        disabled={pending}
+        className="inline-flex items-center gap-1.5 rounded-btn border border-accent/30 bg-accent/10 px-2.5 py-1 text-[11px] font-medium text-accent transition-colors hover:bg-accent/15 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+        {pending ? '补算环境数据中…' : '补算环境数据并重跑'}
+      </button>
+      <span className="text-[10px] text-secondary">
+        将补算 {from} ~ {to || '今天'} 的市场环境数据，完成后自动重跑本次回测
+      </span>
+    </div>
+  )
+}
 const numOrNull = (v: string) => v === '' || Number.isNaN(Number(v)) ? null : Number(v)
 const clamp = (v: number, min?: number, max?: number) => {
   let next = v
@@ -378,11 +407,13 @@ function SharpeLabel() {
 }
 
 function Stat({ label, value, color }: { label: ReactNode; value: string; color?: string }) {
+  // 长值 (如蒙卡回撤双值) 降一档字号, 保证单行不撑高卡片
+  const compact = value.length > 12
   return (
     <div className="min-w-0 rounded-btn border border-border/70 bg-elevated/70 px-3 py-2">
       <div className="text-[11px] text-secondary">{label}</div>
       <div
-        className="mt-1 break-words text-sm font-mono font-semibold leading-tight tracking-tight num xl:text-base"
+        className={`mt-1 break-words font-mono font-semibold leading-tight tracking-tight num ${compact ? 'text-xs xl:text-sm' : 'text-sm xl:text-base'}`}
         style={{ color: color ?? '#f8fafc' }}
         title={value}
       >
@@ -649,9 +680,21 @@ function StockPoolPicker({ value, onChange }: { value: string; onChange: (value:
   )
 }
 
-export function StrategyBacktest() {
-  const [saved] = useState(() => storage.strategyBacktestLast.get(null))
-  const [selectedStrategy, setSelectedStrategy] = useState<string | null>(saved?.selectedStrategy ?? null)
+export function StrategyBacktest({
+  loadCandidate = null,
+  onLoadConsumed,
+}: {
+  loadCandidate?: ResearchCandidate | null
+  onLoadConsumed?: () => void
+} = {}) {
+  const [searchParams] = useSearchParams()
+  const queryClient = useQueryClient()
+  const { data: settingsState } = useSettings()
+  const isAdmin = settingsState ? settingsState.is_admin !== false : false
+  const targetOwnerUserId = searchParams.get('strategy_owner_user_id') || undefined
+  const targetStrategyId = searchParams.get('strategy_id') || null
+  const [saved] = useState(() => targetOwnerUserId ? null : storage.strategyBacktestLast.get(null))
+  const [selectedStrategy, setSelectedStrategy] = useState<string | null>(targetStrategyId ?? saved?.selectedStrategy ?? null)
   const [strategyGroup, setStrategyGroup] = useState<StrategyGroup>('all')
   const [symbols, setSymbols] = useState(saved?.symbols ?? '')
   const [start, setStart] = useState(saved?.start ?? THREE_MONTHS_AGO)
@@ -684,16 +727,47 @@ export function StrategyBacktest() {
   // 跨会话/拉新代码后自动渲染一个可能对应已失效策略的旧结果会造成困惑
   // (切页不卸载组件,内存中的 result 仍保留,无需靠 localStorage 恢复)。
   const [result, setResult] = useState<StrategyBacktestResult | null>(null)
-  const [resultTab, setResultTab] = useState<'daily' | 'trades' | 'picks'>('daily')
+  const [resultTab, setResultTab] = useState<'daily' | 'trades' | 'picks' | 'attribution'>('daily')
   const [dailyPage, setDailyPage] = useState(0)
   const [tradePage, setTradePage] = useState(0)
   const [tradePageSize, setTradePageSize] = useState(10)
-  const [selectedTrade, setSelectedTrade] = useState<StrategyBacktestTrade | null>(null)
+  const factorMetaQ = useQuery({ queryKey: QK.factorColumns, queryFn: api.factorColumns, staleTime: 300_000 })
+  const factorLibQ = useQuery({ queryKey: QK.factorLibrary('all'), queryFn: () => api.factorLibrary(), staleTime: 60_000 })
+  const factorLabels = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const c of factorMetaQ.data?.columns ?? []) m.set(c.id, c.label)
+    for (const f of factorLibQ.data?.factors ?? []) if (!m.has(f.id)) m.set(f.id, f.label)
+    return m
+  }, [factorMetaQ.data, factorLibQ.data])
+  const [chartOverlay, setChartOverlay] = useState<
+    | { kind: 'trade'; trade: StrategyBacktestTrade }
+    | { kind: 'symbol'; symbol: string }
+    | null
+  >(null)
+  const selectedTrade = chartOverlay?.kind === 'trade' ? chartOverlay.trade : null
+  const picksSymbol = chartOverlay?.kind === 'symbol' ? chartOverlay.symbol : null
+  const [loadingHistoryId, setLoadingHistoryId] = useState('')
   const loadedStrategyRef = useRef<string | null>(null)
 
+  useEffect(() => {
+    if (!loadCandidate) return
+    const sourceId = loadCandidate.source_id || (loadCandidate.config as { strategy_id?: string } | undefined)?.strategy_id
+    if (typeof sourceId === 'string' && sourceId) {
+      setSelectedStrategy(sourceId)
+    }
+    onLoadConsumed?.()
+  }, [loadCandidate, onLoadConsumed])
+
   const strategies = useQuery({
-    queryKey: QK.screenerStrategies,
-    queryFn: api.screenerStrategies,
+    queryKey: [...QK.screenerStrategies(), targetOwnerUserId ?? 'self'],
+    queryFn: () => targetOwnerUserId
+      ? api.screenerStrategiesForOwner(targetOwnerUserId)
+      : api.screenerStrategies(),
+  })
+
+  const history = useQuery({
+    queryKey: ['strategy-backtest-history'],
+    queryFn: () => api.strategyBacktestHistory(30),
   })
 
   const strategyList = useMemo(() => strategies.data?.presets ?? [], [strategies.data])
@@ -716,16 +790,16 @@ export function StrategyBacktest() {
   }, [strategies.isLoading, strategyList, selectedStrategy])
 
   const strategyDetail = useQuery({
-    queryKey: ['strategy-detail', selectedStrategy],
-    queryFn: () => api.strategyGet(selectedStrategy!),
+    queryKey: ['strategy-detail', targetOwnerUserId ?? 'self', selectedStrategy],
+    queryFn: () => api.strategyGet(selectedStrategy!, targetOwnerUserId),
     enabled: !!selectedStrategy,
   })
 
   const backtestTask = useBacktestTask()
   const isPending = backtestTask?.isPending ?? false
 
-  const dataStatus = useDataStatus()
-  const earliestDate = dataStatus.data?.daily?.earliest_date ?? null
+  const dataReadiness = useDataReadiness()
+  const earliestDate = dataReadiness.data?.daily?.earliest_date ?? null
 
   const resetConfigFromDetail = (detail: StrategyDetail) => {
     setStrategyParams(strategyDefaultParams(detail))
@@ -735,14 +809,13 @@ export function StrategyBacktest() {
   // 刷新页面后: 从 localStorage 恢复未完成的回测任务
   useEffect(() => {
     tryReconnect()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     const detail = strategyDetail.data
     if (!detail || loadedStrategyRef.current === detail.id) return
     loadedStrategyRef.current = detail.id
-    if (saved?.selectedStrategy === detail.id && (saved.params || saved.overrides)) {
+    if (!targetOwnerUserId && saved?.selectedStrategy === detail.id && (saved.params || saved.overrides)) {
       setStrategyParams(saved.params ?? strategyDefaultParams(detail))
       setOverrides(saved.overrides ?? buildDefaultOverrides(detail))
       return
@@ -758,7 +831,7 @@ export function StrategyBacktest() {
       setResultTab('daily')
       setDailyPage(0)
       setTradePage(0)
-      storage.strategyBacktestLast.set({
+      if (!targetOwnerUserId) storage.strategyBacktestLast.set({
         selectedStrategy,
         symbols,
         start,
@@ -778,13 +851,28 @@ export function StrategyBacktest() {
         overrides,
         result: backtestTask.result,
       })
+      queryClient.invalidateQueries({ queryKey: ['strategy-backtest-history'] })
     }
+    // This effect consumes one immutable task completion snapshot. Form values
+    // are intentionally captured from that render and must not retrigger it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backtestTask])
+
+  const regimeGapStart = useMemo(() => {
+    const msg = backtestTask?.error ?? result?.error ?? ''
+    if (msg.includes('市场环境数据覆盖不完整') && msg.includes('请先补算')) {
+      const m = msg.match(/缺少前一交易日环境[：:\s]*(\d{4}-\d{2}-\d{2})/)
+      return m?.[1] ?? start
+    }
+    if (msg.includes('市场环境数据为空')) return start
+    return null
+  }, [backtestTask?.error, result?.error, start])
 
   const handleRun = () => {
     if (!selectedStrategy) return
     startBacktest({
       strategy_id: selectedStrategy,
+      strategy_owner_user_id: targetOwnerUserId,
       symbols: symbols ? symbols.split(',').map(s => s.trim()).filter(Boolean) : null,
       start: start || null,
       end: end || undefined,
@@ -802,6 +890,37 @@ export function StrategyBacktest() {
       mode: simMode,
       holding_days: Number(holdingDays) || 5,
     })
+  }
+
+  const regimeRecompute = useMutation({
+    mutationFn: () => api.regimeRecompute(regimeGapStart ?? undefined, end || undefined),
+    onSuccess: data => {
+      toast(`环境数据补算完成 (新增 ${data.computed} 天)，自动重新回测`, 'success')
+      handleRun()
+    },
+    onError: e => toast(`环境数据补算失败 · ${String((e as Error)?.message || e)}`, 'error'),
+  })
+
+  const visibleHistory = (history.data?.runs ?? []).filter(run => (
+    targetOwnerUserId ? run.strategy_owner_user_id === targetOwnerUserId : true
+  ))
+
+  const loadHistoryRun = async (runId: string) => {
+    if (!runId) return
+    setLoadingHistoryId(runId)
+    try {
+      const historical = await api.strategyBacktestHistoryGet(runId)
+      setResult(historical)
+      const strategyId = String(historical.strategy_info?.id || historical.config?.strategy_id || '')
+      if (strategyId && strategyList.some(item => item.id === strategyId)) {
+        setSelectedStrategy(strategyId)
+      }
+      setResultTab('daily')
+      setDailyPage(0)
+      setTradePage(0)
+    } finally {
+      setLoadingHistoryId('')
+    }
   }
 
   // 提取统计
@@ -1027,6 +1146,11 @@ export function StrategyBacktest() {
     <div className="h-full min-h-0 overflow-hidden rounded-card border border-border bg-surface/80 grid grid-cols-1 xl:grid-cols-[18rem_minmax(0,1fr)]">
       {/* 配置面板 */}
       <section className="space-y-3 border-b xl:border-b-0 xl:border-r border-border bg-base/25 px-3 py-3 xl:overflow-y-auto">
+        {targetOwnerUserId && (
+          <div className="rounded-btn border border-purple-500/25 bg-purple-500/[0.07] px-2.5 py-2 text-[10px] leading-relaxed text-purple-300">
+            管理员模式：正在只读使用用户 <span className="font-mono">{targetOwnerUserId}</span> 的策略。回测结果保存到管理员自己的历史空间。
+          </div>
+        )}
         <div>
           <div className="flex items-center justify-between mb-1.5">
             <label className="text-xs font-medium text-secondary">选择策略</label>
@@ -1142,6 +1266,28 @@ export function StrategyBacktest() {
           <span className="mt-1 block text-[10px] font-medium text-secondary">{stockPoolSummary}</span>
           <span className="mt-1 block text-[10px] leading-4 text-muted">{advancedSummary}</span>
         </button>
+
+        <div className="rounded-btn border border-border bg-surface p-2.5">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+            <History className="h-3.5 w-3.5 text-accent" />服务端回测历史
+            <span className="ml-auto text-[10px] font-normal text-muted">{visibleHistory.length} 条</span>
+          </div>
+          <select
+            aria-label="服务端回测历史"
+            value={loadingHistoryId}
+            disabled={history.isLoading || visibleHistory.length === 0 || Boolean(loadingHistoryId)}
+            onChange={event => loadHistoryRun(event.target.value)}
+            className="mt-2 w-full rounded-input border border-border bg-base px-2 py-1.5 text-[11px] text-secondary outline-none focus:border-accent disabled:opacity-55"
+          >
+            <option value="">{history.isLoading ? '读取中…' : visibleHistory.length ? '选择历史结果查看' : '暂无持久化结果'}</option>
+            {visibleHistory.map(run => (
+              <option key={run.run_id} value={run.run_id}>
+                {run.strategy_name} · {String(run.saved_at).slice(0, 16).replace('T', ' ')} · {run.trade_count} 笔
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-[9px] leading-relaxed text-muted">结果保存在当前账号的服务端空间，不再依赖浏览器 5 分钟任务缓存。</p>
+        </div>
 
         <div className="rounded-btn border border-border bg-surface p-2.5">
           <div className="flex items-center justify-between gap-2">
@@ -1395,12 +1541,34 @@ export function StrategyBacktest() {
         {result?.error && (
           <div className="text-sm text-danger bg-danger/10 border border-danger/30 rounded-btn px-3 py-2">
             {result.error}
+            {regimeGapStart && isAdmin && (
+              <RegimeRecomputeButton
+                from={regimeGapStart}
+                to={end}
+                pending={regimeRecompute.isPending || isPending}
+                onClick={() => regimeRecompute.mutate()}
+              />
+            )}
+            {regimeGapStart && !isAdmin && (
+              <div className="mt-2 text-[10px] text-secondary">环境数据补算需管理员在本页点击执行，不能绕过权限直接 POST。</div>
+            )}
           </div>
         )}
 
         {backtestTask?.error && (
           <div className="text-sm text-danger bg-danger/10 border border-danger/30 rounded-btn px-3 py-2">
             {backtestTask.error}
+            {regimeGapStart && isAdmin && (
+              <RegimeRecomputeButton
+                from={regimeGapStart}
+                to={end}
+                pending={regimeRecompute.isPending || isPending}
+                onClick={() => regimeRecompute.mutate()}
+              />
+            )}
+            {regimeGapStart && !isAdmin && (
+              <div className="mt-2 text-[10px] text-secondary">环境数据补算需管理员在本页点击执行，不能绕过权限直接 POST。</div>
+            )}
           </div>
         )}
 
@@ -1623,27 +1791,33 @@ export function StrategyBacktest() {
               </div>
             )}
 
-            {/* Tab: 按日期 / 交易明细 / 选股分析 */}
-            {(result.trades.length > 0 || result.per_symbol_stats.length > 0) && (
+            {/* Tab: 按日期 / 交易明细 / 选股分析 / 因子归因 */}
+            {(result.trades.length > 0 || result.per_symbol_stats.length > 0 || (result.factor_attribution?.factors.length ?? 0) > 0) && (
               <div className="rounded-card border border-border overflow-hidden">
                 <div className="flex items-center gap-1 border-b border-border px-4 pt-2">
-                  {(['daily', 'trades', 'picks'] as const).map(t => (
-                    <button
-                      key={t}
-                      onClick={() => setResultTab(t)}
-                      className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
-                        resultTab === t
-                          ? 'border-accent text-accent'
-                          : 'border-transparent text-secondary hover:text-foreground'
-                      }`}
-                    >
-                      {t === 'daily'
-                        ? `每日交易 (${dailyTradeRows.length})`
-                        : t === 'trades'
+                  {(['daily', 'trades', 'picks', 'attribution'] as const).map(t => {
+                    const attributionCount = result.factor_attribution?.factors.length ?? 0
+                    if (t === 'attribution' && attributionCount === 0) return null
+                    return (
+                      <button
+                        key={t}
+                        onClick={() => setResultTab(t)}
+                        className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
+                          resultTab === t
+                            ? 'border-accent text-accent'
+                            : 'border-transparent text-secondary hover:text-foreground'
+                        }`}
+                      >
+                        {t === 'daily'
+                          ? `每日交易 (${dailyTradeRows.length})`
+                          : t === 'trades'
                           ? `交易明细 (${sortedTrades.length})`
-                          : `选股分析 (${result.per_symbol_stats.length})`}
-                    </button>
-                  ))}
+                          : t === 'picks'
+                          ? `选股分析 (${result.per_symbol_stats.length})`
+                          : `因子归因 (${attributionCount})`}
+                      </button>
+                    )
+                  })}
                 </div>
 
                 {resultTab === 'daily' && (
@@ -1674,7 +1848,7 @@ export function StrategyBacktest() {
                               ) : (
                                 <div className="flex flex-wrap gap-1.5">
                                   {row.buys.map((t, i) => (
-                                    <DailyTradeChip key={`buy-${t.symbol}-${t.entry_date}-${t.exit_date}-${i}`} trade={t} side="buy" strategyName={result?.strategy_info?.name ?? selectedStrategyName} onClick={() => setSelectedTrade(t)} />
+                                    <DailyTradeChip key={`buy-${t.symbol}-${t.entry_date}-${t.exit_date}-${i}`} trade={t} side="buy" strategyName={result?.strategy_info?.name ?? selectedStrategyName} onClick={() => setChartOverlay({ kind: 'trade', trade: t })} />
                                   ))}
                                 </div>
                               )}
@@ -1685,7 +1859,7 @@ export function StrategyBacktest() {
                               ) : (
                                 <div className="flex flex-wrap gap-1.5">
                                   {row.sells.map((t, i) => (
-                                    <DailyTradeChip key={`sell-${t.symbol}-${t.entry_date}-${t.exit_date}-${i}`} trade={t} side="sell" onClick={() => setSelectedTrade(t)} />
+                                    <DailyTradeChip key={`sell-${t.symbol}-${t.entry_date}-${t.exit_date}-${i}`} trade={t} side="sell" onClick={() => setChartOverlay({ kind: 'trade', trade: t })} />
                                   ))}
                                 </div>
                               )}
@@ -1748,9 +1922,22 @@ export function StrategyBacktest() {
                       </thead>
                       <tbody>
                         {visibleTrades.map((t: StrategyBacktestTrade, i: number) => (
-                          <tr key={`${t.symbol}-${t.entry_date}-${tradeStart + i}`} className="border-t border-border hover:bg-elevated/50 transition-colors group">
+                          <tr
+                            key={`${t.symbol}-${t.entry_date}-${tradeStart + i}`}
+                            onClick={() => setChartOverlay({ kind: 'trade', trade: t })}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault()
+                                setChartOverlay({ kind: 'trade', trade: t })
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            title="点击查看该笔交易的K线回放"
+                            className="border-t border-border hover:bg-elevated/50 transition-colors group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-inset"
+                          >
                             <td className="px-4 py-2.5">
-                              <div className="font-medium text-foreground group-hover:text-accent transition-colors">
+                              <div className="font-medium text-foreground transition-colors group-hover:text-accent">
                                 {t.name || t.symbol}
                               </div>
                               <div className="mt-0.5 font-mono text-[11px] text-muted">{t.symbol}</div>
@@ -1842,9 +2029,22 @@ export function StrategyBacktest() {
                     </thead>
                     <tbody>
                       {result.per_symbol_stats.map((r) => (
-                        <tr key={r.symbol} className="border-t border-border hover:bg-elevated/50 transition-colors group">
+                        <tr
+                          key={r.symbol}
+                          onClick={() => setChartOverlay({ kind: 'symbol', symbol: r.symbol })}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              setChartOverlay({ kind: 'symbol', symbol: r.symbol })
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          title="点击查看该标的在回测期的K线 (标注每次买卖)"
+                          className="border-t border-border hover:bg-elevated/50 transition-colors group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-inset"
+                        >
                           <td className="px-4 py-2">
-                            <div className="font-medium text-foreground group-hover:text-accent transition-colors">
+                            <div className="font-medium text-foreground transition-colors group-hover:text-accent">
                               {symbolNames[r.symbol] || r.symbol}
                             </div>
                             <div className="mt-0.5 font-mono text-[11px] text-muted">{r.symbol}</div>
@@ -1855,11 +2055,60 @@ export function StrategyBacktest() {
                           </td>
                           <td className="px-4 py-2 text-right num">{fmtPct(r.win_rate)}</td>
                           <td className="px-4 py-2 text-right num text-bull">{fmtPct(r.best)}</td>
-                          <td className="px-4 py-2 text-right num text-bear">{fmtPct(r.worst)}</td>
-                        </tr>
+                        <td className="px-4 py-2 text-right num text-bear">{fmtPct(r.worst)}</td>
+                      </tr>
                       ))}
                     </tbody>
                   </table>
+                )}
+
+                {/* 因子归因: 入场信号日因子值 × 成交盈亏 */}
+                {resultTab === 'attribution' && result.factor_attribution && (
+                  <div className="px-4 py-3">
+                    <div className="mb-1 flex items-center justify-between">
+                      <span className="text-xs font-medium text-secondary">入场信号日因子均值</span>
+                      <span className="text-[10px] text-muted">
+                        胜单 {result.factor_attribution.n_win} · 败单 {result.factor_attribution.n_lose}
+                      </span>
+                    </div>
+                    <p className="mb-2 text-[10px] leading-4 text-muted">
+                      对比盈利单与亏损单入场时的因子取值：胜单均值明显高于败单 → 该因子在本轮交易里贡献了正筛选力；反之在拖后腿。原始因子量纲不同，只看相对差异。
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-border text-[10px] text-muted">
+                            <th className="px-2 py-1.5 text-left font-normal">因子</th>
+                            <th className="px-2 py-1.5 text-right font-normal">胜单均值</th>
+                            <th className="px-2 py-1.5 text-right font-normal">败单均值</th>
+                            <th className="px-2 py-1.5 text-right font-normal">差值(胜-败)</th>
+                            <th className="px-2 py-1.5 text-right font-normal">样本(胜/败)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {result.factor_attribution.factors.map(f => {
+                            const diff = f.win_mean != null && f.lose_mean != null ? f.win_mean - f.lose_mean : null
+                            return (
+                              <tr key={f.factor} className="border-b border-border/50">
+                                <td className="px-2 py-1.5 font-mono text-foreground">
+                                  {f.factor}
+                                  {factorLabels.get(f.factor) && (
+                                    <span className="ml-1 font-sans text-muted">{factorLabels.get(f.factor)}</span>
+                                  )}
+                                </td>
+                                <td className="px-2 py-1.5 text-right font-mono text-bull">{f.win_mean == null ? '—' : f.win_mean}</td>
+                                <td className="px-2 py-1.5 text-right font-mono text-bear">{f.lose_mean == null ? '—' : f.lose_mean}</td>
+                                <td className={`px-2 py-1.5 text-right font-mono ${diff == null ? 'text-muted' : diff >= 0 ? 'text-bull' : 'text-bear'}`}>
+                                  {diff == null ? '—' : (diff >= 0 ? '+' : '') + diff.toFixed(4)}
+                                </td>
+                                <td className="px-2 py-1.5 text-right font-mono text-secondary">{f.win_n}/{f.lose_n}</td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -1970,23 +2219,40 @@ export function StrategyBacktest() {
                     启用基础过滤
                   </label>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    {BASIC_FILTER_FIELDS.map(field => {
+                    {BASIC_FILTER_RANGES.map(field => {
                       const scale = field.scale ?? 1
-                      const value = basicFilter[field.key] == null ? '' : Number(basicFilter[field.key]) / scale
+                      const minValue = basicFilter[field.minKey] == null ? '' : Number(basicFilter[field.minKey]) / scale
+                      const maxValue = basicFilter[field.maxKey] == null ? '' : Number(basicFilter[field.maxKey]) / scale
                       return (
-                        <label key={field.key} className="block">
+                        <label key={field.minKey} className="block">
                           <span className="mb-1 block text-[11px] text-secondary">{field.label}({field.unit})</span>
-                          <input
-                            type="number"
-                            value={value}
-                            min={0}
-                            step={field.unit === '%' ? 0.1 : 0.01}
-                            onChange={e => {
-                              const n = numOrNull(e.target.value)
-                              updateBasicFilter(field.key, n == null ? null : n * scale)
-                            }}
-                            className={INPUT_CLS}
-                          />
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              value={minValue}
+                              min={0}
+                              step={field.step}
+                              placeholder="最小"
+                              onChange={e => {
+                                const n = numOrNull(e.target.value)
+                                updateBasicFilter(field.minKey, n == null ? null : n * scale)
+                              }}
+                              className={INPUT_CLS}
+                            />
+                            <span className="text-[10px] text-muted">~</span>
+                            <input
+                              type="number"
+                              value={maxValue}
+                              min={0}
+                              step={field.step}
+                              placeholder="最大"
+                              onChange={e => {
+                                const n = numOrNull(e.target.value)
+                                updateBasicFilter(field.maxKey, n == null ? null : n * scale)
+                              }}
+                              className={INPUT_CLS}
+                            />
+                          </div>
                         </label>
                       )
                     })}
@@ -1999,6 +2265,9 @@ export function StrategyBacktest() {
                     />
                     排除 ST / 退市
                   </label>
+                  <div className="text-[11px] leading-5 text-muted">
+                    字段与策略编辑器「基础参数」一致，初始值取自策略文件；清空某项即改为不限（会覆盖策略原值）。
+                  </div>
                   <div className="flex flex-wrap gap-1.5">
                     {BOARD_OPTIONS.map(board => {
                       const boards = Array.isArray(basicFilter.boards) ? basicFilter.boards : []
@@ -2262,7 +2531,14 @@ export function StrategyBacktest() {
         </>
       )}
 
-      <TradeKlineModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} />
+      <TradeKlineModal trade={selectedTrade} onClose={() => setChartOverlay(null)} />
+      <PicksSymbolKlineModal
+        symbol={picksSymbol}
+        result={result}
+        periodStart={resultStartDate}
+        periodEnd={resultEndDate}
+        onClose={() => setChartOverlay(null)}
+      />
     </div>
   )
 }

@@ -50,6 +50,7 @@ const MAX_ACTIVE = 3
 let activeTasks: ActiveTask[] = []
 let history: HistoryReport[] = []
 let historyLoaded = false
+let historyLoadPromise: Promise<boolean> | null = null
 const listeners = new Set<() => void>()
 
 let activeDialogTaskId: string | null = null
@@ -94,6 +95,10 @@ function patchTask(id: string, patch: Partial<ActiveTask>) {
 
 // ===== 查询 hooks =====
 
+export function useActiveTasks(): ActiveTask[] {
+  return useSyncExternalStore(subscribe, getActiveSnapshot, () => [])
+}
+
 export function useBubbleTasks(): ActiveTask[] {
   const all = useSyncExternalStore(subscribe, getActiveSnapshot, () => [])
   useSyncExternalStore(subscribe, getDialogSnapshot, () => ({ taskId: null, minimized: false }))
@@ -131,14 +136,29 @@ export function useDialogTask(): { task: ActiveTask | HistoryReport | null; mode
 
 // ===== 动作 =====
 
-export async function loadHistory(): Promise<void> {
+export async function loadHistory(force = false): Promise<boolean> {
+  if (historyLoadPromise) return historyLoadPromise
+  if (historyLoaded && !force) return true
+
+  const pending = (async () => {
+    try {
+      const res = await api.stockAnalysisReportsList()
+      history = res.reports ?? []
+      historyLoaded = true
+      rebuildSnap()
+      emit()
+      return true
+    } catch {
+      return false
+    }
+  })()
+
+  historyLoadPromise = pending
   try {
-    const res = await api.stockAnalysisReportsList()
-    history = res.reports ?? []
-    historyLoaded = true
-    rebuildSnap()
-    emit()
-  } catch { /* 静默 */ }
+    return await pending
+  } finally {
+    if (historyLoadPromise === pending) historyLoadPromise = null
+  }
 }
 
 export async function findLatestHistoryReport(symbol: string): Promise<HistoryReport | null> {
@@ -259,14 +279,45 @@ export function restoreDialog(taskId: string) {
 export async function retryAnalysis(task: { symbol: string; name: string; focus: string }): Promise<{ error?: string }> {
   return startAnalysis(task.symbol, task.name, task.focus)
 }
-export async function deleteReport(reportId: string): Promise<void> {
+export async function deleteReport(reportId: string): Promise<boolean> {
   try {
     await api.stockAnalysisReportDelete(reportId)
     history = history.filter(r => r.id !== reportId)
     rebuildSnap()
     emit()
-  } catch { /* 静默 */ }
+    return true
+  } catch {
+    return false
+  }
 }
-export function openHistoryReport(reportId: string) {
-  activeDialogTaskId = `history:${reportId}`; dialogMinimized = false; rebuildSnap(); emit()
+/**
+ * 打开一份已保存报告。
+ *
+ * 深链可能在历史列表尚未加载时先到达，因此这里自己保证“报告已在 history 中”
+ * 再一次性发布 dialog 快照，避免页面先 load、后 open 产生中间空状态。
+ */
+export async function openHistoryReport(reportId: string): Promise<boolean> {
+  if (!historyLoaded || !history.some(report => report.id === reportId)) {
+    const loaded = await loadHistory(true)
+    if (!loaded) return false
+  }
+
+  if (!history.some(report => report.id === reportId)) return false
+
+  activeDialogTaskId = `history:${reportId}`
+  dialogMinimized = false
+  rebuildSnap()
+  emit()
+  return true
+}
+
+export function resetStockAnalysisStore() {
+  activeTasks = []
+  history = []
+  historyLoaded = false
+  historyLoadPromise = null
+  activeDialogTaskId = null
+  dialogMinimized = false
+  rebuildSnap()
+  emit()
 }

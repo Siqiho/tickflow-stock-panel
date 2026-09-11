@@ -1,0 +1,191 @@
+{
+  "source_files_ok": 1533,
+  "source_files_expected": 1533,
+  "failures": [],
+  "b_fill_verified": [
+    {
+      "rel": "frontend/src/components/data/ActiveJobCard.tsx",
+      "sha256": "ada0b7d194af81adf2420fdb11a5982ae7c93a369c46956a3d44562f2fb12684"
+    },
+    {
+      "rel": "frontend/src/components/data/QuoteConfigCard.tsx",
+      "sha256": "da71e05adb5316021c77670c39d2f85bfc77d0e9c4e53f06eba032b0153fa713"
+    },
+    {
+      "rel": "frontend/src/components/data/SchemaModal.tsx",
+      "sha256": "04d9694c58b559d15dec3fb49595a9d3801e4cf121d92b9e43c9cdcbcb8dbce9"
+    },
+    {
+      "rel": "frontend/src/components/data/ScheduleEditor.tsx",
+      "sha256": "16d06b332c5016ab2895eb3cdbd9b823cbbf62f9ac5c3994b8ccda9d7a76cd20"
+    },
+    {
+      "rel": "frontend/src/components/data/EnrichedRebuildPanel.tsx",
+      "sha256": "d624ab8f3b8b0ffe8daea9d11b2c890041732f7af1f0226cd038cd3720520098"
+    },
+    {
+      "rel": "frontend/src/components/data/DataSourceTracePanel.tsx",
+      "sha256": "1b9c04c2785aa272e169bbf824bd1d5850bc53bcc14edc0c65233dd14c9c8eaf"
+    },
+    {
+      "rel": "frontend/src/components/data/DepthConfigCard.tsx",
+      "sha256": "def0e9f57778ab540f419a8dbbae4df007b5b5601664257c2a79d783f0651eb9"
+    },
+    {
+      "rel": "frontend/src/components/data/MarketPulseSyncCard.tsx",
+      "sha256": "95dc70374dd30d59fa64227252eecf45654e74dbf21d98b570187fc19c146b3f"
+    },
+    {
+      "rel": "frontend/src/components/data/RegimeConfigCard.tsx",
+      "sha256": "2d13b059c258d875d993f8cbcc0c465f78f3e04935d10877d77f101d951ae2fc"
+    },
+    {
+      "rel": "frontend/src/components/data/StatCard.tsx",
+      "sha256": "2cbbb5a7a1274723bafe0faf7d1e5be92fbb6b087a3c6916b960262554f88a03"
+    },
+    {
+      "rel": "frontend/src/components/data/PageSettingsModal.tsx",
+      "sha256": "a7306e5a31f61323b923d042f35fafa5316beec5a2a16c41a862db9cfa0d5e0e"
+    },
+    {
+      "rel": "frontend/src/components/data/DatasetDetailDrawer.tsx",
+      "sha256": "d5a3fcd71b5cbfc44157c4720bdeaef093f86d534485a64cae8a1114aac8adeb"
+    },
+    {
+      "rel": "frontend/src/components/data/DatasetCatalogCard.tsx",
+      "sha256": "8a09818ae6015bbb457253ffdccc228181118740ca0ab4390eef054711cecc2d"
+    },
+    {
+      "rel": "frontend/src/components/data/HithinkSpecialDataSyncCard.tsx",
+      "sha256": "798a6907dbd71efdec83c15f57bc7f54fd3d489f6af066d217ce78ab0b43ee1c"
+    },
+    {
+      "rel": "frontend/src/components/data/DatasetRunHistory.tsx",
+      "sha256": "f29fe6346ac91121717f50f9d8d2e1f6c85344168ebbbe56f1c591134cced2af"
+    },
+    {
+      "rel": "frontend/src/components/data/CoverageBar.tsx",
+      "sha256": "a28c90f10477ab65b274426feec1a30031ad6588c3cb6466303025ccd17786ce"
+    },
+    {
+      "rel": "frontend/src/components/data/DataPageCategoryNav.tsx",
+      "sha256": "11cde74b9b0dcaf0dc22511ab8b4fec40950cedb9f8b19560b0cf46f9a44d009"
+    },
+    {
+      "rel": "frontend/src/components/data/RepairDailyPanel.tsx",
+      "sha256": "906646413170b42ca181f489227d817368bb688c445beeeaa8fd59330f5b820a"
+    },
+    {
+      "rel": "frontend/src/components/data/DataCatalogSection.tsx",
+      "sha256": "30dbe24c3de60b95b3700a9ca261e9691cc06575997404f253b3b261bbedd31c"
+    },
+    {
+      "rel": "frontend/src/components/data/MinuteSyncConfig.tsx",
+      "sha256": "8ef39f1a733a6aecd711d77af816bddb7f56babf2bd172f9151d74edb1e27dfc"
+    },
+    {
+      "rel": "frontend/src/components/data/AdvancedDisclosure.tsx",
+      "sha256": "5c0cb520644decc5409635113c2c45bc73108a89d16bff2cda257faa83e528d5"
+    },
+    {
+      "rel": "frontend/src/components/data/MarginTradingSyncCard.tsx",
+      "sha256": "5ae9482da3695cab1b85c33f465162d81a7d18579bf10eda71127e0bf7165b94"
+    },
+    {
+      "rel": "frontend/src/components/data/ControlPlaneSummary.tsx",
+      "sha256": "ff4a184338c4f9b5413aa09e74ce3e4c502ad651ac2fbeb57cafb4c92b3c26a0"
+    },
+    {
+      "rel": "frontend/src/components/data/SectionTitle.tsx",
+      "sha256": "ac16578db3bb7fe3aaad78ebacb465e9b62ec828bb6b2f5df473bbf44ef51e1d"
+    },
+    {
+      "rel": "frontend/src/components/data/StorageBreakdownCard.tsx",
+      "sha256": "6ac073bd93914cfb3727366239d8207cf76ee16c93fed88f3f955dc335fdc079"
+    },
+    {
+      "rel": "frontend/src/components/data/QualityLineagePanel.tsx",
+      "sha256": "6f27544dcae6b0e2127af417a0d662263501d80e8c4a20a05cd7c9ab826c4026"
+    },
+    {
+      "rel": "frontend/src/components/data/PipelineScopeConfig.tsx",
+      "sha256": "d869e4200d855f1580ac4ceb0c6f25ba17d86511bd22e75c1719009b3a5f9959"
+    },
+    {
+      "rel": "frontend/src/components/data/ExtendHistoryPanel.tsx",
+      "sha256": "4bf051927bdcf13c020105417b13b0d7a0e8b0d144f098b10b610972cd327626"
+    },
+    {
+      "rel": "frontend/src/components/data/AvailabilityBadge.tsx",
+      "sha256": "85654b7672071861ac141502f1add977827fb9b6c25374e93330888829db1582"
+    },
+    {
+      "rel": "frontend/src/components/data/DataOperationsHistory.tsx",
+      "sha256": "bc3f35ece1ba68e652a3ddabcebba15eb9c53ee017253faca44ff3a1e43a37f4"
+    },
+    {
+      "rel": "frontend/src/components/data/SettingsModal.tsx",
+      "sha256": "062e86e5a60c032bda76400f0c87fc910a1ff96aebc1d16afa227c8d34969b00"
+    },
+    {
+      "rel": "frontend/src/components/data/Skeleton.tsx",
+      "sha256": "29770d27c97725eb58727a105f997658b5903e4936f2d5a2471b3e2437679091"
+    },
+    {
+      "rel": "frontend/src/components/data/__tests__/MarginTradingSyncCard.test.tsx",
+      "sha256": "2be8e4efb49b61b22bd61298ccd17c93ca03c37362068bdeb09616b2a456c4ed"
+    },
+    {
+      "rel": "frontend/src/components/data/__tests__/AvailabilityBadge.test.tsx",
+      "sha256": "5164b0de798306ae3f4d1f554cabd80fbccf1ba38e06f528daa3c94c524e882f"
+    },
+    {
+      "rel": "frontend/src/components/data/__tests__/StorageBreakdownCard.test.tsx",
+      "sha256": "ded5a4cfdd82b23445b9f6efa50dbe8e23ee7702e4089b460b692ab2e10b9a7c"
+    },
+    {
+      "rel": "frontend/src/components/data/__tests__/PageSettingsModal.test.tsx",
+      "sha256": "e1ed3b697e8356342f812f87a586afd433bfbdcd7a5e566ef504303ba77e3b1a"
+    },
+    {
+      "rel": "frontend/src/components/data/__tests__/HithinkSpecialDataSyncCard.test.tsx",
+      "sha256": "e06ba761f3c6c3fcc73103ae70b93c8ab694c8dd27114855bdc2f335e88d5ce6"
+    },
+    {
+      "rel": "frontend/src/components/data/__tests__/DatasetDetailDrawer.test.tsx",
+      "sha256": "9c9c963d25bea83363a1ae65f6e1a07e2b555f50b8cf2933914dc512f5ff1417"
+    },
+    {
+      "rel": "frontend/src/components/data/__tests__/catalogFixtures.ts",
+      "sha256": "2ea57ac1bcb83b5bf026f08a34c6b00f7fd611b18b0aaef877916228ffb74749"
+    },
+    {
+      "rel": "frontend/src/components/data/__tests__/DataCatalogSection.test.tsx",
+      "sha256": "2f30cec9fe940f9132b98f1b0d7ac9253e96209037a6282157ab061f9dc99efc"
+    }
+  ],
+  "b_fill_verified_count": 40,
+  "leftover_trashed_paths": [],
+  "venv_after": {
+    "path": "/Users/simon/Trading/one-trading/backend/.venv",
+    "realpath": "/Users/simon/Trading/one-trading/backend/.venv",
+    "islink": false,
+    "python_link": "/Users/simon/.local/share/uv/python/cpython-3.13.5-macos-aarch64-none/bin/python3.13",
+    "python": "3.13.5",
+    "polars": "1.40.1"
+  },
+  "node_after": {
+    "path": "/Users/simon/Trading/one-trading/frontend/node_modules",
+    "realpath": "/Users/simon/Trading/one-trading/frontend/node_modules",
+    "islink": false
+  },
+  "git_head_before": "31216dda527cd4ec177b9cbf6fd1c524dbadbe82",
+  "git_head_after": "31216dda527cd4ec177b9cbf6fd1c524dbadbe82",
+  "git_index_before": "b69739e11d4f0895bfd284dd0b1d409574d55e92e68569f298c7c1ab567e25fd",
+  "git_index_after_git_status_stat_refresh": "9f929fde18b449a74795b33cc9740601932714839054831a511fce9171f1a9bb",
+  "git_index_restored_from_backup": "b69739e11d4f0895bfd284dd0b1d409574d55e92e68569f298c7c1ab567e25fd",
+  "index_unchanged": true,
+  "index_note": "git status refreshed index stat cache; bytes copied back from write-before git-snapshot/index. HEAD untouched. Staged listing unchanged.",
+  "venv_official_not_sandbox": true,
+  "polars": "1.40.1"
+}

@@ -58,7 +58,7 @@ function computeAvgPrice(data: MinuteKlineRow[]): number[] {
   let sumAmt = 0
   let sumVol = 0
   for (const d of data) {
-    sumAmt += d.amount
+    sumAmt += d.amount ?? 0
     sumVol += d.volume * 100
     result.push(sumVol > 0 ? sumAmt / sumVol : d.close)
   }
@@ -600,7 +600,7 @@ export function EChartsIntraday({ data, height = 320, prevClose, date, symbol, o
               <span className="text-muted">量</span>
               <span className="text-secondary">{d.volume.toFixed(0)}</span>
               <span className="text-muted">额</span>
-              <span className="text-secondary">{fmtAmt(d.amount)}</span>
+              <span className="text-secondary">{fmtAmt(d.amount ?? 0)}</span>
             </>
           )}
         </div>

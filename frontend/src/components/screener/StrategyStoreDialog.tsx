@@ -18,7 +18,7 @@ export function StrategyStoreDialog({ open, onClose }: Props) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-3 sm:items-center"
           onClick={e => { if (e.target === e.currentTarget) onClose() }}
         >
           <motion.div
@@ -26,7 +26,7 @@ export function StrategyStoreDialog({ open, onClose }: Props) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
-            className="w-[560px] max-h-[78vh] bg-surface border border-border rounded-card shadow-xl flex flex-col"
+            className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-[560px] flex-col rounded-card border border-border bg-surface shadow-xl sm:max-h-[78vh]"
           >
             {/* 标题 */}
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-border shrink-0">
@@ -34,13 +34,13 @@ export function StrategyStoreDialog({ open, onClose }: Props) {
                 <Store className="h-4 w-4 text-accent" />
                 获取策略
               </span>
-              <button onClick={onClose} className="p-1 rounded hover:bg-elevated transition-colors cursor-pointer">
+              <button aria-label="关闭获取策略" onClick={onClose} className="inline-flex h-11 w-11 items-center justify-center rounded transition-colors hover:bg-elevated sm:h-8 sm:w-8 cursor-pointer">
                 <X className="h-4 w-4 text-muted" />
               </button>
             </div>
 
             {/* 建设中占位内容 */}
-            <div className="flex-1 flex flex-col items-center justify-center px-6 py-14 text-center">
+            <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-5 py-10 text-center sm:px-6 sm:py-14">
               <div className="relative mb-5">
                 <div className="absolute inset-0 blur-2xl bg-amber-400/20 rounded-full" />
                 <div className="relative h-16 w-16 rounded-2xl bg-amber-400/10 border border-amber-400/30 flex items-center justify-center">
@@ -55,7 +55,7 @@ export function StrategyStoreDialog({ open, onClose }: Props) {
                 敬请期待。
               </p>
 
-              <div className="mt-6 flex items-center gap-4 text-[11px] text-muted">
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-3 text-[11px] text-muted sm:gap-4">
                 <span className="flex items-center gap-1">
                   <Download className="h-3.5 w-3.5" />
                   一键下载
@@ -72,7 +72,7 @@ export function StrategyStoreDialog({ open, onClose }: Props) {
             <div className="flex justify-end px-4 py-2.5 border-t border-border shrink-0">
               <button
                 onClick={onClose}
-                className="inline-flex items-center gap-1.5 h-7 px-4 rounded-btn
+                className="inline-flex min-h-11 items-center gap-1.5 px-4 rounded-btn sm:min-h-7
                   border border-border bg-surface text-xs font-medium text-secondary
                   hover:text-accent hover:border-accent/50 transition-colors cursor-pointer"
               >

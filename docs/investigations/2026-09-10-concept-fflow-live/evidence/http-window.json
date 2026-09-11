@@ -1,0 +1,155 @@
+{
+  "anon_401": true,
+  "worker_listen": true,
+  "anon_status": 401,
+  "5": {
+    "http_status": 200,
+    "end": "2026-09-09",
+    "start": "2026-09-03",
+    "window_complete": true,
+    "full_count": 504,
+    "covered_count": 504,
+    "freshness_status": null,
+    "items": [
+      {
+        "code": "BK0714",
+        "name": "5G概念",
+        "main_net": 25370311680.0
+      },
+      {
+        "code": "BK1650",
+        "name": "通信技术",
+        "main_net": 23682433024.0
+      },
+      {
+        "code": "BK1136",
+        "name": "光通信模块",
+        "main_net": 23587281664.0
+      },
+      {
+        "code": "BK1128",
+        "name": "CPO概念",
+        "main_net": 18430245888.0
+      },
+      {
+        "code": "BK0877",
+        "name": "PCB",
+        "main_net": 12527000064.0
+      },
+      {
+        "code": "BK0812",
+        "name": "贬值受益",
+        "main_net": 11650084352.0
+      },
+      {
+        "code": "BK0596",
+        "name": "融资融券",
+        "main_net": -33478369280.0
+      },
+      {
+        "code": "BK0821",
+        "name": "MSCI中国",
+        "main_net": -28149469184.0
+      },
+      {
+        "code": "BK0800",
+        "name": "人工智能",
+        "main_net": -27732103936.0
+      },
+      {
+        "code": "BK0891",
+        "name": "国产芯片",
+        "main_net": -27297565952.0
+      },
+      {
+        "code": "BK1637",
+        "name": "东方财富热股",
+        "main_net": -26045243648.0
+      },
+      {
+        "code": "BK0879",
+        "name": "标准普尔",
+        "main_net": -19147722752.0
+      }
+    ],
+    "exact_match_parquet": true
+  },
+  "63": {
+    "http_status": 200,
+    "end": "2026-09-09",
+    "start": "2026-06-12",
+    "window_complete": true,
+    "full_count": 490,
+    "covered_count": 504,
+    "freshness_status": null,
+    "items": [
+      {
+        "code": "BK0986",
+        "name": "CAR-T细胞疗法",
+        "main_net": 4222771840.0
+      },
+      {
+        "code": "BK1086",
+        "name": "粮食概念",
+        "main_net": 2187842174.0
+      },
+      {
+        "code": "BK0907",
+        "name": "转基因",
+        "main_net": 1105692557.0
+      },
+      {
+        "code": "BK1179",
+        "name": "房屋检测",
+        "main_net": 894168320.0
+      },
+      {
+        "code": "BK0882",
+        "name": "猪肉概念",
+        "main_net": 350168320.0
+      },
+      {
+        "code": "BK1025",
+        "name": "预制菜概念",
+        "main_net": 269014528.0
+      },
+      {
+        "code": "BK0596",
+        "name": "融资融券",
+        "main_net": -1799948816384.0
+      },
+      {
+        "code": "BK0867",
+        "name": "富时罗素",
+        "main_net": -1246219931648.0
+      },
+      {
+        "code": "BK0821",
+        "name": "MSCI中国",
+        "main_net": -1218660945920.0
+      },
+      {
+        "code": "BK0804",
+        "name": "深股通",
+        "main_net": -998877720576.0
+      },
+      {
+        "code": "BK1663",
+        "name": "大盘股",
+        "main_net": -919063941120.0
+      },
+      {
+        "code": "BK0707",
+        "name": "沪股通",
+        "main_net": -857258627072.0
+      }
+    ],
+    "exact_match_parquet": true
+  },
+  "industry_5_freshness": {
+    "calendar_covers": false,
+    "freshness_status": "unknown",
+    "freshness_note": "无法确定（交易日历未覆盖到当日）",
+    "end": "2026-09-09"
+  }
+}

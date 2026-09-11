@@ -1,14 +1,17 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Repeat, Sparkles, ArrowDownUp, Search } from 'lucide-react'
+import { X, Repeat, Sparkles, ArrowDownUp, Search, RefreshCw, AlertCircle } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { cn } from '@/lib/cn'
 import { fmtPct } from '@/lib/format'
+import { MarkdownRenderer } from '@/components/financials/MarkdownRenderer'
 
 interface Props {
   onClose: () => void
+  /** 维度: concept 概念(默认) / industry 行业 */
+  kind?: 'concept' | 'industry'
 }
 
 const DEFAULT_DAYS = 12
@@ -35,16 +38,45 @@ function shortDate(s: string): string {
   return `${Number(m[2])}/${m[3]}`
 }
 
-export function RpsRotationDialog({ onClose }: Props) {
+export function RpsRotationDialog({ onClose, kind = 'concept' }: Props) {
+  const dimLabel = kind === 'industry' ? '行业' : '概念'
   const [days, setDays] = useState(DEFAULT_DAYS)
   const [reversed, setReversed] = useState(false)        // false=高→低, true=低→高
-  const [selected, setSelected] = useState<string | null>(null)  // 点中的概念名, 高亮追踪
+  const [selected, setSelected] = useState<string | null>(null)  // 点中的成员名, 高亮追踪
   const [search, setSearch] = useState('')
+  const [level, setLevel] = useState<number>(kind === 'industry' ? 2 : 0)
 
-  // 数据请求: React Query 缓存, 同 days 5 分钟内重开秒开
+  // ---- AI 轮动分析状态 (组件内, 不建全局 store: 切页即关对话框) ----
+  const [analysis, setAnalysis] = useState('')
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysisError, setAnalysisError] = useState('')
+  const [analysisMeta, setAnalysisMeta] = useState<{ summary?: string } | null>(null)
+  const [focus, setFocus] = useState('')
+
+  const runAnalysis = useCallback(async (daysParam: number, focusParam: string) => {
+    setAnalyzing(true)
+    setAnalysis('')
+    setAnalysisError('')
+    setAnalysisMeta(null)
+    try {
+      const lv = kind === 'industry' ? level : undefined
+      for await (const ev of api.rotationAnalyzeStream(daysParam, focusParam, kind, lv)) {
+        if (ev.type === 'meta') setAnalysisMeta({ summary: ev.summary })
+        else if (ev.type === 'delta') setAnalysis(a => a + (ev.content ?? ''))
+        else if (ev.type === 'error') setAnalysisError(ev.message ?? '未知错误')
+      }
+    } catch (e) {
+      setAnalysisError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAnalyzing(false)
+    }
+  }, [kind, level])
+
+  // 数据请求: React Query 缓存, 同 (kind, level, days) 5 分钟内重开秒开
+  const lvParam = kind === 'industry' ? level : undefined
   const { data, isLoading, error } = useQuery({
-    queryKey: QK.rpsRotation(days),
-    queryFn: () => api.rpsRotation(days),
+    queryKey: QK.rpsRotation(days, kind, lvParam),
+    queryFn: () => api.rpsRotation(days, kind, lvParam),
     staleTime: 5 * 60 * 1000,
   })
 
@@ -68,7 +100,14 @@ export function RpsRotationDialog({ onClose }: Props) {
   // 监听滚动容器 scrollTop, 只渲染 [firstIdx, lastIdx] 范围内的行。
   // 387 行只画可视的 ~25 行 + overscan, DOM 恒定 ~30 行 × N 列, 滚动 60fps。
   const scrollRef = useRef<HTMLDivElement>(null)
+  const analysisRef = useRef<HTMLDivElement>(null)
   const [visibleRange, setVisibleRange] = useState({ start: 0, end: 25 })
+
+  useEffect(() => {
+    if (!analyzing) return
+    const el = analysisRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [analysis, analyzing])
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current
@@ -186,27 +225,89 @@ export function RpsRotationDialog({ onClose }: Props) {
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-border shrink-0">
             <div className="flex items-center gap-2">
               <Repeat className="h-4 w-4 text-accent" />
-              <span className="text-sm font-medium text-foreground">概念涨幅轮动</span>
+              <span className="text-sm font-medium text-foreground">{dimLabel}涨幅轮动</span>
               <span className="text-[11px] text-muted">
-                {conceptCount > 0 ? `${dates.length} 天 · ${conceptCount} 个概念` : '暂无数据'}
+                {conceptCount > 0 ? `${dates.length} 天 · ${conceptCount} 个${dimLabel}` : '暂无数据'}
               </span>
+              {kind === "industry" && (
+                <div className="ml-1 flex items-center rounded-btn border border-border bg-base/60 p-0.5">
+                  {[1, 2, 3].map(lv => (
+                    <button
+                      key={lv}
+                      onClick={() => { setLevel(lv); setSelected(null) }}
+                      className={cn(
+                        "h-5 rounded-[5px] px-2 text-[10px] font-medium transition-colors",
+                        level === lv ? "bg-accent text-white shadow-sm" : "text-secondary hover:text-foreground",
+                      )}
+                    >
+                      {lv}级
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <button onClick={onClose} className="p-1 rounded hover:bg-elevated transition-colors cursor-pointer">
               <X className="h-4 w-4 text-muted" />
             </button>
           </div>
 
-          {/* 上半区: AI 分析占位 */}
-          <div className="shrink-0 border-b border-border">
-            <div className="flex items-center gap-1.5 px-4 py-1.5 bg-elevated/30">
-              <Sparkles className="h-3.5 w-3.5 text-accent/60" />
-              <span className="text-[11px] text-muted">AI 轮动分析</span>
-            </div>
-            <div className="px-4 py-3 text-center">
-              <div className="inline-flex items-center gap-1.5 text-[11px] text-muted/60">
-                <Sparkles className="h-3.5 w-3.5" />
-                <span>AI 轮动分析功能开发中,敬请期待</span>
+          {/* 上半区: AI 轮动分析 */}
+          <div className="shrink-0 border-b border-border flex flex-col max-h-[42%]">
+            <div className="flex items-center gap-2 px-4 py-1.5 bg-elevated/30 shrink-0">
+              <Sparkles className={cn("h-3.5 w-3.5 text-accent/60", analyzing && "animate-pulse")} />
+              <span className="text-[11px] text-muted shrink-0">AI 轮动分析</span>
+              {analysisMeta?.summary && (
+                <span className="text-[11px] text-accent/80 truncate">{analysisMeta.summary}</span>
+              )}
+              <div className="flex items-center gap-1.5 ml-auto">
+                <input
+                  type="text"
+                  value={focus}
+                  onChange={e => setFocus(e.target.value)}
+                  placeholder="关注点(可选)"
+                  disabled={analyzing}
+                  className="w-28 px-2 py-0.5 text-[11px] bg-elevated/50 border border-border rounded-btn text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent/40 disabled:opacity-50"
+                />
+                <button
+                  onClick={() => runAnalysis(days, focus)}
+                  disabled={analyzing}
+                  className={cn(
+                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-btn text-[11px] transition-colors cursor-pointer border",
+                    analyzing
+                      ? "opacity-60 cursor-not-allowed border-border text-muted"
+                      : "bg-accent/10 text-accent border-accent/30 hover:bg-accent/20",
+                  )}
+                >
+                  {analyzing
+                    ? <><RefreshCw className="h-3 w-3 animate-spin" />分析中</>
+                    : analysis
+                      ? <><RefreshCw className="h-3 w-3" />重新分析</>
+                      : <><Sparkles className="h-3 w-3" />生成分析</>}
+                </button>
               </div>
+            </div>
+            <div ref={analysisRef} className="flex-1 min-h-0 overflow-auto">
+              {analysisError ? (
+                <div className="flex items-center gap-2 px-4 py-4 text-[11px] text-danger">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                  <span>{analysisError}</span>
+                  <button
+                    onClick={() => runAnalysis(days, focus)}
+                    className="ml-auto text-accent hover:underline shrink-0"
+                  >重试</button>
+                </div>
+              ) : analysis || analyzing ? (
+                <div className="px-4 py-2.5 text-[12px] leading-relaxed">
+                  <MarkdownRenderer content={analysis} />
+                  {analyzing && (
+                    <span className="inline-block w-1.5 h-3.5 bg-accent animate-pulse align-middle ml-0.5" />
+                  )}
+                </div>
+              ) : (
+                <div className="px-4 py-4 text-center text-[11px] text-muted/60">
+                  点击「生成分析」,AI 将从主线研判 / 新晋强势 / 退潮预警 / 机构vs游资 等角度分析最近 {days} 天的{dimLabel}轮动
+                </div>
+              )}
             </div>
           </div>
 
@@ -244,7 +345,7 @@ export function RpsRotationDialog({ onClose }: Props) {
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="搜索概念定位…"
+                placeholder={`搜索${dimLabel}定位…`}
                 className="w-full pl-7 pr-2 py-1 text-[11px] bg-elevated/50 border border-border rounded-btn text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent/40"
               />
             </div>
@@ -270,7 +371,7 @@ export function RpsRotationDialog({ onClose }: Props) {
               </div>
             ) : rowCount === 0 ? (
               <div className="flex items-center justify-center py-16 text-[11px] text-muted">
-                暂无概念数据,请先在「概念分析」页配置并获取概念数据源
+                {`暂无${dimLabel}数据,请先在「${kind === "industry" ? "行业分析" : "概念分析"}」页配置并获取${dimLabel}数据源`}
               </div>
             ) : (
               <div
@@ -319,7 +420,7 @@ export function RpsRotationDialog({ onClose }: Props) {
           {/* 底部提示 */}
           <div className="px-4 py-1.5 border-t border-border shrink-0">
             <span className="text-[10px] text-muted">
-              每列各自按当日涨幅排序 · 点击单元格追踪概念在各日的排名变化
+              每列各自按当日涨幅排序 · 点击单元格追踪{dimLabel}在各日的排名变化
             </span>
           </div>
         </motion.div>

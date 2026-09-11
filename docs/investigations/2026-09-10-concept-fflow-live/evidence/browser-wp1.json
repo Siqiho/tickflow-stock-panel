@@ -1,0 +1,33 @@
+{
+  "url": "http://127.0.0.1:3011/",
+  "title": "one-trading · Quant Terminal",
+  "logged_in": true,
+  "worker_started": "2026-09-10 14:17:27 +0800",
+  "worker_pid": 83019,
+  "reload_parent_pid": 82981,
+  "concept_5d": {
+    "label": "近5个交易日累计 · 概念日线窗口排名",
+    "start": "2026-09-03",
+    "end": "2026-09-09",
+    "coverage": "504/504",
+    "full": "504/504",
+    "top_in": ["5G概念", "253.70亿"],
+    "top_out": ["融资融券", "-334.78亿"],
+    "freshness_line": false
+  },
+  "concept_63d": {
+    "label": "近63个交易日累计 · 概念日线窗口排名",
+    "start": "2026-06-12",
+    "end": "2026-09-09",
+    "coverage": "504/504",
+    "full": "490/504",
+    "top_in": ["CAR-T细胞疗法", "42.23亿"],
+    "left_0831_window": true,
+    "freshness_line": false
+  },
+  "concept_6m": {
+    "label": "当日快照 · 半年窗口数据不足",
+    "snapshot_as_of": "2026-09-02 12:41:07",
+    "top_in": ["军工", "25.20亿"]
+  }
+}

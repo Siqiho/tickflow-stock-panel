@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { HermesPageAgentHost } from '@/components/HermesPageAgentHost'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { useQuoteStream } from '@/lib/useQuoteStream'
@@ -8,7 +9,6 @@ import { AlertToastContainer } from '@/components/AlertToast'
 import { AiAnalysisHost } from '@/components/financials/AiAnalysisHost'
 import { AiReportBubble } from '@/components/financials/AiReportBubble'
 import { StockAnalysisHost } from '@/components/stock-analysis/StockAnalysisHost'
-import { StockAnalysisBubble } from '@/components/stock-analysis/StockAnalysisBubble'
 import {
   useCapabilities,
   useSettings,
@@ -24,35 +24,46 @@ import { tierRank } from '@/lib/capability-labels'
 import {
   Star,
   ScanSearch,
-  History,
   FileText,
   Settings,
-  Key,
   Database,
   Loader2,
   LayoutDashboard,
   Tags,
   TrendingUp,
   Flame,
+  Gauge,
   BarChart3,
   Sparkles,
   Layers3,
   Landmark,
   Cable,
-  RadioTower,
   CheckCircle2,
   BookOpenCheck,
   Menu,
   Moon,
   Sun,
   X,
+  UsersRound,
+  Newspaper,
 } from 'lucide-react'
 import { Logo } from './Logo'
 import { api, type IndexQuote } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { findDataSource } from '@/lib/dataSources'
 import { setCurrentTotal as setAlertTotal, useUnreadAlerts } from '@/lib/monitorBadge'
-import { useRuntimeRouteLogger } from '@/lib/runtimeLogger'
+import { setRuntimeLogUploadEnabled, useRuntimeRouteLogger } from '@/lib/runtimeLogger'
 import { useTheme, useThemeSync } from '@/lib/theme'
+import {
+  applySavedNavOrder,
+  builtinSidebarItems,
+  isCatalogEntryVisible,
+  isGroupNavPath,
+  isPathInNavGroup,
+  permissionFromSettings,
+  pinAdminBeforeData,
+  TRADE_PATH,
+} from '@/lib/navGroups'
 
 // 品牌色 — 只用于 logo / brand 区域,不影响功能语义色
 const BRAND = '#8B5CF6'
@@ -66,22 +77,24 @@ const CORE_INDEXES = [
 
 type CoreIndex = (typeof CORE_INDEXES)[number]
 
-const nav = [
-  { to: '/',                label: '看板',     icon: LayoutDashboard },
-  { to: '/watchlist',  label: '自选',   icon: Star },
-  { to: '/screener',   label: '策略',   icon: ScanSearch },
-  { to: '/backtest',   label: '回测',   icon: History },
-  { to: '/stock-analysis',    label: '个股分析', icon: TrendingUp },
-  { to: '/limit-ladder', label: '连板梯队', icon: Flame },
-  { to: '/concept-analysis', label: '概念分析', icon: Layers3 },
-  { to: '/industry-analysis', label: '行业分析', icon: Landmark },
-  { to: '/financials', label: '财务分析', icon: FileText },
-  { to: '/monitor', label: '监控中心', icon: RadioTower },
-  { to: '/review',      label: '复盘',   icon: BookOpenCheck },
-  { to: '/indices', label: '指数', icon: BarChart3 },
-  { to: '/trading', label: '交易', icon: Cable },
-  { to: '/data',       label: '数据',   icon: Database },
-] as const
+const NAV_ICONS = {
+  '/': LayoutDashboard,
+  '/ai': Sparkles,
+  '/watchlist': Star,
+  '/quant': ScanSearch,
+  '/stock-analysis': TrendingUp,
+  '/limit-ladder': Flame,
+  '/concept-analysis': Layers3,
+  '/industry-analysis': Landmark,
+  '/financials': FileText,
+  '/trade': Cable,
+  '/regime': Gauge,
+  '/review': BookOpenCheck,
+  '/indices': BarChart3,
+  '/admin/users': UsersRound,
+  '/data': Database,
+  '/news': Newspaper,
+} as const
 
 function fmtIndexValue(v: number | null | undefined) {
   if (v == null || Number.isNaN(Number(v))) return '--'
@@ -91,6 +104,43 @@ function fmtIndexValue(v: number | null | undefined) {
 function fmtIndexPct(v: number | null | undefined) {
   if (v == null || Number.isNaN(Number(v))) return '--'
   return `${Number(v) >= 0 ? '+' : ''}${Number(v).toFixed(2)}%`
+}
+
+/**
+ * 组入口不能用 NavLink：RR 6.30.3 用内部 isActive 决定 aria-current，
+ * `/quant` 对不上 `/screener`，传入 aria-current="page" 仍会被写成 undefined。
+ * 普通叶子继续走 NavLink，保留 `/` 精确匹配和 `/ai` → `/ai/hermes` 前缀匹配。
+ */
+function AppNavLink({
+  to,
+  onClick,
+  className,
+  children,
+}: {
+  to: string
+  onClick?: () => void
+  className: (active: boolean) => string
+  children: ReactNode
+}) {
+  const { pathname } = useLocation()
+  if (isGroupNavPath(to)) {
+    const active = isPathInNavGroup(pathname, to)
+    return (
+      <Link
+        to={to}
+        onClick={onClick}
+        aria-current={active ? 'page' : undefined}
+        className={className(active)}
+      >
+        {children}
+      </Link>
+    )
+  }
+  return (
+    <NavLink to={to} onClick={onClick} className={({ isActive }) => className(isActive)}>
+      {children}
+    </NavLink>
+  )
 }
 
 function indexPctClass(v: number | null | undefined) {
@@ -154,144 +204,13 @@ function SidebarIndexQuotes({
   )
 }
 
-// ===== 档位卡片 =====
-function TierBadge({
-  label,
-  hasKey,
-  onNavigate,
-}: {
-  label: string
-  hasKey?: boolean
-  onNavigate?: () => void
-}) {
-  const base = label.split(' ')[0].split('+')[0].toLowerCase()
-  const isNone = base === 'none'
-
-  const tierConfig: Record<string, {
-    desc: string
-    tagBg: React.CSSProperties
-    dotStyle: React.CSSProperties
-    labelTextStyle: React.CSSProperties
-  }> = {
-    none: {
-      desc: '未配置 Key · 仅历史日K',
-      tagBg: { background: 'rgba(113,113,122,0.15)' },
-      dotStyle: { background: '#52525b' },
-      labelTextStyle: { color: '#71717a' },
-    },
-    free: {
-      desc: '基础日K · 自选实时',
-      tagBg: { background: 'rgba(113,113,122,0.3)' },
-      dotStyle: { background: '#71717a' },
-      labelTextStyle: { color: '#a1a1aa' },
-    },
-    starter: {
-      desc: '批量同步 · 行情池',
-      tagBg: { background: 'rgba(59,130,246,0.2)' },
-      dotStyle: { background: '#3b82f6' },
-      labelTextStyle: { color: '#60a5fa' },
-    },
-    pro: {
-      desc: '分钟K · 实时行情 · 盘口',
-      tagBg: { background: 'linear-gradient(135deg, rgba(168,85,247,0.2), rgba(124,58,237,0.15))' },
-      dotStyle: { background: 'linear-gradient(135deg, #a855f7, #7c3aed)' },
-      labelTextStyle: { background: 'linear-gradient(135deg, #c084fc, #a855f7)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' },
-    },
-    expert: {
-      desc: 'WebSocket · 财务数据',
-      tagBg: { background: 'linear-gradient(135deg, rgba(59,130,246,0.2), rgba(168,85,247,0.2), rgba(245,158,11,0.2))' },
-      dotStyle: { background: 'linear-gradient(135deg, #3b82f6, #a855f7, #f59e0b)' },
-      labelTextStyle: { background: 'linear-gradient(135deg, #60a5fa, #c084fc, #fbbf24)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' },
-    },
-  }
-
-  const t = tierConfig[base] || tierConfig.none
-  // none 档显示英文「None」,无 label 时也显示「None」
-  const displayLabel = isNone ? 'None' : (label || 'None')
-
-  return (
-    <NavLink
-      to="/settings?tab=account"
-      onClick={onNavigate}
-      className="mt-2.5 group block -mx-2.5"
-      title="API 设置"
-    >
-      <div className="relative overflow-hidden rounded-lg border border-blue-400/20 bg-gradient-to-br from-blue-500/[0.12] via-surface to-surface px-3 py-2 transition-all hover:border-blue-400/35 hover:from-blue-500/[0.16]">
-        <div className="absolute -right-5 -top-6 h-14 w-14 rounded-full bg-blue-500/10 blur-2xl" />
-        <div className="relative flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-400/10 text-blue-500 dark:text-blue-300 ring-1 ring-blue-400/20">
-            <Key className="h-3.5 w-3.5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-medium text-foreground">TickFlow</span>
-              <span
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ ...t.dotStyle, ...(base === 'expert' ? { animation: 'pulse 2s infinite' } : {}) }}
-              />
-            </div>
-            <div className="mt-0.5 truncate text-[10px] leading-tight text-muted">
-              {isNone && !hasKey ? '配置 Key 解锁更多能力' : t.desc}
-            </div>
-          </div>
-          <span
-            className="inline-flex h-[18px] max-w-[68px] shrink-0 items-center overflow-hidden rounded px-1.5 text-[10px] font-bold font-mono leading-none"
-            style={t.tagBg}
-          >
-            <span className="truncate" style={t.labelTextStyle}>{displayLabel}</span>
-          </span>
-          <Settings className="h-3 w-3 shrink-0 text-muted group-hover:text-blue-500 dark:group-hover:text-blue-300 transition-colors" />
-        </div>
-
-      </div>
-    </NavLink>
-  )
-}
-
-function AIConfigBadge({
-  configured,
-  model,
-  onNavigate,
-}: {
-  configured?: boolean
-  model?: string
-  onNavigate?: () => void
-}) {
-  return (
-    <NavLink
-      to="/settings?tab=ai"
-      onClick={onNavigate}
-      className="mt-2 group block -mx-2.5"
-      title="AI 配置"
-    >
-      <div className="relative overflow-hidden rounded-lg border border-purple-400/20 bg-gradient-to-br from-purple-500/[0.12] via-surface to-surface px-3 py-2 transition-all hover:border-purple-400/35 hover:from-purple-500/[0.16]">
-        <div className="absolute -right-5 -top-6 h-14 w-14 rounded-full bg-purple-500/10 blur-2xl" />
-        <div className="relative flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-purple-400/10 text-purple-500 dark:text-purple-300 ring-1 ring-purple-400/20">
-            <Sparkles className="h-3.5 w-3.5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-medium text-foreground">AI 配置</span>
-              <span className={`h-1.5 w-1.5 rounded-full ${configured ? 'bg-bear' : 'bg-warning'}`} />
-            </div>
-            <div className="mt-0.5 truncate text-[10px] leading-tight text-muted">
-              {configured ? (model || '已接入模型') : '接入策略生成模型'}
-            </div>
-          </div>
-          <Settings className="h-3 w-3 text-muted group-hover:text-purple-500 dark:group-hover:text-purple-300 transition-colors" />
-        </div>
-      </div>
-    </NavLink>
-  )
-}
-
 function RealtimeSidebarControls({
   realtimeEnabled,
   isRunning,
   isTrading,
   isWatchlistMode,
   realtimeModeLabel,
+  realtimeProviderName,
   realtimeAllowed,
   isPending,
   onToggle,
@@ -307,6 +226,7 @@ function RealtimeSidebarControls({
   isTrading: boolean
   isWatchlistMode: boolean
   realtimeModeLabel: string
+  realtimeProviderName?: string | null
   realtimeAllowed: boolean
   isPending: boolean
   onToggle: (enabled: boolean) => void
@@ -329,7 +249,7 @@ function RealtimeSidebarControls({
                 : 'bg-muted'
           }`} />
           <span className="truncate text-xs text-secondary">
-            实时行情 · {realtimeModeLabel}
+            实时行情 · {realtimeProviderName || realtimeModeLabel}
           </span>
           <button
             type="button"
@@ -389,8 +309,15 @@ export function Layout() {
   // ===== 共享 hooks (替代内联 useQuery) =====
   const { data: caps } = useCapabilities()
   const { data: settingsState } = useSettings()
+  const location = useLocation()
+  const navPerm = permissionFromSettings(settingsState)
+  const isAdmin = navPerm.isAdmin
   const { data: versionData } = useVersion()
   const { data: prefs } = usePreferences()
+  const { data: dataSources } = useQuery({
+    queryKey: QK.dataSources,
+    queryFn: api.dataSources,
+  })
   // poll=true: 全局唯一开启条件轮询 (非交易时段 60s 兜底, 交易时段靠 SSE)
   const { data: quoteStatus } = useQuoteStatus({ poll: true })
   const { data: analysisMenus } = useQuery({
@@ -398,10 +325,15 @@ export function Layout() {
     queryFn: api.analysisMenus,
   })
 
+  useEffect(() => {
+    if (settingsState) setRuntimeLogUploadEnabled(isAdmin)
+  }, [isAdmin, settingsState])
+
   // 数据同步状态轮询: 有活跃 job 时「数据」菜单项显示转圈
   const { data: pipelineJobs } = useQuery({
     queryKey: QK.pipelineJobs,
     queryFn: () => api.pipelineJobs(1),
+    enabled: isAdmin,
     refetchInterval: (query) => (query.state.data?.active_id ? 2000 : 15000),
     refetchIntervalInBackground: true,
   })
@@ -411,6 +343,7 @@ export function Layout() {
   // 闪烁约 3 秒后自动消失。
   const [dataSyncJustDone, setDataSyncJustDone] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [pageAgentOpen, setPageAgentOpen] = useState(false)
   const prevSyncingRef = useRef(false)
   const appShellRef = useRef<HTMLDivElement>(null)
   const mobileNavButtonRef = useRef<HTMLButtonElement>(null)
@@ -542,6 +475,11 @@ export function Layout() {
   // none/free: 自选实时（公开源可兜底）；starter+: 全市场
   const isWatchlistMode = tier <= 0
   const realtimeModeLabel = isWatchlistMode ? '自选股' : '全市场'
+  // 插件/自定义源显示源名, tickflow 不显示
+  const realtimeProvider = prefs?.realtime_data_provider
+  const realtimeProviderName = realtimeProvider && realtimeProvider !== 'tickflow'
+    ? (findDataSource(dataSources, realtimeProvider)?.display_name || realtimeProvider)
+    : null
   const quoteFeat = caps?.features?.quote ?? caps?.quote
   const realtimeAllowed = quoteFeat?.available ?? (caps ? caps.capabilities?.['quote.by_symbol'] != null : true)
 
@@ -549,6 +487,7 @@ export function Layout() {
   const alertsTotalQuery = useQuery({
     queryKey: ['alerts-total'],
     queryFn: () => api.alertsList({ days: 7, limit: 1 }),
+    enabled: isAdmin,
     refetchInterval: 15000,
     refetchIntervalInBackground: true,
     select: (data) => data.total,
@@ -564,22 +503,25 @@ export function Layout() {
     .filter(m => m.visible)
     .map(m => ({ to: `/analysis/${m.id}`, label: m.label, icon: m.icon === 'tags' ? Tags : BarChart3 }))
 
-  const allNav = [...nav, ...analysisNav]
-  const savedOrder = prefs?.nav_order ?? []
-
-  const navItems = savedOrder.length > 0
-    ? (() => {
-        const byTo = new Map(allNav.map(n => [n.to, n]))
-        const ordered = savedOrder
-          .map(id => byTo.get(id) ?? byTo.get(`/analysis/${id}`))
-          .filter(Boolean)
-        const seen = new Set(ordered.map(n => n!.to))
-        return [...ordered as typeof allNav, ...allNav.filter(n => !seen.has(n.to))]
-      })()
-    : allNav
-
+  const baseNav = builtinSidebarItems()
+    .filter(item => !item.adminOnly || (navPerm.settingsReady && navPerm.isAdmin))
+    .map(item => ({
+      to: item.to,
+      label: item.label,
+      icon: NAV_ICONS[item.to as keyof typeof NAV_ICONS] ?? BarChart3,
+      beta: item.beta,
+    }))
+  const allNav = [...baseNav, ...analysisNav]
   const hiddenIds = new Set(prefs?.nav_hidden ?? [])
-  const visibleNavItems = navItems.filter(n => !hiddenIds.has(n.to) && !hiddenIds.has(n.to.replace(/^\/analysis\//, '')))
+  const orderedNav = applySavedNavOrder(
+    allNav.map(item => ({ ...item, id: item.to })),
+    prefs?.nav_order ?? [],
+  )
+  const visibleNavItems = orderedNav.filter(item => (
+    isCatalogEntryVisible(item.to, hiddenIds, navPerm, item.to === '/admin/users')
+  ))
+  const menuNavItems = pinAdminBeforeData(visibleNavItems, isAdmin)
+  const onMonitorPage = location.pathname === '/monitor'
 
   const handleToggle = async (enabled: boolean) => {
     // 开启时重新校验档位
@@ -611,28 +553,30 @@ export function Layout() {
     >
       <header
         data-testid="mobile-header"
-        className="flex h-14 items-center justify-between border-b border-border bg-surface px-4 md:hidden"
+        className="grid h-14 grid-cols-[2.75rem_1fr_auto] items-center gap-3 border-b border-border bg-surface px-3 md:hidden"
       >
-        <div className="flex items-center gap-2.5">
+        <button
+          ref={mobileNavButtonRef}
+          type="button"
+          onClick={() => setMobileNavOpen(true)}
+          className="inline-flex h-11 w-11 items-center justify-center rounded-btn text-foreground/80 transition-colors hover:bg-elevated hover:text-foreground"
+          aria-label="打开导航"
+          aria-expanded={mobileNavOpen}
+          aria-controls="mobile-navigation-dialog"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+
+        <span data-testid="mobile-version" className="justify-self-center font-mono text-[10px] text-muted">
+          {version ?? ''}
+        </span>
+
+        <div data-testid="mobile-brand" className="flex items-center gap-2.5 justify-self-end">
           <Logo size={24} className="text-violet-500" />
           <div className="font-mono text-xs font-bold leading-tight tracking-[0.06em]">
             <div>one</div>
             <div>trading</div>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] text-muted">{version ?? ''}</span>
-          <button
-            ref={mobileNavButtonRef}
-            type="button"
-            onClick={() => setMobileNavOpen(true)}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-btn text-foreground/80 transition-colors hover:bg-elevated hover:text-foreground"
-            aria-label="打开导航"
-            aria-expanded={mobileNavOpen}
-            aria-controls="mobile-navigation-dialog"
-          >
-            <Menu className="h-5 w-5" />
-          </button>
         </div>
       </header>
 
@@ -671,62 +615,46 @@ export function Layout() {
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <div className="border-b border-border px-5 pb-3">
-                <TierBadge
-                  label={caps?.label ?? ''}
-                  hasKey={settingsState?.mode !== 'none'}
-                  onNavigate={() => setMobileNavOpen(false)}
-                />
-                <AIConfigBadge
-                  configured={settingsState?.ai_configured ?? settingsState?.has_ai_key}
-                  model={settingsState?.ai_model}
-                  onNavigate={() => setMobileNavOpen(false)}
-                />
-              </div>
-
               <nav aria-label="移动端主导航" className="space-y-0.5 px-3 py-3">
-                {visibleNavItems.map(({ to, label, icon: Icon }) => (
-                  <NavLink
+                {menuNavItems.map(({ to, label, icon: Icon }) => (
+                  <AppNavLink
                     key={to}
                     to={to}
                     onClick={() => setMobileNavOpen(false)}
-                    className={({ isActive }) =>
+                    className={active =>
                       cn(
                         'flex items-center gap-3 rounded-btn px-3 py-2.5 text-sm transition-colors duration-150 ease-smooth',
-                        isActive
+                        active
                           ? 'bg-elevated font-medium text-foreground'
                           : 'text-foreground/80 hover:bg-elevated hover:text-foreground',
                       )
                     }
                   >
-                    {({ isActive }) => (
-                      <>
-                        <Icon className="h-4 w-4 shrink-0" />
-                        <span className="flex-1">{label}</span>
-                        {(to === '/stock-analysis' || to === '/review') && (
-                          <span className="inline-flex items-center rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-400">
-                            Beta
-                          </span>
-                        )}
-                        {to === '/data' && isDataSyncing && (
-                          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-accent" />
-                        )}
-                        {to === '/data' && !isDataSyncing && dataSyncJustDone && (
-                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 animate-pulse text-bull" />
-                        )}
-                        {to === '/monitor' && <MonitorBadge active={isActive} />}
-                      </>
+                    <Icon className="h-4 w-4 shrink-0" />
+                    <span className="flex-1">{label}</span>
+                    {(to === '/stock-analysis' || to === '/review') && (
+                      <span className="inline-flex items-center rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-400">
+                        Beta
+                      </span>
                     )}
-                  </NavLink>
+                    {to === '/data' && isDataSyncing && (
+                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-accent" />
+                    )}
+                    {to === '/data' && !isDataSyncing && dataSyncJustDone && (
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 animate-pulse text-bull" />
+                    )}
+                    {to === TRADE_PATH && <MonitorBadge active={onMonitorPage} />}
+                  </AppNavLink>
                 ))}
               </nav>
 
-              <RealtimeSidebarControls
+              {isAdmin && <RealtimeSidebarControls
                 realtimeEnabled={realtimeEnabled}
                 isRunning={isRunning}
                 isTrading={isTrading}
                 isWatchlistMode={isWatchlistMode}
                 realtimeModeLabel={realtimeModeLabel}
+                realtimeProviderName={realtimeProviderName}
                 realtimeAllowed={realtimeAllowed}
                 isPending={toggleQuote.isPending}
                 onToggle={async enabled => {
@@ -742,7 +670,7 @@ export function Layout() {
                 indexItems={sidebarIndexes}
                 onNavigate={() => setMobileNavOpen(false)}
                 className="border-b"
-              />
+              />}
             </div>
 
             <div className="flex shrink-0 items-center gap-2 border-t border-border p-3">
@@ -799,61 +727,47 @@ export function Layout() {
             style={{ background: `linear-gradient(90deg, ${BRAND}88, transparent 80%)` }}
           />
 
-          <TierBadge
-            label={caps?.label ?? ''}
-            hasKey={settingsState?.mode !== 'none'}
-          />
-          <AIConfigBadge
-            configured={settingsState?.ai_configured ?? settingsState?.has_ai_key}
-            model={settingsState?.ai_model}
-          />
         </div>
 
         <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-3 space-y-0.5">
-          {visibleNavItems.map(({ to, label, icon: Icon }) => (
-            <NavLink
+          {menuNavItems.map(({ to, label, icon: Icon }) => (
+            <AppNavLink
               key={to}
               to={to}
-              className={({ isActive }) =>
+              className={active =>
                 cn(
                   'flex items-center gap-3 px-3 py-2 rounded-btn text-sm transition-colors duration-150 ease-smooth',
-                  isActive
+                  active
                     ? 'bg-elevated text-foreground font-medium'
                     : 'text-foreground/80 hover:bg-elevated hover:text-foreground',
                 )
               }
             >
-              {({ isActive }) => (
-                <>
-                  <Icon className="h-4 w-4 shrink-0" />
-                  <span className="flex-1">{label}</span>
-                  {/* 个股分析 Beta 标识 */}
-                  {(to === '/stock-analysis' || to === '/review') && (
-                    <span className="inline-flex items-center rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-400 shrink-0">
-                      Beta
-                    </span>
-                  )}
-                  {/* 数据同步状态: 同步中转圈, 刚完成显示绿色对勾闪烁 3 秒 */}
-                  {to === '/data' && isDataSyncing && (
-                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-accent" />
-                  )}
-                  {to === '/data' && !isDataSyncing && dataSyncJustDone && (
-                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-bull animate-pulse" />
-                  )}
-                  {/* 监控中心徽标: 仅非监控页且有未读时显示 */}
-                  {to === '/monitor' && <MonitorBadge active={isActive} />}
-                </>
+              <Icon className="h-4 w-4 shrink-0" />
+              <span className="flex-1">{label}</span>
+              {(to === '/stock-analysis' || to === '/review') && (
+                <span className="inline-flex items-center rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-400 shrink-0">
+                  Beta
+                </span>
               )}
-            </NavLink>
+              {to === '/data' && isDataSyncing && (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-accent" />
+              )}
+              {to === '/data' && !isDataSyncing && dataSyncJustDone && (
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-bull animate-pulse" />
+              )}
+              {to === TRADE_PATH && <MonitorBadge active={onMonitorPage} />}
+            </AppNavLink>
           ))}
         </nav>
 
-        <RealtimeSidebarControls
+        {isAdmin && <RealtimeSidebarControls
           realtimeEnabled={realtimeEnabled}
           isRunning={isRunning}
           isTrading={isTrading}
           isWatchlistMode={isWatchlistMode}
           realtimeModeLabel={realtimeModeLabel}
+          realtimeProviderName={realtimeProviderName}
           realtimeAllowed={realtimeAllowed}
           isPending={toggleQuote.isPending}
           onToggle={handleToggle}
@@ -861,7 +775,7 @@ export function Layout() {
           showIndexQuotes={showSidebarQuotes}
           indexRows={sidebarIndexQuotes?.rows}
           indexItems={sidebarIndexes}
-        />
+        />}
 
         <div className="border-t border-border px-2 py-3 space-y-0.5 shrink-0">
           <div className="flex items-center gap-1">
@@ -916,7 +830,7 @@ export function Layout() {
       <AiAnalysisHost />
       <AiReportBubble />
       <StockAnalysisHost />
-      <StockAnalysisBubble />
+      <HermesPageAgentHost open={pageAgentOpen} onOpenChange={setPageAgentOpen} />
     </div>
   )
 }

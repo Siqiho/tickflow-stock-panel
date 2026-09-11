@@ -1,0 +1,186 @@
+{
+  "package": "fund_flow_window_chain_restore_20260912",
+  "task_id": "01a09187-8f63-7193-9645-b38acbf9803a",
+  "observer_label": "Codex chief observations",
+  "not_cursor_observations": true,
+  "as_of_timezone": "+08:00",
+  "closeout_backup": "/Users/simon/备份/codex/20260912-025119-fund-flow-window-chain-restore-closeout-before",
+  "implementation_backup": "/Users/simon/备份/codex/20260912-015545-fund-flow-window-chain-restore-before",
+  "chief_acceptance": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-12-fund-flow-window-chain-restore/chief-acceptance.md",
+  "changed_files_json_amended": false,
+  "runtime_ui": {
+    "source": "Codex chief observations",
+    "browser": "Codex in-app browser",
+    "url": "http://127.0.0.1:3011/",
+    "title": "one-trading · Quant Terminal",
+    "source_tree": "current hot-loaded source",
+    "industry_126": {
+      "label": "近126个交易日累计",
+      "start": "2026-03-12",
+      "end": "2026-09-10",
+      "coverage": "128/128",
+      "full": "128/128",
+      "freshness_line": "数据截止 2026-09-10 · 已陈旧 · 窗口完整",
+      "examples": [
+        {"name": "农业综合Ⅱ", "main_net_display": "-2.36亿"},
+        {"name": "半导体", "main_net_display": "-5683.45亿"}
+      ]
+    },
+    "concept_63": {
+      "start": "2026-06-15",
+      "end": "2026-09-10",
+      "coverage": "504/504",
+      "full": "490/504",
+      "examples": [
+        {"name": "CAR-T细胞疗法", "main_net_display": "33.08亿"},
+        {"name": "融资融券", "main_net_display": "-1.84万亿"}
+      ]
+    },
+    "industry_250_year": {
+      "display": "Sep-02 daily snapshot",
+      "message": "窗口数据不足，当前仍显示当日快照，不能当作 1 年 完整累计榜"
+    },
+    "concept_126_half_year": {
+      "display": "daily snapshot",
+      "message": "corresponding explicit insufficient-window message"
+    },
+    "concept_250_year": {
+      "display": "daily snapshot",
+      "message": "corresponding explicit insufficient-window message"
+    },
+    "final_tab": "concept 63 + industry 126",
+    "tab_marked_deliverable": true,
+    "console_error": false,
+    "console_notes": [
+      "one unrelated React Router v7 future-flag warning"
+    ]
+  },
+  "authenticated_http_get": {
+    "source": "Codex chief observations",
+    "canonical_digest_fields": [
+      "start",
+      "end",
+      "window_days",
+      "snapshot_count",
+      "covered_count",
+      "full_count",
+      "missing_count",
+      "window_complete",
+      "freshness_status",
+      "items as code/name/integer-main_net/days"
+    ],
+    "http_equals_service_equals_independent_parquet": true,
+    "service_artifact": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-12-fund-flow-window-chain-restore/evidence/parquet-vs-service.json",
+    "windows": {
+      "industry_5": {
+        "http_status": 200,
+        "start": "2026-09-04",
+        "end": "2026-09-10",
+        "coverage": "128/128",
+        "full_count": 128,
+        "missing_count": 0,
+        "window_complete": true,
+        "freshness_status": "stale",
+        "sha256": "c2b3070fd9c281f9ddb86dfd4266894d78bbfe89918d31cd2295e199eab1e01b"
+      },
+      "industry_63": {
+        "http_status": 200,
+        "start": "2026-06-15",
+        "end": "2026-09-10",
+        "coverage": "128/128",
+        "full_count": 128,
+        "missing_count": 0,
+        "window_complete": true,
+        "freshness_status": "stale",
+        "sha256": "76ffa5c5bbf5dab41a9fea8c54042f404c4d2c45e65ddaedca995a549d7978a9"
+      },
+      "industry_126": {
+        "http_status": 200,
+        "start": "2026-03-12",
+        "end": "2026-09-10",
+        "coverage": "128/128",
+        "full_count": 128,
+        "missing_count": 0,
+        "window_complete": true,
+        "freshness_status": "stale",
+        "sha256": "ee4a3e1d3204d87fd28aba86a8e83ecb381b6374d0db57e0337d8bae0377b514"
+      },
+      "concept_5": {
+        "http_status": 200,
+        "start": "2026-09-04",
+        "end": "2026-09-10",
+        "coverage": "504/504",
+        "full_count": 504,
+        "missing_count": 0,
+        "window_complete": true,
+        "freshness_status": null,
+        "concept_freshness_line": false,
+        "sha256": "424a869e4ef605fcfa17d968bb8bc6ce05055cfb31ea65b2ae6286ee19b136ec"
+      },
+      "concept_63": {
+        "http_status": 200,
+        "start": "2026-06-15",
+        "end": "2026-09-10",
+        "coverage": "504/504",
+        "full_count": 490,
+        "missing_count": 0,
+        "window_complete": true,
+        "freshness_status": null,
+        "concept_freshness_line": false,
+        "sha256": "07f87d543eebe8e0deceb4fa0515945a6bf627d188ed1fb2cd6c4a70b2edfb4f"
+      }
+    }
+  },
+  "bridge_review": {
+    "source": "Codex chief observations",
+    "implementation_task": "383980cb-c599-4d65-a483-27c074941445",
+    "implementation_result": "succeeded",
+    "automatic_review_preflight": "blocked only because other serialized tasks appended the two logs after the candidate hash",
+    "independent_review_task": "3f1b61e4-49af-4f4c-abb6-34dcd830c902",
+    "independent_review_session": "111d4686-cea4-4d41-8f7c-567300d9d426",
+    "independent_review_verdict": "pass",
+    "independent_review_method": "current-tree source inspection",
+    "reviewer_native_commands": false,
+    "controller_checks_after_review_all_exit_0": [
+      "backend focused pytest",
+      "frontend focused Vitest",
+      "TypeScript noEmit",
+      "formal Parquet verifier"
+    ],
+    "requested_configured_model": "Grok 4.6",
+    "requested_configured_effort": "Extra High",
+    "supplier_returned_model_effort_identity": null
+  },
+  "lifecycle": {
+    "data_platform": {
+      "retained_data_read_api_ui_chain": "verified",
+      "concept_continuation_implementation": "isolated",
+      "canary": false,
+      "accepted": false,
+      "production": false,
+      "reason_isolated": "no real H5 roll or official run_now was executed"
+    },
+    "workbench": {
+      "previous": "implemented / pending IAB",
+      "current": "verified",
+      "verified_scope": [
+        "visible industry 126",
+        "visible concept 63",
+        "insufficiency behavior for industry 250/year and concept 126/half-year and 250/year"
+      ],
+      "accepted": false,
+      "production": false
+    }
+  },
+  "explicit_non_claims": [
+    "no network",
+    "no backfill",
+    "no formal data write",
+    "no scheduler enable",
+    "no scheduler fire",
+    "no real concept roll",
+    "no real industry roll",
+    "no official run_now",
+    "2026-09-10 historical 15:30 was not reverified"
+  ]
+}

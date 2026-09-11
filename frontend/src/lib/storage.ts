@@ -67,10 +67,10 @@ export const storage = {
   limitLadderSealMode:  kv<'vol' | 'amount'>('limit-ladder-seal-mode'),
 
   /** 策略创建草稿（新建专用） */
-  strategyDraft: kv<{ name: string; description: string; direction: string; style?: string; rules: string; code: string; step: number; strategyId: string } | null>('strategy-draft'),
+  strategyDraft: kv<{ name: string; description: string; direction: string; style?: string; rules: string; code: string; step: number; strategyId: string; source?: string } | null>('strategy-draft'),
 
   /** 策略修改草稿（AI修改专用，不影响创建按钮） */
-  strategyModify: kv<{ name: string; description: string; direction: string; style?: string; rules: string; code: string; step: number; strategyId: string } | null>('strategy-modify'),
+  strategyModify: kv<{ name: string; description: string; direction: string; style?: string; rules: string; code: string; step: number; strategyId: string; source?: string } | null>('strategy-modify'),
 
   /** 策略构建器草稿（旧版兼容，逐渐废弃） */
   strategyBuilderDraft: kv<{ name: string; description: string; direction: string; style?: string; rules: string; code: string; step: number; strategyId: string } | null>('strategy-builder-draft'),
@@ -113,4 +113,20 @@ export const storage = {
   dataCardVisible: kv<Record<string, boolean>>('data-card-visible'),
   /** 数据页画像卡片顺序 (卡片key 数组, 长度=卡片总数) */
   dataCardOrder: kv<string[]>('data-card-order'),
+
+  watchlistGroupStats: kv<{
+    metric: string
+    sort: string
+    cardTopN: number
+    cardColorBar: boolean
+    cardRank: boolean
+  }>('watchlist-group-stats'),
+
+  abnormalEnabled: kv<boolean>('abnormal-enabled'),
+  abnormalLastResult: kv<unknown>('abnormal-last-result'),
+  watchlistIntraday: kv<boolean>('watchlist-intraday'),
+  watchlistExcludeST: kv<boolean>('watchlist-exclude-st'),
+  screenerIntraday: kv<boolean>('screener-intraday'),
+  screenerStrategyTags: kv<boolean>('screener_strategyTagsExpanded'),
+  stockExternalTemplate: kv<string>('stock-external-template'),
 } as const

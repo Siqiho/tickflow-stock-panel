@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 import threading
 from contextlib import asynccontextmanager
 
@@ -71,8 +72,15 @@ def test_catalog_control_plane_is_entered_before_background_resources() -> None:
     assert source.index("catalog_control_plane_lifespan") < source.index("pull_scheduler.start")
 
 
+def _force_normal_lifespan_mode(monkeypatch) -> None:
+    """These nodes assert production startup fail-fast, not fixture skip."""
+    monkeypatch.delenv("ONE_TRADING_DISABLE_BACKGROUND", raising=False)
+    os.environ.pop("ONE_TRADING_DISABLE_BACKGROUND", None)
+
+
 def test_main_lifespan_closes_catalog_when_later_setup_fails(tmp_path, monkeypatch) -> None:
     events: list[str] = []
+    _force_normal_lifespan_mode(monkeypatch)
 
     class StubStore:
         data_dir = tmp_path / "data"
@@ -91,7 +99,10 @@ def test_main_lifespan_closes_catalog_when_later_setup_fails(tmp_path, monkeypat
         def boot_check(self) -> None:
             raise RuntimeError("quote setup failed")
 
-        def stop(self) -> None:
+        def set_app_state(self, app_state) -> None:
+            raise AssertionError("boot_check failure must run before set_app_state")
+
+        def stop(self, *, persist: bool = True) -> None:
             events.append("quote-stop")
 
     @asynccontextmanager
@@ -116,6 +127,63 @@ def test_main_lifespan_closes_catalog_when_later_setup_fails(tmp_path, monkeypat
     asyncio.run(scenario())
 
     assert events == ["cache", "catalog-enter", "quote-stop", "catalog-exit"]
+
+
+def test_fixture_mode_skips_boot_check_and_still_yields(tmp_path, monkeypatch) -> None:
+    """DISABLE_BACKGROUND must not call boot_check (it can start polling)."""
+    events: list[str] = []
+    monkeypatch.setenv("ONE_TRADING_DISABLE_BACKGROUND", "1")
+    os.environ["ONE_TRADING_DISABLE_BACKGROUND"] = "1"
+
+    class PullScheduler:
+        def start(self, data_dir) -> None:
+            events.append("pull-start")
+
+        def refresh(self, data_dir) -> None:
+            events.append("pull-refresh")
+
+        def stop(self) -> None:
+            events.append("pull-stop")
+
+    class FinancialScheduler:
+        def start(self, data_dir, capset) -> None:
+            events.append("financial-start")
+
+        def stop(self) -> None:
+            events.append("financial-stop")
+
+    _stub_main_startup_through_scheduler_registration(
+        tmp_path, monkeypatch, events, PullScheduler(), FinancialScheduler()
+    )
+
+    class FixtureQuoteService:
+        def set_repo(self, repo) -> None:
+            return None
+
+        def boot_check(self) -> None:
+            events.append("quote-boot")
+            raise RuntimeError("fixture mode must not start realtime")
+
+        def set_app_state(self, state) -> None:
+            events.append("quote-state")
+
+        def stop(self, *, persist: bool = True) -> None:
+            events.append("quote-stop")
+
+    monkeypatch.setattr(main, "QuoteService", FixtureQuoteService)
+
+    async def scenario() -> None:
+        async with main.lifespan(FastAPI()):
+            events.append("yielded")
+
+    asyncio.run(scenario())
+
+    assert "quote-boot" not in events
+    assert "pull-start" not in events
+    assert "pull-refresh" not in events
+    assert "financial-start" not in events
+    assert "yielded" in events
+    assert "quote-state" in events
 
 
 def _stub_main_startup_through_scheduler_registration(
@@ -200,6 +268,7 @@ def test_pull_scheduler_is_stopped_when_refresh_raises_during_startup(
     tmp_path, monkeypatch
 ) -> None:
     events: list[str] = []
+    _force_normal_lifespan_mode(monkeypatch)
 
     class PullScheduler:
         def start(self, data_dir) -> None:
@@ -236,6 +305,7 @@ def test_pull_scheduler_is_stopped_when_refresh_raises_during_startup(
 
 def test_financial_scheduler_is_stopped_when_start_raises(tmp_path, monkeypatch) -> None:
     events: list[str] = []
+    _force_normal_lifespan_mode(monkeypatch)
 
     class PullScheduler:
         def start(self, data_dir) -> None:

@@ -1,0 +1,267 @@
+{
+  "captured_at": "2026-09-12T02:18:08+08:00",
+  "captured_at_note": "mtime/size/sha only; files are not rewritten by this reader",
+  "file_count": 26,
+  "files": [
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-09-06T00:11:55",
+      "mtime_ns": 1788624715447751213,
+      "path": "/Users/simon/Trading/下载数据/stockdb_quantdb_bundle_audit_20260905/read.sql",
+      "sha256": "25869b1745ead62ff950b3276d66828e0c878ac6f2404886280ab0c3725830f2",
+      "size": 730
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-09-06T00:11:56",
+      "mtime_ns": 1788624716449770464,
+      "path": "/Users/simon/Trading/下载数据/stockdb_quantdb_bundle_audit_20260905/package_manifest.json",
+      "sha256": "21b0e421dd52efaed6d6061bef36de363b9569b0803688e8a508256abcf80399",
+      "size": 1528
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-09-05T22:49:00",
+      "mtime_ns": 1788619740881714452,
+      "path": "/Users/simon/Trading/下载数据/stockdb_repair_20260905/read.sql",
+      "sha256": "de39378b368f958cbe9ce0a47c72b22f34abbfa9fa4649da5194cdf6c23ca7ab",
+      "size": 3552
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-09-05T23:11:21",
+      "mtime_ns": 1788621081294449202,
+      "path": "/Users/simon/Trading/下载数据/stockdb_repair_20260905/read_preclose.sql",
+      "sha256": "dad2996668f698967c147c00a523e57f565253e42b7651e718a65b670d7e7a9a",
+      "size": 1080
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-09-06T23:34:08",
+      "mtime_ns": 1788708848780884714,
+      "path": "/Users/simon/Trading/下载数据/stockdb_quantdb_integration_review_20260906/README.md",
+      "sha256": "dcc80426264ca2a19035c63834c3e46b4bbc308cf96cc123d26f45578197778c",
+      "size": 22813
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-27T18:19:36",
+      "mtime_ns": 1787825976537502100,
+      "path": "/Users/simon/Trading/下载数据/quant_data/5_technical_derived/valuation/000001.SZ.parquet",
+      "sha256": "a190a94b6f34f2307b2763e24ce5ffccfcf6dba125d8e19a22151ac3bd5d28e1",
+      "size": 164774
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-27T18:19:47",
+      "mtime_ns": 1787825987005545800,
+      "path": "/Users/simon/Trading/下载数据/quant_data/5_technical_derived/valuation/000338.SZ.parquet",
+      "sha256": "8edf492ecab841d064d90f7efecf6c3c02f657307be3cb4a42aabfdd7e0c734f",
+      "size": 176957
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-27T18:27:13",
+      "mtime_ns": 1787826433859212300,
+      "path": "/Users/simon/Trading/下载数据/quant_data/5_technical_derived/valuation/600519.SH.parquet",
+      "sha256": "e7a3337d7be135c55a300dfa645abd1f709f9d441f4f2a05a7d4a5101f578b55",
+      "size": 201468
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-27T18:25:12",
+      "mtime_ns": 1787826312316471300,
+      "path": "/Users/simon/Trading/下载数据/quant_data/5_technical_derived/valuation/300750.SZ.parquet",
+      "sha256": "79964e0983d924b6869fd5ecc15a18a2a17e25262560b2cff9bd5c93b57c62cc",
+      "size": 164998
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:36",
+      "mtime_ns": 1786565976624311901,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-07-21/part.parquet",
+      "sha256": "c192d6b4c76975778b6e940862ebec214ce60ef02b8e1067e4b66b0ae75c32dd",
+      "size": 47645
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:36",
+      "mtime_ns": 1786565976713796051,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-07-22/part.parquet",
+      "sha256": "6d2fab05960573b26d1415015c4276796f676342caa43703223167c7858bb838",
+      "size": 47595
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:36",
+      "mtime_ns": 1786565976790584300,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-07-23/part.parquet",
+      "sha256": "824da60765c0898b9804318ed1105e8f0a3c436d44281b3350024e28374328c9",
+      "size": 47792
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:36",
+      "mtime_ns": 1786565976850593958,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-07-24/part.parquet",
+      "sha256": "d4869b5b2df7ad1e8d89241037afb6fd9ac3ed4bd7463183f0b004b929f82123",
+      "size": 47593
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:36",
+      "mtime_ns": 1786565976914829555,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-07-27/part.parquet",
+      "sha256": "243e178234d77dcdf4988e0eb81c0480a61908d66a59cb4d75c800af88574d7c",
+      "size": 47656
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:36",
+      "mtime_ns": 1786565976990813132,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-07-28/part.parquet",
+      "sha256": "f523508cb839b292f300cbadba86cb41aeeb3b098608f228f856317775bb9b97",
+      "size": 47638
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:37",
+      "mtime_ns": 1786565977079469070,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-07-29/part.parquet",
+      "sha256": "84e500648e2f8546d24af7e03453911f7dd50a1ada7643c657b43206e3df2250",
+      "size": 47110
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:37",
+      "mtime_ns": 1786565977142204741,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-07-30/part.parquet",
+      "sha256": "b93cd135bd53f14fae66f1647fd8aa1aa8b69779061d5717f0011c5ac05c78f6",
+      "size": 47544
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:37",
+      "mtime_ns": 1786565977257789700,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-07-31/part.parquet",
+      "sha256": "4756560c57f129986494688d0f783247e896ace3a021e95e8a07a12200744940",
+      "size": 46026
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:37",
+      "mtime_ns": 1786565977356319566,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-08-03/part.parquet",
+      "sha256": "c64466d1717b236b7e2f2fdecfa43d5960dfe8e34f929bf42eeffa74afc90b7c",
+      "size": 22686
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:37",
+      "mtime_ns": 1786565977465528948,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-08-04/part.parquet",
+      "sha256": "54d969bf03dfe4b113940473e42d9e8d181c261a273101e11e7f18ad6ef1884e",
+      "size": 22673
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:37",
+      "mtime_ns": 1786565977556907442,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-08-05/part.parquet",
+      "sha256": "d717b247123fb0f616e6a9e5bb5897c558268dde3ae7433c4eb44f413ce7d211",
+      "size": 22691
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:37",
+      "mtime_ns": 1786565977631330094,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-08-06/part.parquet",
+      "sha256": "f2ea135777ebbd0d761a1181f7a10d91acb40c728b4d67dbb3f23930e7405ecb",
+      "size": 22677
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:37",
+      "mtime_ns": 1786565977712239157,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-08-07/part.parquet",
+      "sha256": "d96fc5832b9a6963c04e69a62bd1addb6f63b8acc52400cc75509405980eb65b",
+      "size": 22732
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:37",
+      "mtime_ns": 1786565977803470942,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-08-10/part.parquet",
+      "sha256": "12611fa5723576aa017c8caca21a101ad5edeb6f1dcd7f3dd5f8e33c9892a25b",
+      "size": 22704
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:37",
+      "mtime_ns": 1786565977989280322,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-08-11/part.parquet",
+      "sha256": "ed010b4a0519d66f2aac70db9f6816095121e7e6fb274ee6bd3883da76a082eb",
+      "size": 22722
+    },
+    {
+      "exists": true,
+      "is_symlink": false,
+      "mode": "0o644",
+      "mtime": "2026-08-13T04:19:38",
+      "mtime_ns": 1786565978096024232,
+      "path": "/Users/simon/Trading/one-trading/data/reference/valuation_daily/date=2026-08-12/part.parquet",
+      "sha256": "975379a80829598442ce49177cafddbee6d58e997a15eb7b0f097e0d3b845410",
+      "size": 22752
+    }
+  ]
+}

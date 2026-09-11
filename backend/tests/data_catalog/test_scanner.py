@@ -25,6 +25,8 @@ def _write_lineage(
     *,
     unit_version: str = "canonical_daily_v1",
     source: str = "test-writer",
+    fetched_at: str | None = None,
+    row_count: int | None = None,
 ) -> Path:
     path = (
         data_dir
@@ -40,6 +42,8 @@ def _write_lineage(
                 "unit_version": unit_version,
                 "quality": "success",
                 "target_artifact": artifact.relative_to(data_dir).as_posix(),
+                **({"fetched_at": fetched_at} if fetched_at is not None else {}),
+                **({"row_count": row_count} if row_count is not None else {}),
             }
         ),
         encoding="utf-8",
@@ -76,6 +80,19 @@ def _instrument(symbol: str, name: str, asset_type: str) -> dict:
         "limit_up": 11.0,
         "limit_down": 9.0,
         "as_of": date(2026, 7, 21),
+    }
+
+
+def _minute_bar(symbol: str, stamp: datetime) -> dict:
+    return {
+        "symbol": symbol,
+        "datetime": stamp,
+        "open": 10.0,
+        "high": 10.0,
+        "low": 10.0,
+        "close": 10.0,
+        "volume": 12.0,
+        "amount": 12_000.0,
     }
 
 
@@ -372,6 +389,37 @@ def test_market_coverage_has_sh_sz_bj_other_and_full_scan_uses_instrument_expect
     assert result.state.expected_symbol_count == 4
 
 
+def test_full_scan_keeps_on_demand_minute_coverage_unbounded(tmp_path: Path) -> None:
+    _write_parquet(
+        tmp_path / "instruments" / "part.parquet",
+        [
+            _instrument("600000.SH", "SH", "stock"),
+            _instrument("000001.SZ", "SZ", "stock"),
+        ],
+    )
+    minute = _write_parquet(
+        tmp_path / "kline_minute" / "date=2026-07-21" / "part.parquet",
+        [_minute_bar("000001.SZ", datetime(2026, 7, 21, 9, 30))],
+    )
+    _write_lineage(
+        tmp_path,
+        "kline_minute",
+        minute,
+        unit_version="canonical_minute_v1",
+        source="tdx_public",
+    )
+    run_ids = {
+        definition.descriptor.dataset_id: f"run-{definition.descriptor.dataset_id}"
+        for definition in DATASET_DEFINITIONS
+    }
+
+    result = CatalogScanner(tmp_path).scan_all(run_ids).datasets["stock_minute"]
+
+    assert result.state.symbol_count == 1
+    assert result.state.expected_symbol_count is None
+    assert all(item.expected_symbol_count is None for item in result.coverage)
+
+
 def test_corrupt_parquet_fails_only_its_dataset_with_bounded_deterministic_errors(
     tmp_path: Path,
 ) -> None:
@@ -491,14 +539,17 @@ def test_real_writer_shapes_are_admitted_and_legacy_depth_summary_stays_sealed(
 
     class Exchanges:
         def get_instruments(self, exchange, instrument_type):
-            if exchange != "SH":
-                return []
+            symbol, name = {
+                "SH": ("600000.SH", "浦发银行"),
+                "SZ": ("000001.SZ", "平安银行"),
+                "BJ": ("920001.BJ", "北交所样本"),
+            }[exchange]
             return [
                 {
-                    "symbol": "600000.SH",
-                    "name": "浦发银行",
-                    "code": "600000",
-                    "exchange": "SH",
+                    "symbol": symbol,
+                    "name": name,
+                    "code": symbol.split(".", 1)[0],
+                    "exchange": exchange,
                     "region": "CN",
                     "type": instrument_type,
                     "ext": {
@@ -512,10 +563,11 @@ def test_real_writer_shapes_are_admitted_and_legacy_depth_summary_stays_sealed(
                 }
             ]
 
+    monkeypatch.setattr(instrument_sync, "FIRST_SNAPSHOT_MIN_ROWS", 3)
     monkeypatch.setattr(
         instrument_sync, "get_client", lambda: type("Client", (), {"exchanges": Exchanges()})()
     )
-    assert instrument_sync.sync_instruments(tmp_path) == 1
+    assert instrument_sync.sync_instruments(tmp_path) == 3
     write_pool_parquet(
         pl.DataFrame({"symbol": ["600000.SH"], "name": ["浦发银行"], "pool_id": ["CSI300"]}),
         tmp_path,
@@ -588,6 +640,94 @@ def test_readable_parquet_missing_required_columns_is_failed_and_not_admitted(
     assert any("missing required columns" in error for error in result.state.payload["scan_errors"])
 
 
+def test_expanded_partition_without_matching_row_count_is_not_healthy(tmp_path: Path) -> None:
+    artifact = _write_parquet(
+        tmp_path / "kline_daily" / "date=2026-08-14" / "part.parquet",
+        [_bar("600519.SH", date(2026, 8, 14)), _bar("300750.SZ", date(2026, 8, 14))],
+    )
+    _write_lineage(
+        tmp_path,
+        "kline_daily",
+        artifact,
+        source="public_quote_eod",
+        row_count=1,
+        fetched_at="2026-08-14T15:30:00Z",
+    )
+
+    result = CatalogScanner(tmp_path).scan_dataset("stock_daily", "run-stale-count")
+
+    assert result.state.quality_status == "unknown"
+    assert any("matching lineage" in error for error in result.state.payload["scan_errors"])
+
+
+def test_current_row_count_match_can_be_healthy_despite_historical_pending_and_legacy(
+    tmp_path: Path,
+) -> None:
+    artifact = _write_parquet(
+        tmp_path / "kline_daily" / "date=2026-08-14" / "part.parquet",
+        [_bar("600519.SH", date(2026, 8, 14)), _bar("300750.SZ", date(2026, 8, 14))],
+    )
+    _write_lineage(
+        tmp_path,
+        "kline_daily",
+        artifact,
+        source="public_quote_eod",
+        row_count=1,
+        fetched_at="2026-08-14T07:00:00Z",
+    )
+    stale = next((tmp_path / "lineage").rglob("*.json"))
+    stale.write_text(
+        stale.read_text(encoding="utf-8").replace('"quality": "success"', '"quality": "pending_gate"'),
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "lineage" / "stock_daily" / "date=2026-08-14" / "legacy.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(
+        __import__("json").dumps(
+            {
+                "source": "legacy_local_artifact",
+                "unit_version": "canonical_daily_v1",
+                "quality_status": "degraded",
+                "row_count": 2,
+                "target_artifact": artifact.relative_to(tmp_path).as_posix(),
+                "fetched_at": "2026-08-17T05:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    current = tmp_path / "lineage" / "kline_daily" / "date=2026-08-14" / "current.json"
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.write_text(
+        __import__("json").dumps(
+            {
+                "source": "public_quote_eod_merged",
+                "unit_version": "canonical_daily_v1",
+                "quality": "pending_gate",
+                "row_count": 2,
+                "scope": "CSI1800",
+                "target_artifact": artifact.relative_to(tmp_path).as_posix(),
+                "fetched_at": "2026-08-17T06:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = CatalogScanner(tmp_path).scan_dataset("stock_daily", "run-current")
+    current_selected = CatalogScanner(tmp_path)._current_artifact_lineage(
+        result.artifacts, result.lineage
+    )
+
+    assert result.state.quality_status == "healthy"
+    assert result.state.payload["scan_errors"] == []
+    assert current_selected[0].row_count == 2
+    assert current_selected[0].source == "public_quote_eod_merged"
+    assert {item.source for item in result.lineage} >= {
+        "public_quote_eod",
+        "legacy_local_artifact",
+        "public_quote_eod_merged",
+    }
+
+
 def test_unit_lineage_must_match_the_exact_artifact_and_descriptor_contract(
     tmp_path: Path,
 ) -> None:
@@ -616,13 +756,113 @@ def test_unit_lineage_must_match_the_exact_artifact_and_descriptor_contract(
     assert [item.artifact_path for item in admitted.lineage] == ["kline_daily/part.parquet"]
 
 
-def test_parquet_replacement_during_scan_fails_consistency_instead_of_mixing_versions(
+def test_replaced_artifact_uses_latest_matching_lineage_contract(tmp_path: Path) -> None:
+    artifact = _write_parquet(
+        tmp_path / "financials" / "shares" / "part.parquet",
+        [
+            {
+                "symbol": "600000.SH",
+                "period_end": date(2026, 6, 30),
+                "unit_version": "financial_cn_v2",
+            },
+            {
+                "symbol": "000001.SZ",
+                "period_end": date(2026, 6, 30),
+                "unit_version": "financial_cn_v2",
+            },
+        ],
+    )
+    _write_lineage(
+        tmp_path,
+        "financial_shares",
+        artifact,
+        unit_version="financial_cn_v1",
+        fetched_at="2026-07-22T05:00:00Z",
+        row_count=1,
+    )
+    _write_lineage(
+        tmp_path,
+        "financial_shares",
+        artifact,
+        unit_version="financial_cn_v2",
+        fetched_at="2026-07-24T05:00:00Z",
+        row_count=2,
+    )
+
+    result = CatalogScanner(tmp_path).scan_dataset("financial_shares", "run-shares")
+
+    assert result.state.quality_status == "healthy"
+    assert result.state.unit_version == "financial_cn_v2"
+    assert {item.unit_version for item in result.lineage} == {
+        "financial_cn_v1",
+        "financial_cn_v2",
+    }
+
+
+def test_parquet_read_retries_after_file_changes_during_scan(tmp_path: Path) -> None:
+    artifact = _write_parquet(tmp_path / "kline_daily" / "part.parquet", [_bar("600000.SH")])
+    _write_lineage(tmp_path, "kline_daily", artifact, row_count=1)
+    scanner = CatalogScanner(tmp_path)
+    snapshot = next(
+        file for file in scanner._walk_snapshot(tmp_path) if file.path == artifact
+    )
+    _write_parquet(
+        artifact,
+        [_bar("600000.SH"), _bar("000001.SZ")],
+    )
+    _write_lineage(tmp_path, "kline_daily", artifact, row_count=2)
+
+    facts = scanner._parquet_facts(snapshot, scanner._by_id["stock_daily"], {})
+    result = scanner.scan_dataset("stock_daily", "run-retry")
+
+    assert not isinstance(facts, Exception)
+    assert facts.row_count == 2
+    assert result.state.quality_status == "healthy"
+    assert result.state.row_count == 2
+
+
+def test_adjustment_factor_qa_parquets_are_not_material_artifacts(tmp_path: Path) -> None:
+    artifact = _write_parquet(
+        tmp_path / "adj_factor" / "all.parquet",
+        [
+            {
+                "symbol": "600000.SH",
+                "trade_date": date(2026, 6, 30),
+                "ex_factor": 1.0,
+            }
+        ],
+    )
+    _write_parquet(
+        tmp_path / "adj_factor" / "coverage.parquet",
+        [{"symbol": "600000.SH", "status": "covered"}],
+    )
+    _write_parquet(
+        tmp_path / "adj_factor" / "verification.parquet",
+        [{"symbol": "600000.SH", "verification": "passed"}],
+    )
+    _write_lineage(
+        tmp_path,
+        "stock_adj_factor",
+        artifact,
+        unit_version="canonical_adj_factor_v1",
+        row_count=1,
+    )
+
+    result = CatalogScanner(tmp_path).scan_dataset("stock_adj_factor", "run-adj")
+
+    assert result.state.quality_status == "healthy"
+    assert result.state.row_count == 1
+    assert [item.path for item in result.artifacts] == ["adj_factor/all.parquet"]
+
+
+def test_parquet_replacement_during_scan_retries_for_a_consistent_version(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     import app.data_catalog.scanner as scanner_module
 
     target = _write_parquet(tmp_path / "kline_daily" / "part.parquet", [_bar("600000.SH")])
+    _write_lineage(tmp_path, "kline_daily", target, row_count=1)
     replacement = _write_parquet(
         tmp_path / "replacement.parquet",
         [_bar("600000.SH"), _bar("000001.SZ")],
@@ -642,6 +882,36 @@ def test_parquet_replacement_during_scan_fails_consistency_instead_of_mixing_ver
     monkeypatch.setattr(scanner_module.pq, "ParquetFile", replacing_parquet_file)
 
     result = CatalogScanner(tmp_path).scan_dataset("stock_daily", "run-race")
+
+    assert replaced is True
+    assert result.state.row_count == 2
+    assert [item.row_count for item in result.artifacts] == [2]
+    assert not any("changed during scan" in error for error in result.state.payload["scan_errors"])
+
+
+def test_parquet_replacement_on_every_read_still_fails_closed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import app.data_catalog.scanner as scanner_module
+
+    target = _write_parquet(tmp_path / "kline_daily" / "part.parquet", [_bar("600000.SH")])
+    replacement = _write_parquet(
+        tmp_path / "replacement.parquet",
+        [_bar("600000.SH"), _bar("000001.SZ")],
+    )
+    original = scanner_module.pq.ParquetFile
+
+    def always_replacing_parquet_file(source, *args, **kwargs):
+        parquet = original(source, *args, **kwargs)
+        if Path(getattr(source, "name", "")) == target:
+            shutil.copy2(replacement, tmp_path / "replacement-copy.parquet")
+            os.replace(tmp_path / "replacement-copy.parquet", target)
+        return parquet
+
+    monkeypatch.setattr(scanner_module.pq, "ParquetFile", always_replacing_parquet_file)
+
+    result = CatalogScanner(tmp_path).scan_dataset("stock_daily", "run-race-exhausted")
 
     assert result.state.quality_status == "failed"
     assert result.artifacts == ()
@@ -695,3 +965,125 @@ def test_trading_calendar_reference_root_scans_healthy(tmp_path: Path) -> None:
         "reference/trading_calendar/calendar.parquet"
     }
     assert result.state.payload.get("scan_errors", []) == []
+
+
+def test_margin_trading_root_scans_healthy_with_eastmoney_lineage(tmp_path: Path) -> None:
+    root = _write_parquet(
+        tmp_path / "f10" / "stock_margin_trading" / "part.parquet",
+        [
+            {
+                "symbol": "600519.SH",
+                "name": "贵州茅台",
+                "market": "沪市",
+                "trade_date": date(2026, 8, 4),
+                "financing_balance": 100.0,
+                "financing_buy_amount": 30.0,
+                "financing_repayment_amount": 20.0,
+                "financing_net_buy_amount": 10.0,
+                "securities_lending_balance": 5.0,
+                "securities_lending_sell_volume": 2,
+                "securities_lending_repayment_volume": 1,
+                "securities_lending_balance_volume": 8,
+                "margin_balance": 105.0,
+                "source": "eastmoney_rzrq",
+                "unit_version": "stock_margin_trading_v1",
+            }
+        ],
+    )
+    _write_lineage(
+        tmp_path,
+        "stock_margin_trading",
+        root,
+        unit_version="stock_margin_trading_v1",
+        source="eastmoney",
+    )
+
+    result = CatalogScanner(tmp_path).scan_dataset(
+        "stock_margin_trading", "run-margin-trading"
+    )
+
+    assert result.state.quality_status == "healthy"
+    assert result.state.row_count == 1
+    assert result.state.symbol_count == 1
+    assert result.state.earliest_time == "2026-08-04"
+    assert result.state.latest_time == "2026-08-04"
+    assert result.lineage[0].source == "eastmoney"
+
+
+def test_ext_data_fixed_pools_own_their_roots_and_remainder_keeps_user_tables(
+    tmp_path: Path,
+) -> None:
+    board = _write_parquet(
+        tmp_path / "ext_data" / "ext_fund_flow_bk" / "part.parquet",
+        [
+            {
+                "code": "BK0428",
+                "name": "电力",
+                "main_net": 1.0,
+                "as_of": "2026-08-21",
+                "source": "eastmoney_fflow",
+            }
+        ],
+    )
+    daily = _write_parquet(
+        tmp_path
+        / "ext_data"
+        / "ext_fund_flow_bk_daily"
+        / "timeseries"
+        / "date=2026-08-21"
+        / "part.parquet",
+        [
+            {
+                "code": "BK0428",
+                "name": "电力",
+                "date": "2026-08-21",
+                "main_net": 2.0,
+                "source": "eastmoney_fflow_day",
+            }
+        ],
+    )
+    leftover = _write_parquet(
+        tmp_path / "ext_data" / "user_custom" / "part.parquet",
+        [{"symbol": "600000.SH", "value": 1.0}],
+    )
+    minute = _write_parquet(
+        tmp_path
+        / "ext_data"
+        / "ext_fund_flow_concept_minute"
+        / "timeseries"
+        / "date=2026-08-21"
+        / "part.parquet",
+        [{"code": "BK0815", "date": "2026-08-21", "main_net": 3.0}],
+    )
+    (tmp_path / "ext_data" / "user_custom" / "config.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+
+    run_ids = {
+        definition.descriptor.dataset_id: f"run-{definition.descriptor.dataset_id}"
+        for definition in DATASET_DEFINITIONS
+    }
+    scanner = CatalogScanner(tmp_path)
+    snapshot = scanner.scan_all(run_ids)
+    remainder = scanner.scan_dataset("ext_data", "run-ext-remainder")
+
+    assert [artifact.path for artifact in snapshot.datasets["ext_fund_flow_bk"].artifacts] == [
+        board.relative_to(tmp_path).as_posix()
+    ]
+    assert [
+        artifact.path for artifact in snapshot.datasets["ext_fund_flow_bk_daily"].artifacts
+    ] == [daily.relative_to(tmp_path).as_posix()]
+    remainder_paths = {artifact.path for artifact in snapshot.datasets["ext_data"].artifacts}
+    assert leftover.relative_to(tmp_path).as_posix() in remainder_paths
+    assert minute.relative_to(tmp_path).as_posix() in remainder_paths
+    assert board.relative_to(tmp_path).as_posix() not in remainder_paths
+    assert daily.relative_to(tmp_path).as_posix() not in remainder_paths
+    assert snapshot.datasets["ext_fund_flow_bk"].state.row_count == 1
+    assert snapshot.datasets["ext_fund_flow_bk_daily"].state.row_count == 1
+    assert snapshot.datasets["ext_data"].state.row_count == 2
+    assert {artifact.path for artifact in remainder.artifacts} == remainder_paths
+    artifact_paths = [
+        artifact.path for result in snapshot.datasets.values() for artifact in result.artifacts
+    ]
+    assert len(artifact_paths) == len(set(artifact_paths))

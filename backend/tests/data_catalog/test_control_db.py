@@ -212,6 +212,114 @@ def test_source_health_and_meta_are_deterministic_and_ordered(tmp_path: Path) ->
     assert value_json == json.dumps({"a": 1, "z": "中文"}, ensure_ascii=False, sort_keys=True)
 
 
+def test_optional_control_reads_do_not_create_a_missing_database(tmp_path: Path) -> None:
+    db = CatalogControlDB(tmp_path)
+
+    assert db.list_dataset_policies() == []
+    assert db.list_sync_checkpoints() == []
+    assert db.list_query_audits() == []
+    assert db.read_source_health() == []
+    assert db.read_meta("catalog_stale") is None
+    assert db.has_dataset_states_readonly() is False
+    assert not db.path.exists()
+
+
+def test_optional_control_reads_are_read_only_and_fail_soft_across_schema_versions(
+    tmp_path: Path,
+) -> None:
+    db = CatalogControlDB(tmp_path)
+    db.initialize()
+    with sqlite3.connect(db.path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE dataset_policies (
+                dataset_id TEXT PRIMARY KEY,
+                phase TEXT NOT NULL,
+                max_lag_trading_days INTEGER,
+                sync_mode TEXT,
+                schedule_cron TEXT,
+                source_policy_json TEXT NOT NULL DEFAULT '{}',
+                retention_policy_json TEXT NOT NULL DEFAULT '{}',
+                supports_backfill INTEGER NOT NULL DEFAULT 0,
+                supports_repair INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT
+            );
+            CREATE TABLE sync_checkpoints (
+                dataset_id TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                cursor_json TEXT NOT NULL DEFAULT '{}',
+                watermark TEXT,
+                last_success_run_id TEXT,
+                updated_at TEXT,
+                PRIMARY KEY (dataset_id, scope)
+            );
+            CREATE TABLE agent_query_audit (
+                audit_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                dataset_id TEXT NOT NULL,
+                tool_name TEXT,
+                row_count INTEGER NOT NULL DEFAULT 0,
+                duration_ms INTEGER,
+                status TEXT NOT NULL,
+                error_code TEXT
+            );
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO dataset_policies VALUES (
+                'trading_calendar', 'production', 1, 'scheduled', '20 8 * * 1-5',
+                '{}', '{}', 1, 1, '2026-07-22T05:45:05Z'
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO sync_checkpoints VALUES (
+                'trading_calendar', 'default', '{"page": 3}', '2026-08-31',
+                'run-42', '2026-07-22T05:45:05Z'
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agent_query_audit VALUES (
+                'audit-1', '2026-07-22T06:00:00Z', 'trading_calendar',
+                'get_trading_days', 12, 8, 'succeeded', NULL
+            )
+            """
+        )
+
+    assert db.list_dataset_policies()[0].model_dump() == {
+        "dataset_id": "trading_calendar",
+        "phase": "production",
+        "max_lag_trading_days": 1,
+        "sync_mode": "scheduled",
+        "schedule_cron": "20 8 * * 1-5",
+        "supports_backfill": True,
+        "supports_repair": True,
+        "updated_at": "2026-07-22T05:45:05Z",
+    }
+    assert db.list_sync_checkpoints()[0].model_dump() == {
+        "dataset_id": "trading_calendar",
+        "scope": "default",
+        "watermark": "2026-08-31",
+        "updated_at": "2026-07-22T05:45:05Z",
+        "cursor": {"page": 3},
+        "last_success_run_id": "run-42",
+    }
+    assert db.list_query_audits()[0].model_dump() == {
+        "audit_id": "audit-1",
+        "created_at": "2026-07-22T06:00:00Z",
+        "dataset_id": "trading_calendar",
+        "tool_name": "get_trading_days",
+        "row_count": 12,
+        "duration_ms": 8,
+        "status": "succeeded",
+        "error_code": None,
+    }
+
+
 def test_initialize_backs_up_existing_database_before_pending_migration(tmp_path: Path) -> None:
     control_dir = tmp_path / "control"
     control_dir.mkdir()

@@ -17,13 +17,20 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import time
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
 # 单次推送最长字符 (飞书单条文本消息上限 30KB, 这里保守截断避免刷屏)
 _MAX_LEN = 500
+
+# 企业微信群推送 Webhook markdown 消息上限 4096 字节 (非字符; 中文每字 3 字节)
+_WECOM_MD_MAX_BYTES = 4000
+_WECOM_TRUNCATED_HINT = "\n\n…内容较长已截断，更多详情请回到应用内查看。"
+_CUSTOM_MAX_ATTEMPTS = 3
 
 # 卡片消息正文最长字符 (飞书 interactive 卡片上限 30KB, 保守留余量给标题/结构)
 _CARD_MAX_LEN = 28000
@@ -36,6 +43,17 @@ def _truncate(text: str) -> str:
     """截断超长文本。"""
     text = (text or "").strip()
     return text[:_MAX_LEN] + ("…" if len(text) > _MAX_LEN else "")
+
+
+def _truncate_to_bytes(text: str, max_bytes: int, suffix: str = "…") -> str:
+    """按 UTF-8 字节数安全截断 (不截断在多字节字符中间, 末尾补 suffix)。"""
+    text = (text or "").strip()
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    suffix_bytes = suffix.encode("utf-8")
+    cut = encoded[:max_bytes - len(suffix_bytes)]
+    return cut.decode("utf-8", errors="ignore") + suffix
 
 
 def is_valid_feishu_url(url: str) -> bool:
@@ -63,55 +81,63 @@ def _truncate_card(text: str) -> str:
     return text[:_CARD_MAX_LEN] + ("…" if len(text) > _CARD_MAX_LEN else "")
 
 
-def _post_feishu(webhook_url: str, payload: dict, secret: str) -> bool:
-    """发送一次飞书 webhook 请求并判定成败 (供 text / card 共用)。
+_FEISHU_MAX_ATTEMPTS = 3
 
-    成功响应: HTTP 200 且业务 code=0 (或非 JSON 的 200)。失败静默返回 False。
+
+def _post_feishu(
+    webhook_url: str,
+    payload: dict,
+    secret: str,
+    max_attempts: int = _FEISHU_MAX_ATTEMPTS,
+) -> bool:
+    """发送飞书 webhook。瞬时 5xx/网络失败可重试; 4xx/业务失败不重试。
+
+    诊断路径传 max_attempts=1, 避免等满退避。默认关闭时调用方不应走到这里。
     """
-    try:
-        import httpx
+    import httpx
 
-        # 启用签名校验时, 请求体须带 timestamp + sign (秒级时间戳)
-        if secret:
-            timestamp = str(int(time.time()))
-            payload["timestamp"] = timestamp
-            payload["sign"] = _gen_sign(timestamp, secret)
+    last_err = ""
+    attempts = max(1, int(max_attempts))
+    for attempt in range(1, attempts + 1):
+        try:
+            if secret:
+                timestamp = str(int(time.time()))
+                payload["timestamp"] = timestamp
+                payload["sign"] = _gen_sign(timestamp, secret)
 
-        resp = httpx.post(webhook_url, json=payload, timeout=5.0)
-        # 飞书成功响应: {"code":0,"msg":"success"} (或 StatusCode 200 + Extra)
-        if resp.status_code == 200:
-            try:
-                data = resp.json()
-                # code=0 表示飞书业务侧成功; 部分版本无 code 字段则按 msg 判断
+            resp = httpx.post(webhook_url, json=payload, timeout=5.0)
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                except ValueError:
+                    return True
                 if isinstance(data, dict):
                     code = data.get("code", data.get("StatusCode", 0))
                     if code == 0:
                         return True
-                    logger.debug("飞书推送业务失败: %s", data)
+                    logger.warning("飞书推送业务失败(不重试): %s", data)
                     return False
-            except ValueError:
-                # 非 JSON 响应但 HTTP 200, 视为成功
                 return True
-        logger.debug("飞书推送 HTTP %s: %s", resp.status_code, resp.text[:200])
-        return False
-    except Exception as e:  # noqa: BLE001
-        logger.debug("飞书 Webhook 推送失败: %s", e)
-        return False
+            last_err = f"HTTP {resp.status_code}: {resp.text[:200]}"
+            if resp.status_code < 500:
+                logger.warning("飞书推送失败(不重试, 客户端错误): %s", last_err)
+                return False
+        except Exception as exc:  # noqa: BLE001
+            last_err = str(exc)
+        if attempt < attempts:
+            time.sleep(min(2 ** (attempt - 1), 3))
+    logger.warning("飞书 Webhook 推送最终失败(已重试 %d 次): %s", attempts, last_err)
+    return False
 
 
-def send_feishu(webhook_url: str, title: str, body: str, secret: str = "") -> bool:
-    """推送一条文本消息到飞书群机器人。
-
-    Args:
-        webhook_url: 飞书自定义机器人 Webhook 地址
-        title:       消息标题 (与正文拼接为一条文本)
-        body:        消息正文
-        secret:      签名密钥 (机器人启用了「签名校验」时必填; 留空则不带签名)
-
-    Returns:
-        True=成功送达, False=失败或 URL 非法。
-        失败静默, 不抛异常 (Webhook 是辅助通道, 不能阻断告警主流程)。
-    """
+def send_feishu(
+    webhook_url: str,
+    title: str,
+    body: str,
+    secret: str = "",
+    max_attempts: int = _FEISHU_MAX_ATTEMPTS,
+) -> bool:
+    """推送一条文本消息到飞书群机器人。URL 非法时直接 False, 不外发。"""
     if not is_valid_feishu_url(webhook_url):
         return False
 
@@ -120,7 +146,7 @@ def send_feishu(webhook_url: str, title: str, body: str, secret: str = "") -> bo
         return False
 
     payload: dict = {"msg_type": "text", "content": {"text": text}}
-    return _post_feishu(webhook_url, payload, secret)
+    return _post_feishu(webhook_url, payload, secret, max_attempts)
 
 
 def send_feishu_card(webhook_url: str, title: str, subtitle: str, body_md: str, secret: str = "") -> bool:
@@ -168,3 +194,140 @@ def send_feishu_card(webhook_url: str, title: str, subtitle: str, body_md: str, 
         },
     }
     return _post_feishu(webhook_url, payload, secret)
+
+
+# 企业微信群推送 Webhook — 已实现, 默认不外发 (无 URL / 渠道未勾选)。
+WECOM_HOOK_PREFIX = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send"
+
+
+def is_valid_wecom_url(url: str) -> bool:
+    """完整 URL 或 36 位 key 都视为可保存。"""
+    text = (url or "").strip()
+    if not text:
+        return False
+    if text.startswith(WECOM_HOOK_PREFIX) and "key=" in text:
+        return True
+    return len(text) == 36 and text.count("-") == 4
+
+
+def normalize_wecom_url(url: str) -> str:
+    text = (url or "").strip()
+    if not text:
+        return ""
+    if text.startswith(WECOM_HOOK_PREFIX):
+        return text
+    if is_valid_wecom_url(text):
+        return f"{WECOM_HOOK_PREFIX}?key={text}"
+    return text
+
+
+def _post_wecom(webhook_url: str, payload: dict) -> bool:
+    try:
+        import httpx
+
+        resp = httpx.post(webhook_url, json=payload, timeout=5.0)
+        if resp.status_code == 200:
+            try:
+                data = resp.json()
+                if isinstance(data, dict) and int(data.get("errcode", 0)) == 0:
+                    return True
+                logger.debug("企业微信推送业务失败: %s", data)
+                return False
+            except ValueError:
+                return True
+        logger.debug("企业微信推送 HTTP %s: %s", resp.status_code, resp.text[:200])
+        return False
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("企业微信 Webhook 推送失败: %s", exc)
+        return False
+
+
+def send_wecom(webhook_url: str, title: str, body: str) -> bool:
+    """推送企业微信群文本。URL 非法或未配置时直接 False, 不抛、不外发。"""
+    webhook_url = normalize_wecom_url(webhook_url)
+    if not is_valid_wecom_url(webhook_url):
+        return False
+    text = _truncate(f"{title}\n{body}".strip())
+    if not text:
+        return False
+    payload = {"msgtype": "text", "text": {"content": text}}
+    return _post_wecom(webhook_url, payload)
+
+
+def send_wecom_markdown(webhook_url: str, title: str, body_md: str) -> bool:
+    """推送一条 Markdown 消息到企业微信群推送 Webhook —— 承载完整复盘报告。"""
+    webhook_url = normalize_wecom_url(webhook_url)
+    if not is_valid_wecom_url(webhook_url):
+        return False
+    raw = f"## {title}\n\n{body_md}".strip()
+    content = _truncate_to_bytes(raw, _WECOM_MD_MAX_BYTES, suffix=_WECOM_TRUNCATED_HINT)
+    if not content.strip():
+        return False
+    payload: dict = {"msgtype": "markdown", "markdown": {"content": content}}
+    return _post_wecom(webhook_url, payload)
+
+
+def is_valid_custom_url(url: str) -> bool:
+    """Accept absolute HTTP(S) URLs, including LAN endpoints used by local deployments."""
+    try:
+        parsed = urlparse((url or "").strip())
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc) and not parsed.username
+
+
+def send_custom(
+    webhook_url: str,
+    title: str,
+    body: str,
+    event_type: str,
+    data: dict | None = None,
+    secret: str = "",
+    max_attempts: int = _CUSTOM_MAX_ATTEMPTS,
+) -> bool:
+    """POST a stable JSON envelope to a user-configured third-party system.
+
+    Tests must mock httpx.post. This function does not run in this phase's
+    A12 fixture checks unless the transport is patched.
+    """
+    if not is_valid_custom_url(webhook_url):
+        return False
+
+    timestamp = str(int(time.time()))
+    payload = {
+        "event": str(event_type or "notification"),
+        "timestamp": int(timestamp),
+        "title": str(title or ""),
+        "body": str(body or ""),
+        "data": data or {},
+    }
+    encoded = json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True, default=str,
+    ).encode("utf-8")
+    headers = {"Content-Type": "application/json", "User-Agent": "one-trading-Webhook/1.0"}
+    if secret:
+        digest = hmac.new(secret.encode("utf-8"), encoded, hashlib.sha256).hexdigest()
+        headers["X-TickFlow-Timestamp"] = timestamp
+        headers["X-TickFlow-Signature"] = f"sha256={digest}"
+
+    import httpx
+
+    last_err = ""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = httpx.post(
+                webhook_url, content=encoded, headers=headers, timeout=5.0,
+            )
+            if 200 <= response.status_code < 300:
+                return True
+            last_err = f"HTTP {response.status_code}: {response.text[:200]}"
+            if response.status_code < 500:
+                logger.warning("第三方 Webhook 推送失败(不重试): %s", last_err)
+                return False
+        except Exception as exc:  # Network failures are retryable and must not escape.
+            last_err = str(exc)
+        if attempt < max_attempts:
+            time.sleep(min(2 ** (attempt - 1), 3))
+
+    logger.warning("第三方 Webhook 推送最终失败(已重试 %d 次): %s", max_attempts, last_err)
+    return False

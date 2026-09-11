@@ -1,0 +1,211 @@
+{
+  "started_at": "2026-09-09T16:01:22.296701+08:00",
+  "data_dir": "/Users/simon/Trading/one-trading/data/news-isolated-20260909",
+  "kept_first_round_evidence": "/Users/simon/Trading/one-trading/docs/cursor-handoffs/news-policy-20260909/live-fetch.json",
+  "before": {
+    "total": 495,
+    "invalid_count": 7,
+    "invalid_samples": [
+      {
+        "title": "新闻发布会：介绍教师队伍建设有关情况和第42个教师节宣传庆祝活动",
+        "date": "2026-78-35",
+        "source": "教育部",
+        "url": "http://www.moe.gov.cn/fbh/live/2026/78355/"
+      },
+      {
+        "title": "全国基础教育工作会议",
+        "date": "2026-20-26",
+        "source": "教育部",
+        "url": "http://www.moe.gov.cn/jyb_xwfb/xw_zt/moe_357/2026/2026_zt09/"
+      },
+      {
+        "title": "云中谁寄锦书来 高校录取通知书陆续投递",
+        "date": "2026-07-90",
+        "source": "国家邮政局",
+        "url": "https://www.spb.gov.cn/gjyzj/c100015/c100021/202607/9000a3e6cf3445f7a168371fd5c97f4c.shtml"
+      },
+      {
+        "title": "暑有所托 暖心护航",
+        "date": "2026-07-47",
+        "source": "国家邮政局",
+        "url": "https://www.spb.gov.cn/gjyzj/c100015/c100021/202607/47b0dffd062f40a8a0a4274e52a5262d.shtml"
+      },
+      {
+        "title": "教育强国建设规划纲要(2024—2035年)",
+        "date": "2025-20-25",
+        "source": "教育部",
+        "url": "http://www.moe.gov.cn/jyb_xwfb/xw_zt/moe_357/2025/2025_zt02/"
+      },
+      {
+        "title": "深入学习贯彻习近平总书记在全国教育大会上的重要讲话精神",
+        "date": "2024-20-24",
+        "source": "教育部",
+        "url": "http://www.moe.gov.cn/jyb_xwfb/xw_zt/moe_357/2024/2024_zt16/"
+      },
+      {
+        "title": "大力弘扬教育家精神",
+        "date": "2024-20-24",
+        "source": "教育部",
+        "url": "http://www.moe.gov.cn/jyb_xwfb/xw_zt/moe_357/2024/2024_zt06_56833/"
+      }
+    ]
+  },
+  "scrub": {
+    "cleared": 7,
+    "total": 495,
+    "path": "/Users/simon/Trading/one-trading/data/news-isolated-20260909/news/policy/items.json"
+  },
+  "after": {
+    "query_total": 495,
+    "invalid_remaining": 0,
+    "first_page_dates": [
+      "2026-09-11",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09",
+      "2026-09-09"
+    ],
+    "first_page_samples": [
+      {
+        "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+        "date": "2026-09-11",
+        "source": "国家民族事务委员会",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml"
+      },
+      {
+        "title": "黄石海事局气象类大风四级（蓝色）水上交通安全预警 (2026)216",
+        "date": "2026-09-09",
+        "source": "交通运输部",
+        "url": "https://www.mot.gov.cn/fuwu/yujingtishi/cjanquanyujing/202609/t20260909_4224032.html"
+      },
+      {
+        "title": "黄河水利委员会部署上中游水库联合排沙及后汛期强降雨防范工作",
+        "date": "2026-09-09",
+        "source": "水利部",
+        "url": "http://www.mwr.gov.cn/xw/sjzs/202609/t20260909_2142020.html"
+      },
+      {
+        "title": "青岛加速电动重卡规模化应用",
+        "date": "2026-09-09",
+        "source": "交通运输部",
+        "url": "https://www.mot.gov.cn/xinwen/jiaotongyaowen/202609/t20260909_4224015.html"
+      },
+      {
+        "title": "重庆海事局气象类高温二级（橙色）水上交通安全预警",
+        "date": "2026-09-09",
+        "source": "交通运输部",
+        "url": "https://www.mot.gov.cn/fuwu/yujingtishi/cjanquanyujing/202609/t20260909_4224033.html"
+      },
+      {
+        "title": "重庆江津海事处气象类大风四级（蓝色）水上交通安全预警",
+        "date": "2026-09-09",
+        "source": "交通运输部",
+        "url": "https://www.mot.gov.cn/fuwu/yujingtishi/cjanquanyujing/202609/t20260909_4224034.html"
+      },
+      {
+        "title": "重庆“希望专线”新学期服务农村4500学生娃",
+        "date": "2026-09-09",
+        "source": "交通运输部",
+        "url": "https://www.mot.gov.cn/xinwen/jiaotongyaowen/202609/t20260909_4224012.html"
+      },
+      {
+        "title": "郭文奇到自然资源部调研机关党建工作",
+        "date": "2026-09-09",
+        "source": "自然资源部",
+        "url": "https://www.mnr.gov.cn/dt/ywbb/202609/t20260909_2937993.html"
+      },
+      {
+        "title": "跨越山海，用情用心书写时代答卷——自然资源领域人才援疆工作侧记（上）",
+        "date": "2026-09-09",
+        "source": "自然资源部",
+        "url": "https://www.mnr.gov.cn/dt/ywbb/202609/t20260909_2937995.html"
+      },
+      {
+        "title": "赓续长征精神 奋进复兴征程丨回望烽火来路 凝聚前行伟力",
+        "date": "2026-09-09",
+        "source": "国防部",
+        "url": "http://www.mod.gov.cn/gfbw/qwfb/yw_214049/16484523.html"
+      },
+      {
+        "title": "让公共数据“跑起来”，杭州停车充电一体化服务入选国家级示范场景",
+        "date": "2026-09-09",
+        "source": "住房和城乡建设部",
+        "url": "https://www.mohurd.gov.cn/xinwen/dfxx/art/2026/art_e57892ba51f043d49f89cd045c1211ad.html"
+      },
+      {
+        "title": "湖北三个“1小时交通圈”牵引综合立体交通网建设",
+        "date": "2026-09-09",
+        "source": "交通运输部",
+        "url": "https://www.mot.gov.cn/xinwen/jiaotongyaowen/202609/t20260909_4224007.html"
+      },
+      {
+        "title": "海河水利委员会持续督导后汛期强降雨防范工作",
+        "date": "2026-09-09",
+        "source": "水利部",
+        "url": "http://www.mwr.gov.cn/xw/sjzs/202609/t20260909_2142019.html"
+      },
+      {
+        "title": "海南洋浦港提速建设国际航运枢纽",
+        "date": "2026-09-09",
+        "source": "交通运输部",
+        "url": "https://www.mot.gov.cn/xinwen/jiaotongyaowen/202609/t20260909_4224014.html"
+      },
+      {
+        "title": "法治护航民营经济 |《民营经济促进法》典型案例视频（15）：准确把握民事执行财产责任边界，依法推进涉企民事执行监督",
+        "date": "2026-09-09",
+        "source": "国家发展和改革委员会",
+        "url": "https://www.ndrc.gov.cn/xwdt/spfg/zfzjt/202609/t20260909_1407485.html"
+      }
+    ],
+    "moe_count": 5,
+    "moe_dates": [
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    "moe_samples": [
+      {
+        "title": "深入学习贯彻习近平总书记在全国教育大会上的重要讲话精神",
+        "date": "",
+        "url": "http://www.moe.gov.cn/jyb_xwfb/xw_zt/moe_357/2024/2024_zt16/"
+      },
+      {
+        "title": "新闻发布会：介绍教师队伍建设有关情况和第42个教师节宣传庆祝活动",
+        "date": "",
+        "url": "http://www.moe.gov.cn/fbh/live/2026/78355/"
+      },
+      {
+        "title": "教育强国建设规划纲要(2024—2035年)",
+        "date": "",
+        "url": "http://www.moe.gov.cn/jyb_xwfb/xw_zt/moe_357/2025/2025_zt02/"
+      },
+      {
+        "title": "大力弘扬教育家精神",
+        "date": "",
+        "url": "http://www.moe.gov.cn/jyb_xwfb/xw_zt/moe_357/2024/2024_zt06_56833/"
+      },
+      {
+        "title": "全国基础教育工作会议",
+        "date": "",
+        "url": "http://www.moe.gov.cn/jyb_xwfb/xw_zt/moe_357/2026/2026_zt09/"
+      }
+    ],
+    "dated_on_first_page": 100,
+    "undated_on_first_page": 0,
+    "order_ok": true,
+    "no_2026_78_35": true,
+    "no_2026_20_26": true
+  }
+}

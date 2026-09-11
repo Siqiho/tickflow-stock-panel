@@ -1,0 +1,217 @@
+{
+  "as_of": "2026-09-09T13:21:14.907138+08:00",
+  "official_data_dir": "/Users/simon/Trading/one-trading/data",
+  "canary_data_dir": "/Users/simon/Trading/one-trading/docs/investigations/2026-09-09-industry-fflow-live/canary-data",
+  "copied_official_daily_parts_for_sample_codes": 128,
+  "copied_official_daily_rows": 628,
+  "live_fetch_elapsed_s": 0.997,
+  "live": [
+    {
+      "code": "BK0459",
+      "name": "元件",
+      "ok": true,
+      "error": null,
+      "elapsed_s": 0.32,
+      "n": 120,
+      "min_date": "2026-03-18",
+      "max_date": "2026-09-08",
+      "sources": [
+        "eastmoney_fflow_day"
+      ],
+      "units": [
+        "yuan"
+      ],
+      "sample_row": {
+        "code": "BK0459",
+        "name": "元件",
+        "date": "2026-09-08",
+        "main_net": -1304482560.0,
+        "source": "eastmoney_fflow_day",
+        "unit_amount": "yuan",
+        "keys": [
+          "code",
+          "date",
+          "large_net",
+          "main_net",
+          "main_net_pct",
+          "med_net",
+          "name",
+          "small_net",
+          "source",
+          "super_net",
+          "unit_amount"
+        ]
+      },
+      "host": "https://emdatah5.eastmoney.com/dc/ZJLX/getDBHistoryData",
+      "h5_only": true,
+      "allow_local_fallback": false,
+      "dates_n": 120
+    },
+    {
+      "code": "BK1033",
+      "name": "电池",
+      "ok": true,
+      "error": null,
+      "elapsed_s": 0.214,
+      "n": 120,
+      "min_date": "2026-03-18",
+      "max_date": "2026-09-08",
+      "sources": [
+        "eastmoney_fflow_day"
+      ],
+      "units": [
+        "yuan"
+      ],
+      "sample_row": {
+        "code": "BK1033",
+        "name": "电池",
+        "date": "2026-09-08",
+        "main_net": -1704232960.0,
+        "source": "eastmoney_fflow_day",
+        "unit_amount": "yuan",
+        "keys": [
+          "code",
+          "date",
+          "large_net",
+          "main_net",
+          "main_net_pct",
+          "med_net",
+          "name",
+          "small_net",
+          "source",
+          "super_net",
+          "unit_amount"
+        ]
+      },
+      "host": "https://emdatah5.eastmoney.com/dc/ZJLX/getDBHistoryData",
+      "h5_only": true,
+      "allow_local_fallback": false,
+      "dates_n": 120
+    },
+    {
+      "code": "BK1261",
+      "name": "种植业",
+      "ok": true,
+      "error": null,
+      "elapsed_s": 0.154,
+      "n": 120,
+      "min_date": "2026-03-18",
+      "max_date": "2026-09-08",
+      "sources": [
+        "eastmoney_fflow_day"
+      ],
+      "units": [
+        "yuan"
+      ],
+      "sample_row": {
+        "code": "BK1261",
+        "name": "种植业",
+        "date": "2026-09-08",
+        "main_net": 234841808.0,
+        "source": "eastmoney_fflow_day",
+        "unit_amount": "yuan",
+        "keys": [
+          "code",
+          "date",
+          "large_net",
+          "main_net",
+          "main_net_pct",
+          "med_net",
+          "name",
+          "small_net",
+          "source",
+          "super_net",
+          "unit_amount"
+        ]
+      },
+      "host": "https://emdatah5.eastmoney.com/dc/ZJLX/getDBHistoryData",
+      "h5_only": true,
+      "allow_local_fallback": false,
+      "dates_n": 120
+    },
+    {
+      "code": "BK1036",
+      "name": "半导体",
+      "ok": true,
+      "error": null,
+      "elapsed_s": 0.156,
+      "n": 120,
+      "min_date": "2026-03-18",
+      "max_date": "2026-09-08",
+      "sources": [
+        "eastmoney_fflow_day"
+      ],
+      "units": [
+        "yuan"
+      ],
+      "sample_row": {
+        "code": "BK1036",
+        "name": "半导体",
+        "date": "2026-09-08",
+        "main_net": -1389351936.0,
+        "source": "eastmoney_fflow_day",
+        "unit_amount": "yuan",
+        "keys": [
+          "code",
+          "date",
+          "large_net",
+          "main_net",
+          "main_net_pct",
+          "med_net",
+          "name",
+          "small_net",
+          "source",
+          "super_net",
+          "unit_amount"
+        ]
+      },
+      "host": "https://emdatah5.eastmoney.com/dc/ZJLX/getDBHistoryData",
+      "h5_only": true,
+      "allow_local_fallback": false,
+      "dates_n": 120
+    },
+    {
+      "code": "BK0450",
+      "name": "航运港口",
+      "ok": true,
+      "error": null,
+      "elapsed_s": 0.153,
+      "n": 120,
+      "min_date": "2026-03-18",
+      "max_date": "2026-09-08",
+      "sources": [
+        "eastmoney_fflow_day"
+      ],
+      "units": [
+        "yuan"
+      ],
+      "sample_row": {
+        "code": "BK0450",
+        "name": "航运港口",
+        "date": "2026-09-08",
+        "main_net": 283789936.0,
+        "source": "eastmoney_fflow_day",
+        "unit_amount": "yuan",
+        "keys": [
+          "code",
+          "date",
+          "large_net",
+          "main_net",
+          "main_net_pct",
+          "med_net",
+          "name",
+          "small_net",
+          "source",
+          "super_net",
+          "unit_amount"
+        ]
+      },
+      "host": "https://emdatah5.eastmoney.com/dc/ZJLX/getDBHistoryData",
+      "h5_only": true,
+      "allow_local_fallback": false,
+      "dates_n": 120
+    }
+  ],
+  "live_ok": 5,
+  "note": "Current main-tree provider, h5_only=True, isolated DATA_DIR. Not old cached HTTP bodies."
+}

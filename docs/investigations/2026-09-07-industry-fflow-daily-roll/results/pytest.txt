@@ -1,0 +1,16 @@
+cwd=/Users/simon/Trading/one-trading/backend
+PYTHONDONTWRITEBYTECODE=1
+PYTHONPYCACHEPREFIX=/Users/simon/Trading/one-trading/docs/investigations/2026-09-07-industry-fflow-daily-roll/.pycache
+cache_dir=/Users/simon/Trading/one-trading/docs/investigations/2026-09-07-industry-fflow-daily-roll/.pytest_cache
+basetemp=/Users/simon/Trading/one-trading/docs/investigations/2026-09-07-industry-fflow-daily-roll/.pytest-tmp
+files=
+  tests/test_industry_fflow_daily_roll.py
+  tests/test_industry_fflow_phase_b_fixes.py
+as_of=2026-09-07 18:45:07 +0800
+
+.........................                                                [100%]
+25 passed in 2.38s
+
+# 12 original isolation tests + 13 Phase B fix regressions.
+# review/tests/test_independent_findings.py was not run as a pass gate
+# and was not modified (those cases assert the pre-fix bugs).

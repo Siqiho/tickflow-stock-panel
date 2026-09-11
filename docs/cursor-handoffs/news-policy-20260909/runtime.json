@@ -1,0 +1,94 @@
+{
+  "purpose": "Isolated interactive verification for news/policy. Not production.",
+  "created_at": "2026-09-09T15:55:22+08:00",
+  "backend_restarted_at": "2026-09-09T18:02:11+08:00",
+  "backend_restart_reason": "Relocate live stdout from p2-fix to isolated DATA_DIR/logs so later read-only GET cannot change candidate fingerprint. Verified then stopped 94803. Earlier: 53690 verified/stopped; 93005 ran the single PBC refresh; 94803 loaded title-dedupe. No --reload. 3011/3018 were not restarted.",
+  "frontend_3041_note": "Verified then stopped 94831 and restored same Vite proxy command as PID 97951. Live stdout is DATA_DIR/logs/news-p2-frontend.log, not p2-fix. Not a production restart.",
+  "baseline": {
+    "repo": "/Users/simon/Trading/one-trading",
+    "branch": "main",
+    "head": "31216dda527cd4ec177b9cbf6fd1c524dbadbe82"
+  },
+  "do_not_stop": [
+    {
+      "pid": 3510,
+      "port": 3018,
+      "started": "2026-09-09 05:20:24 +0800",
+      "command": "/Users/simon/Trading/one-trading/backend/.venv/bin/python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 3018"
+    },
+    {
+      "pid": 3528,
+      "port": 3011,
+      "started": "2026-09-09 05:20:24 +0800",
+      "command": "vite --host 0.0.0.0 --port 3011"
+    }
+  ],
+  "isolated": {
+    "data_dir": "/Users/simon/Trading/one-trading/data/news-isolated-20260909",
+    "source_root": "/Users/simon/Trading/one-trading",
+    "background_jobs": "ONE_TRADING_DISABLE_BACKGROUND=1",
+    "backend": {
+      "pid": 97934,
+      "parent_shell_pid": 97927,
+      "previous_pid": 94803,
+      "verified_then_stopped": [53690, 93005, 94803],
+      "started": "2026-09-09 18:02:11 +0800",
+      "host": "127.0.0.1",
+      "port": 3048,
+      "url": "http://127.0.0.1:3048",
+      "command": "DATA_DIR=/Users/simon/Trading/one-trading/data/news-isolated-20260909 ONE_TRADING_DISABLE_BACKGROUND=1 PYTHONDONTWRITEBYTECODE=1 /Users/simon/Trading/one-trading/backend/.venv/bin/python -B -m uvicorn app.main:app --host 127.0.0.1 --port 3048",
+      "reload": false,
+      "cwd": "/Users/simon/Trading/one-trading/backend",
+      "log": "/Users/simon/Trading/one-trading/data/news-isolated-20260909/logs/news-p2-backend.log"
+    },
+    "frontend": {
+      "pid": 97951,
+      "parent_shell_pid": 97950,
+      "previous_pid": 94831,
+      "started": "2026-09-09 18:02:13 +0800",
+      "host": "127.0.0.1",
+      "port": 3041,
+      "url": "http://127.0.0.1:3041/news",
+      "policy_url": "http://127.0.0.1:3041/news?tab=policy",
+      "command": "VITE_API_PROXY_TARGET=http://127.0.0.1:3048 pnpm exec vite --host 127.0.0.1 --port 3041 --strictPort",
+      "cwd": "/Users/simon/Trading/one-trading/frontend",
+      "log": "/Users/simon/Trading/one-trading/data/news-isolated-20260909/logs/news-p2-frontend.log"
+    }
+  },
+  "api_get_via_3048_and_3041_after_p2_fix": {
+    "at": "2026-09-09T17:56:30+08:00",
+    "proxy": "http://127.0.0.1:3041 -> http://127.0.0.1:3048",
+    "health": 200,
+    "policy_total": 526,
+    "first_dates": ["2026-09-09"],
+    "has_2026_09_11": false,
+    "neac_1194319_date": "2026-09-09",
+    "neac_1194319_url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml",
+    "pbc_long_id_date": "2026-09-09",
+    "pbc_long_id_date_source": "list",
+    "pbc_long_id_url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090909080511735/index.html",
+    "pbc_count": 15,
+    "pbc_empty_dates": 0,
+    "keyword_新能源": 4,
+    "departments": 82,
+    "market_counts": {
+      "cls": 20,
+      "sina": 20,
+      "foreign": 20
+    },
+    "from_cache": true,
+    "get_wrote_items_json": false,
+    "items_sha256": "bf6a424d87e7437eb3786e0657feba4857ff0c28ea2eafa4ba24078e4a8aa84c",
+    "note": "API reconfirm only. Browser still pending chief IAB. Not independent review of this increment. Not accepted."
+  },
+  "browser": {
+    "cursor_has_codex_in_app_browser": false,
+    "external_chrome_or_playwright_used": false,
+    "note": "Do not treat API GET as browser. Do not treat as independent review or user accepted."
+  },
+  "model": {
+    "requested": "Grok 4.6 / Extra High",
+    "config_display": "Grok 4.6 Extra High requested via task; not separately captured as vendor payload",
+    "vendor_return_evidence": "未核验"
+  }
+}

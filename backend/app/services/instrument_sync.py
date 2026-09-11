@@ -5,19 +5,54 @@
 
 Starter+ 盘后可用 quotes.get(universes) 顺便补充 name。
 """
+
 from __future__ import annotations
 
 import logging
-from datetime import date
+import uuid
+from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import Literal
+from zoneinfo import ZoneInfo
 
 import polars as pl
 
+from app.services.atomic_io import atomic_write_parquet, write_lineage_record
 from app.tickflow.client import get_client
 
 logger = logging.getLogger(__name__)
 
-_EXCHANGES = ["SH", "SZ", "BJ"]
+_EXCHANGES = ("SH", "SZ", "BJ")
+_CHINA = ZoneInfo("Asia/Shanghai")
+
+FIRST_SNAPSHOT_MIN_ROWS = 5_000
+MIN_TOTAL_COVERAGE_RATIO = 0.95
+MIN_MARKET_COVERAGE_RATIO = 0.90
+
+
+@dataclass(frozen=True)
+class InstrumentSyncOutcome:
+    outcome: Literal["published", "kept_prior", "failed_before_publish"]
+    rows_fetched: int
+    rows_published: int
+    market_counts: dict[str, int]
+    prior_rows: int
+    prior_market_counts: dict[str, int]
+    failed_exchanges: tuple[str, ...] = ()
+    error_code: str | None = None
+    error_message: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.outcome == "published"
+
+    @property
+    def kept_prior(self) -> bool:
+        return self.outcome == "kept_prior"
+
+    def as_dict(self) -> dict:
+        return asdict(self)
 
 
 def _flatten_instruments(items: list[dict]) -> list[dict]:
@@ -43,35 +78,238 @@ def _flatten_instruments(items: list[dict]) -> list[dict]:
     return rows
 
 
+def _market_counts(df: pl.DataFrame | None) -> dict[str, int]:
+    if df is None or df.is_empty() or "exchange" not in df.columns:
+        return {exchange: 0 for exchange in _EXCHANGES}
+    return {exchange: df.filter(pl.col("exchange") == exchange).height for exchange in _EXCHANGES}
+
+
+def _read_prior(path: Path) -> pl.DataFrame | None:
+    if not path.exists():
+        return None
+    try:
+        return pl.read_parquet(path)
+    except Exception as exc:
+        logger.warning("read prior instruments failed: %s", exc)
+        return None
+
+
+def _candidate_frame(rows: list[dict]) -> tuple[pl.DataFrame | None, str | None]:
+    normalized: list[dict] = []
+    seen: set[str] = set()
+    for raw in rows:
+        row = dict(raw)
+        symbol = str(row.get("symbol") or "").strip().upper()
+        exchange = str(row.get("exchange") or "").strip().upper()
+        code = str(row.get("code") or "").strip()
+        if not symbol or "." not in symbol:
+            return None, "instrument symbol is missing or malformed"
+        symbol_code, suffix = symbol.rsplit(".", 1)
+        if exchange not in _EXCHANGES or suffix != exchange:
+            return None, f"instrument exchange mismatch: {symbol}/{exchange}"
+        if code != symbol_code or len(code) != 6 or not code.isdigit():
+            return None, f"instrument code mismatch: {symbol}/{code}"
+        if symbol in seen:
+            return None, f"duplicate instrument symbol: {symbol}"
+        seen.add(symbol)
+        row.update(symbol=symbol, exchange=exchange, code=code)
+        normalized.append(row)
+    if not normalized:
+        return None, "instrument candidate is empty"
+    return (
+        pl.DataFrame(normalized)
+        .with_columns(pl.lit(datetime.now(_CHINA).date()).alias("as_of"))
+        .sort("symbol"),
+        None,
+    )
+
+
+def _prior_is_valid(prior: pl.DataFrame | None, counts: dict[str, int]) -> bool:
+    return bool(
+        prior is not None
+        and prior.height >= FIRST_SNAPSHOT_MIN_ROWS
+        and all(counts[exchange] > 0 for exchange in _EXCHANGES)
+        and "symbol" in prior.columns
+        and prior.get_column("symbol").n_unique() == prior.height
+    )
+
+
+def _rejected(
+    *,
+    prior: pl.DataFrame | None,
+    candidate: pl.DataFrame | None,
+    prior_counts: dict[str, int],
+    failed_exchanges: tuple[str, ...] = (),
+    error_code: str,
+    error_message: str,
+) -> InstrumentSyncOutcome:
+    candidate_counts = _market_counts(candidate)
+    outcome = "kept_prior" if prior is not None else "failed_before_publish"
+    logger.warning(
+        "instruments %s: code=%s candidate_rows=%d markets=%s prior_rows=%d prior_markets=%s detail=%s",
+        outcome,
+        error_code,
+        candidate.height if candidate is not None else 0,
+        candidate_counts,
+        prior.height if prior is not None else 0,
+        prior_counts,
+        error_message,
+    )
+    return InstrumentSyncOutcome(
+        outcome=outcome,
+        rows_fetched=candidate.height if candidate is not None else 0,
+        rows_published=0,
+        market_counts=candidate_counts,
+        prior_rows=prior.height if prior is not None else 0,
+        prior_market_counts=prior_counts,
+        failed_exchanges=failed_exchanges,
+        error_code=error_code,
+        error_message=error_message,
+    )
+
+
+def sync_instruments_result(data_dir: Path) -> InstrumentSyncOutcome:
+    """全量同步标的维表:候选不完整时保留整个旧快照。"""
+    data_dir = Path(data_dir)
+    out = data_dir / "instruments" / "instruments.parquet"
+    prior = _read_prior(out)
+    prior_counts = _market_counts(prior)
+
+    try:
+        tf = get_client()
+    except Exception as exc:
+        return _rejected(
+            prior=prior,
+            candidate=None,
+            prior_counts=prior_counts,
+            failed_exchanges=_EXCHANGES,
+            error_code="instrument_client_unavailable",
+            error_message=f"{type(exc).__name__}: {exc}",
+        )
+    all_rows: list[dict] = []
+    failures: dict[str, str] = {}
+    for exchange in _EXCHANGES:
+        try:
+            items = tf.exchanges.get_instruments(exchange, instrument_type="stock")
+        except Exception as exc:
+            failures[exchange] = f"{type(exc).__name__}: {exc}"
+            logger.warning("get_instruments(%s) failed: %s", exchange, exc)
+            continue
+        if not items:
+            failures[exchange] = "empty result"
+            logger.warning("get_instruments(%s) returned no stocks", exchange)
+            continue
+        flattened = _flatten_instruments(items)
+        for row in flattened:
+            row["exchange"] = row.get("exchange") or exchange
+        all_rows.extend(flattened)
+        logger.info("instruments %s: %d stocks", exchange, len(flattened))
+
+    candidate, validation_error = _candidate_frame(all_rows)
+    if failures:
+        failed = tuple(exchange for exchange in _EXCHANGES if exchange in failures)
+        return _rejected(
+            prior=prior,
+            candidate=candidate,
+            prior_counts=prior_counts,
+            failed_exchanges=failed,
+            error_code="required_exchange_incomplete",
+            error_message="; ".join(f"{exchange}: {failures[exchange]}" for exchange in failed),
+        )
+    if validation_error is not None or candidate is None:
+        return _rejected(
+            prior=prior,
+            candidate=candidate,
+            prior_counts=prior_counts,
+            error_code="instrument_candidate_invalid",
+            error_message=validation_error or "instrument candidate is invalid",
+        )
+
+    counts = _market_counts(candidate)
+    missing = tuple(exchange for exchange in _EXCHANGES if counts[exchange] == 0)
+    if missing:
+        return _rejected(
+            prior=prior,
+            candidate=candidate,
+            prior_counts=prior_counts,
+            failed_exchanges=missing,
+            error_code="required_exchange_incomplete",
+            error_message=f"candidate has no rows for: {', '.join(missing)}",
+        )
+
+    if _prior_is_valid(prior, prior_counts):
+        assert prior is not None
+        total_ratio = candidate.height / prior.height
+        market_ratios = {
+            exchange: counts[exchange] / prior_counts[exchange] for exchange in _EXCHANGES
+        }
+        if total_ratio < MIN_TOTAL_COVERAGE_RATIO or any(
+            ratio < MIN_MARKET_COVERAGE_RATIO for ratio in market_ratios.values()
+        ):
+            return _rejected(
+                prior=prior,
+                candidate=candidate,
+                prior_counts=prior_counts,
+                error_code="coverage_below_prior",
+                error_message=(
+                    f"total_ratio={total_ratio:.4f}; market_ratios={market_ratios}; "
+                    f"required_total={MIN_TOTAL_COVERAGE_RATIO:.2f}; "
+                    f"required_market={MIN_MARKET_COVERAGE_RATIO:.2f}"
+                ),
+            )
+    elif candidate.height < FIRST_SNAPSHOT_MIN_ROWS:
+        return _rejected(
+            prior=prior,
+            candidate=candidate,
+            prior_counts=prior_counts,
+            error_code="first_snapshot_incomplete",
+            error_message=(
+                f"recovery/first snapshot requires at least {FIRST_SNAPSHOT_MIN_ROWS} rows "
+                "with SH/SZ/BJ coverage"
+            ),
+        )
+
+    atomic_write_parquet(candidate, out)
+    run_id = f"instruments-{uuid.uuid4().hex}"
+    try:
+        write_lineage_record(
+            data_dir,
+            "stock_instruments",
+            {
+                "date": datetime.now(_CHINA).date().isoformat(),
+                "run_id": run_id,
+                "source": "tickflow",
+                "unit_version": "stock_instruments_v1",
+                "quality_status": "healthy",
+                "target_artifact": "instruments/instruments.parquet",
+                "row_count": candidate.height,
+                "market_counts": counts,
+                "prior_row_count": prior.height if prior is not None else 0,
+                "prior_market_counts": prior_counts,
+            },
+            run_id=run_id,
+        )
+    except Exception as exc:
+        # The canonical Parquet publish is already complete and atomic. Keep the
+        # serving result truthful even if the auxiliary audit sidecar cannot be written.
+        logger.warning("instruments lineage write failed: %s", exc)
+    logger.info("instruments published: %d rows markets=%s → %s", candidate.height, counts, out)
+    return InstrumentSyncOutcome(
+        outcome="published",
+        rows_fetched=candidate.height,
+        rows_published=candidate.height,
+        market_counts=counts,
+        prior_rows=prior.height if prior is not None else 0,
+        prior_market_counts=prior_counts,
+    )
+
+
 def sync_instruments(data_dir: Path) -> int:
-    """全量同步标的维表 → data/instruments/instruments.parquet。
+    """兼容旧调用:仅在完整候选正式发布时返回写入行数。
 
     返回写入的行数。
     """
-    tf = get_client()
-    all_rows: list[dict] = []
-
-    for ex in _EXCHANGES:
-        try:
-            items = tf.exchanges.get_instruments(ex, instrument_type="stock")
-            if items:
-                all_rows.extend(_flatten_instruments(items))
-                logger.info("instruments %s: %d stocks", ex, len(items))
-        except Exception as e:
-            logger.warning("get_instruments(%s) failed: %s", ex, e)
-
-    if not all_rows:
-        return 0
-
-    df = pl.DataFrame(all_rows)
-    df = df.with_columns(pl.lit(date.today()).alias("as_of"))
-
-    out = data_dir / "instruments" / "instruments.parquet"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(out)
-
-    logger.info("instruments synced: %d rows → %s", df.height, out)
-    return df.height
+    return sync_instruments_result(data_dir).rows_published
 
 
 def enrich_names_from_quotes(
@@ -105,10 +343,12 @@ def enrich_names_from_quotes(
     df = pl.read_parquet(inst_path)
 
     # 只更新空 name 的行
-    updates = pl.DataFrame({
-        "symbol": list(name_map.keys()),
-        "_new_name": list(name_map.values()),
-    })
+    updates = pl.DataFrame(
+        {
+            "symbol": list(name_map.keys()),
+            "_new_name": list(name_map.values()),
+        }
+    )
     df = df.join(updates, on="symbol", how="left")
     df = df.with_columns(
         pl.when(pl.col("name").is_null() | (pl.col("name") == ""))
@@ -117,6 +357,6 @@ def enrich_names_from_quotes(
         .alias("name"),
     ).drop("_new_name")
 
-    df.write_parquet(inst_path)
+    atomic_write_parquet(df, inst_path)
     logger.info("instruments name enriched from quotes: %d names", len(name_map))
     return len(name_map)

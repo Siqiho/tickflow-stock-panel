@@ -84,6 +84,10 @@ export const financeEntries = [
   makeEntry('financial_shares', 'Shares outstanding'),
 ]
 
+export const f10Entries = [
+  makeEntry('stock_margin_trading', '个股融资融券'),
+]
+
 export const storageFixture: StorageBreakdown = {
   managed_data_bytes: 1_000,
   operational_bytes: 200,
@@ -104,6 +108,9 @@ export const catalogFixture: CatalogResponse = {
     makeEntry('pools', 'Stock pools'),
     makeEntry('trading_calendar', 'Trading calendar'),
     ...financeEntries,
+    ...f10Entries,
+    makeEntry('ext_data', '扩展数据余项'),
+    makeEntry('ext_fund_flow_bk_daily', '行业资金流日线'),
   ],
   storage: storageFixture,
   refreshed_at: '2026-07-21T08:31:00Z',

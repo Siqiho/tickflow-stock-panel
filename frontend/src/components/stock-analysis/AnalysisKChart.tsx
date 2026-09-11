@@ -41,9 +41,10 @@ function withChrome(chrome: ChartChrome): AKTheme {
 
 let THEME: AKTheme = withChrome({
   text: '#A1A1AA', muted: '#8E8E96', grid: 'rgba(255,255,255,0.04)', border: '#27272A',
-  tooltipBg: 'rgba(39,39,42,0.92)', tooltipBorder: 'rgba(255,255,255,0.1)',
+  tooltipBg: 'rgba(39,39,42,0.92)', tooltipBorder: 'rgba(255,255,255,0.1)', tooltipText: '#E4E4E7',
   crosshair: 'rgba(255,255,255,0.2)', refLine: 'rgba(255,255,255,0.25)',
   infoBarBg: 'rgba(39,39,42,0.6)', handle: '#52525B', labelBg: 'rgba(15,23,42,0.85)',
+  fillSubtle: 'rgba(255,255,255,0.06)', textStrong: '#FAFAFA', zoomFill: 'rgba(255,255,255,0.08)',
 })
 
 // ===== 价位类型(与后端 levels.py 的 LEVEL_TYPES 对齐) =====
@@ -360,10 +361,20 @@ export function AnalysisKChart({
   // resize
   useEffect(() => {
     const inst = chartInstRef.current
-    if (!inst) return
+    const element = chartRef.current
+    if (!inst || !element) return
     const onResize = () => inst.resize()
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(onResize)
+    observer?.observe(element)
     window.addEventListener('resize', onResize)
-    return () => { window.removeEventListener('resize', onResize); inst.dispose(); chartInstRef.current = null }
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', onResize)
+      inst.dispose()
+      chartInstRef.current = null
+    }
   }, [])
 
   const toggleType = (t: LevelType) => {

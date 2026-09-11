@@ -39,14 +39,32 @@ class PublicProvider:
     name = "public"
     capabilities = ProviderCapabilities(
         adj_factor=True,
+        minute=True,
         realtime=True,
         financial=True,
         quote_snapshot=True,
         sealed_l1=True,
         pools=True,
     )
-    operations = frozenset({"quote_snapshot", "sealed_l1", "adj_factor", "financial", "pools"})
+    operations = frozenset(
+        {"quote_snapshot", "sealed_l1", "adj_factor", "financial", "pools", "market_pulse"}
+    )
     dataset_manifests = (
+        ProviderDatasetManifest(
+            provider="public",
+            dataset_id="stock_minute",
+            asset_types=["stock"],
+            operations=["minute"],
+            source_units={"volume": "lot", "amount": "estimated_CNY"},
+            canonical_units={
+                "volume": "lot",
+                "amount": "CNY",
+                "market_timezone": "Asia/Shanghai",
+            },
+            entitlement_required=None,
+            history_guarantee="single_symbol_exact_trade_date_on_demand",
+            verified_at=None,
+        ),
         ProviderDatasetManifest(
             provider="public",
             dataset_id="quote_snapshot",
@@ -100,6 +118,29 @@ class PublicProvider:
             history_guarantee="cache",
             verified_at=None,
         ),
+        ProviderDatasetManifest(
+            provider="public",
+            dataset_id="market_pulse",
+            asset_types=["index"],
+            operations=["market_pulse"],
+            source_units={
+                "last_price": "index_point",
+                "change_ratio": "ratio",
+                "volume": "share",
+                "amount": "CNY",
+                "event_time": "Asia/Shanghai",
+            },
+            canonical_units={
+                "last_price": "index_point",
+                "change_ratio": "ratio",
+                "volume": "share",
+                "amount": "CNY",
+                "event_time": "Asia/Shanghai",
+            },
+            entitlement_required=None,
+            history_guarantee="exact_trade_date_on_demand_no_fallback",
+            verified_at=None,
+        ),
     )
 
     def supports(self, operation: str) -> bool:
@@ -151,6 +192,11 @@ class PublicProvider:
         from app.services.free_sources.pools_public import sync_pools_public
 
         return sync_pools_public(data_dir, **kwargs)
+
+    def sync_market_pulse(self, data_dir: Path, **kwargs: Any) -> dict[str, Any]:
+        from app.services.free_sources.market_pulse_public import sync_market_pulse_public
+
+        return sync_market_pulse_public(data_dir, **kwargs)
 
     # Protocol compatibility: public capability is intentionally limited to
     # typed operations above, not a second general-purpose daily provider.

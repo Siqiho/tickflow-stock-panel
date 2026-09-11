@@ -1,0 +1,173 @@
+{
+  "as_of": "2026-09-09T16:15:30+08:00",
+  "task": "D-OFFLINE-MARGIN-API implement plus kline read-failure semantics",
+  "model_evidence": {
+    "workspace_requested": "Cursor Grok 4.6 + Extra High",
+    "identity_claim": "Cursor Grok 4.6",
+    "vendor_model_receipt": null,
+    "effort_receipt": null,
+    "status": "未核验"
+  },
+  "backup": {
+    "path": "/Users/simon/备份/codex/20260909-160932-offline-margin-kline-read",
+    "existing_files_copied": 10,
+    "did_not_backup_80gb_or_repo": true
+  },
+  "config": {
+    "key": "OFFLINE_QUANTDB_ROOT",
+    "source_default": "disabled",
+    "local_env_enabled": true,
+    "points_to": "/Users/simon/Trading/下载数据/quant_data",
+    "other_env_keys_unchanged": true,
+    "env_contents_not_echoed": true
+  },
+  "diff_this_round": [
+    "one-trading/.env",
+    "one-trading/backend/app/api/kline.py",
+    "one-trading/backend/app/api/stock_f10.py",
+    "one-trading/backend/app/config.py",
+    "one-trading/backend/app/services/free_sources/margin_trading_public.py",
+    "one-trading/backend/app/services/user_console_data.py",
+    "one-trading/backend/app/tickflow/repository.py",
+    "one-trading/backend/tests/free_sources/test_margin_trading_public.py",
+    "one-trading/backend/tests/test_kline_read_failure.py",
+    "one-trading/backend/tests/test_offline_margin_api.py",
+    "one-trading/docs/data-platform-development-log.md",
+    "one-trading/docs/investigations/2026-09-09-offline-margin-implementation/README.md",
+    "one-trading/docs/investigations/2026-09-09-offline-margin-implementation/evidence.json",
+    "数据台下一步工程工作计划.md"
+  ],
+  "tests": {
+    "command": "/Users/simon/Trading/one-trading/backend/.venv/bin/python -m pytest -q tests/free_sources/test_margin_trading_public.py tests/test_offline_margin_api.py tests/test_kline_read_failure.py tests/test_stock_f10_api.py tests/test_kline_minute_api.py tests/test_hermes_data.py tests/test_get_daily_cache_reuse.py",
+    "cwd": "/Users/simon/Trading/one-trading/backend",
+    "result": "38 passed in 0.85s",
+    "exit_code": 0,
+    "not_rerun": [
+      "full-repo pytest",
+      "frontend build",
+      "80gb audit script",
+      "three-symbol full compare"
+    ],
+    "unrelated_dirty_tree_failures_observed_once": {
+      "test_kline_daily_latest.py::test_daily_latest_uses_etf_enriched_cache": "latest_asset_refresh True is False; this round did not edit /daily/latest",
+      "tests/test_repository_index.py": "KlineRepository has no get_name_map / rebuild_views; pre-existing dirty tree"
+    }
+  },
+  "runtime_3018": {
+    "supervisor_pid": 3510,
+    "command": "uvicorn app.main:app --reload --host 0.0.0.0 --port 3018",
+    "worker_pid": 36813,
+    "worker_started": "2026-09-09T16:12:35+08:00",
+    "code_mtimes_before_worker": {
+      "config.py": "2026-09-09T16:10:10+08:00",
+      "stock_f10.py": "2026-09-09T16:11:17+08:00",
+      "margin_trading_public.py": "2026-09-09T16:11:34+08:00",
+      ".env": "2026-09-09T16:12:23+08:00"
+    },
+    "new_code_adopted_by_existing_reload": true,
+    "did_not_kill_other_ports": true,
+    "http": {
+      "local": {
+        "url": "http://127.0.0.1:3018/api/f10/margin-trading?symbol=300502.SZ&limit=5",
+        "status": 401,
+        "body": {"detail": "未登录或会话已过期"}
+      },
+      "offline": {
+        "url": "http://127.0.0.1:3018/api/f10/margin-trading?symbol=300502.SZ&source=offline_quantdb&limit=5",
+        "status": 401,
+        "body": {"detail": "未登录或会话已过期"}
+      }
+    },
+    "auth_status": {
+      "configured": true,
+      "authenticated": false,
+      "AUTH_PASSWORD_in_env_nonempty": false,
+      "did_not_create_session_or_account": true
+    }
+  },
+  "in_process_real_file_read_not_3018": {
+    "note": "same venv + formal DATA_DIR + configured offline root; not a claim that 3018 returned 200",
+    "symbol": "300502.SZ",
+    "local": {
+      "source": "local",
+      "status": "ok",
+      "count": 5,
+      "as_of": "2026-08-04",
+      "securities_lending_balance": 107959040.0,
+      "margin_balance": 20462784619.0
+    },
+    "offline": {
+      "source": "offline_quantdb",
+      "status": "ok",
+      "count": 5,
+      "as_of": "2026-08-26",
+      "securities_lending_balance": null,
+      "margin_balance": null
+    }
+  },
+  "read_did_not_write": {
+    "quantdb_300502": {
+      "path": "/Users/simon/Trading/下载数据/quant_data/2_base_sector/margin_trading/300502.SZ.parquet",
+      "bytes": 103439,
+      "sha256": "3a784f2fb34f97742dedae77a61dabe467124db9ba40b0fbe2ef8a81dcca662b",
+      "unchanged": true
+    },
+    "own_part": {
+      "path": "/Users/simon/Trading/one-trading/data/f10/stock_margin_trading/part.parquet",
+      "bytes": 69614,
+      "sha256": "d44856f1bea86136b981489bc45fe24ada19726b24ce89a3a379f6e9cd08e6c5",
+      "unchanged": true
+    }
+  },
+  "limitations": [
+    "implement-time 3018 GET was 401 without login; later Codex IAB 200 supersedes 'business API unverified'",
+    "mapping remains candidate sample, not full-market lock",
+    "data itself not accepted/production; log stays canary; next dataset not started",
+    "did not edit Catalog/Provider/UI/minute-or-daily offline packages",
+    "Hermes source forwarding covered by code/tests only; no live Hermes call accepted",
+    "38 passed is the original implement run, not rerun at closeout or review"
+  ],
+  "final_acceptance": {
+    "as_of": "2026-09-09T16:24:00+08:00",
+    "observer": "Codex IAB",
+    "not_this_executor_http_call": true,
+    "page": "http://127.0.0.1:3011",
+    "proxy": "Vite 3011 -> 3018",
+    "auth": "existing logged-in session; cookies not read or printed; auth not changed",
+    "symbol": "300502.SZ",
+    "path": "/api/f10/margin-trading",
+    "queries": {
+      "local": {
+        "url": "http://127.0.0.1:3011/api/f10/margin-trading?symbol=300502.SZ&limit=5&source=local",
+        "http": 200,
+        "source": "local",
+        "status": "ok",
+        "count": 5,
+        "as_of": "2026-08-04"
+      },
+      "offline": {
+        "url": "http://127.0.0.1:3011/api/f10/margin-trading?symbol=300502.SZ&limit=5&source=offline_quantdb",
+        "http": 200,
+        "source": "offline_quantdb",
+        "status": "ok",
+        "count": 5,
+        "as_of": "2026-08-26"
+      }
+    },
+    "accepted_scope": "single-file QuantDB margin read plus daily/minute read-failure 503 without refetch; small-sample function only",
+    "not_accepted": "full-market source data accepted/production",
+    "independent_review": {
+      "id": "2f6bf8b8-878e-452d-9a05-45222c04efeb",
+      "session": "9757c5a9-9540-4dc0-beb5-829fdd17c781",
+      "candidate": "65c0282f1e6fd248e48c032494099b163d952d6fe56d681a4c90a757f65560b9",
+      "finish_json_sha256": "6670c81150a93b936252b4e3a461fe107974828f7da2e453308918ae92901016",
+      "result": "PASS",
+      "required_p1_p2": false,
+      "did_not_rerun_38_pytest_or_repeat_get": true,
+      "preexisting_failures_confirmed_vs_backup": {
+        "kline_daily_latest_refresh": "backup kline.py:494 / current kline.py:501 _latest_live_candle already omitted refresh=refresh_asset",
+        "repository_index_name_map": "get_name_map and rebuild_views absent in both backup and current repository.py"
+      }
+    }
+  }
+}

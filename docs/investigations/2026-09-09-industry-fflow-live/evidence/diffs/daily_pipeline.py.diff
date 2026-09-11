@@ -1,0 +1,84 @@
+--- /Users/simon/备份/codex/20260909-131435-industry-fflow-live/files/daily_pipeline.py	2026-09-09 03:27:34
++++ /Users/simon/Trading/one-trading/backend/app/jobs/daily_pipeline.py	2026-09-09 13:16:50
+@@ -14,6 +14,7 @@
+ 
+ import logging
+ import shutil
++import threading
+ from collections.abc import Callable
+ from datetime import date as Date
+ from pathlib import Path
+@@ -40,6 +41,40 @@
+     pass
+ 
+ 
++_INDUSTRY_ROLL_CANCEL = threading.Event()
++
++
++def request_industry_roll_cancel() -> None:
++    """Cooperative stop for the industry H5 roll attached to this process."""
++    _INDUSTRY_ROLL_CANCEL.set()
++
++
++def _run_industry_fund_flow_daily_roll(
++    data_dir: Path,
++    *,
++    cancel_event: threading.Event | None = None,
++    time_limit_s: float | None = None,
++) -> dict:
++    """Attach industry H5 daily continuation. Never raise into the daily-K path."""
++    try:
++        from app.services.free_sources.fund_flow import roll_industry_daily_from_h5
++
++        return roll_industry_daily_from_h5(
++            data_dir,
++            cancel_event=cancel_event,
++            time_limit_s=time_limit_s,
++        )
++    except Exception as e:
++        logger.warning("industry fund-flow daily roll failed: %s", e)
++        return {
++            "ok": False,
++            "kind": "board",
++            "status": "error",
++            "error": str(e),
++            "note": "行业日线续更失败，不影响已成功日K",
++        }
++
++
+ def _invalidate(table: str | None = None) -> None:
+     """stage 写完调用,让 /api/data/status 只重算被影响的那张表。"""
+     from app.api.data import invalidate_data_cache
+@@ -196,6 +231,7 @@
+     capset: CapabilitySet,
+     on_progress: ProgressCb | None = None,
+     override_start_date: Date | None = None,
++    industry_time_limit_s: float | None = None,
+ ) -> dict:
+     """立即执行一次盘后管道,支持进度回调。
+ 
+@@ -917,6 +953,16 @@
+         )
+ 
+     quality_ok = bool(quality_report and quality_report.get("ok") is True)
++
++    # Industry continuation is after quality is decided and before done.
++    # Failure here must not flip quality_ok or rewrite daily_days.
++    # Mutual exclusion stays on the existing job slot / _run_tracked path.
++    _INDUSTRY_ROLL_CANCEL.clear()
++    industry_fund_flow_daily = _run_industry_fund_flow_daily_roll(
++        repo.store.data_dir,
++        cancel_event=_INDUSTRY_ROLL_CANCEL,
++        time_limit_s=industry_time_limit_s,
++    )
+     emit("done", 100, "完成" if quality_ok else "完成，但质量门禁未通过")
+     _invalidate(None)  # 兜底:全清
+ 
+@@ -946,6 +992,7 @@
+         "instruments_sync": instruments_result.as_dict(),
+         "skipped_stages": skipped,
+         "quality": quality_report,
++        "industry_fund_flow_daily": industry_fund_flow_daily,
+     }
+ 
+ 

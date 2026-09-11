@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -20,6 +21,7 @@ import { api } from '@/lib/api'
 import { useCapabilities, useSettings } from '@/lib/useSharedQueries'
 import { QK } from '@/lib/queryKeys'
 import { CAP_LABELS, tierTextStyle, tierStyle, tierBaseName, ALL_TIERS, TierTag } from '@/lib/capability-labels'
+import { DATA_KEYS_SETTINGS_HREF } from '@/lib/dataSources'
 
 // ===== 导出为 Panel 组件 (由 Settings.tsx 嵌入) =====
 
@@ -70,7 +72,7 @@ export function SettingsKeysPanel() {
 
   return (
     <>
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.3fr] gap-6 max-w-5xl">
+      <div className="grid max-w-5xl grid-cols-1 gap-4 lg:grid-cols-[1fr_1.3fr] lg:gap-6">
         {/* ========== 左列: Key 配置 ========== */}
         <div className="space-y-6">
           <Card icon={Key} title="TickFlow API Key">
@@ -265,14 +267,14 @@ export function SettingsKeysPanel() {
                     return (
                       <div
                         key={cap}
-                        className="px-5 py-3 border-b border-border last:border-b-0 flex items-baseline justify-between gap-4"
+                        className="flex items-start justify-between gap-3 border-b border-border px-4 py-3 last:border-b-0 sm:items-baseline sm:gap-4 sm:px-5"
                       >
                         <div className="min-w-0">
-                          <div className="text-sm text-foreground truncate">
+                          <div className="text-sm leading-snug text-foreground break-words">
                             {meta?.name ?? cap}
                           </div>
                           {meta?.hint && (
-                            <div className="mt-0.5 text-[11px] text-muted truncate">
+                            <div className="mt-0.5 text-[11px] leading-relaxed text-muted break-words">
                               {meta.hint}
                             </div>
                           )}
@@ -346,7 +348,35 @@ export function SettingsKeysPanel() {
 
 // ===== 档位说明弹窗 =====
 
-function TierHelpPopover({ currentLabel }: { currentLabel: string }) {
+export function useInvalidateTierRelated() {
+  const qc = useQueryClient()
+  return () => {
+    qc.invalidateQueries({ queryKey: QK.capabilities })
+    qc.invalidateQueries({ queryKey: QK.settings })
+    qc.invalidateQueries({ queryKey: QK.capabilityMatrix })
+    qc.invalidateQueries({ queryKey: QK.preferences })
+  }
+}
+
+export function TickFlowKeySection({ right }: { right?: ReactNode }) {
+  return (
+    <div className="rounded-lg border border-border/70 bg-elevated/20 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="text-sm font-medium text-foreground">API Key</div>
+        {right}
+      </div>
+      <p className="text-xs leading-relaxed text-muted">
+        TickFlow Key 仍在
+        <Link to={DATA_KEYS_SETTINGS_HREF} className="mx-1 font-medium text-accent hover:underline">
+          设置 → 数据密钥
+        </Link>
+        里配置，避免和云端订阅/本机密钥流程冲突。
+      </p>
+    </div>
+  )
+}
+
+export function TierHelpPopover({ currentLabel }: { currentLabel: string }) {
   const [open, setOpen] = useState(false)
   const currentBase = tierBaseName(currentLabel)
 
@@ -420,11 +450,11 @@ interface CardProps {
 
 function Card({ icon: Icon, title, badge, right, children }: CardProps) {
   return (
-    <section className="rounded-card border border-border bg-surface p-5">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2.5">
+    <section className="rounded-card border border-border bg-surface p-4 sm:p-5">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2.5">
           <Icon className="h-4 w-4 text-secondary" />
-          <h2 className="text-sm font-medium text-foreground">{title}</h2>
+          <h2 className="min-w-0 text-sm font-medium leading-snug text-foreground">{title}</h2>
           {badge && (
             <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-elevated text-muted">
               {badge}

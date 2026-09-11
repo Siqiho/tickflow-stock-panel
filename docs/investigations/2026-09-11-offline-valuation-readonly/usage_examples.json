@@ -1,0 +1,7 @@
+{
+  "note": "Default --audit/--summary is stdout only and writes no files.",
+  "query": [
+    "backend/.venv/bin/python -B scripts/offline_valuation_query.py --symbol 000001.SZ --start 2026-07-21 --end 2026-08-12 --limit 5",
+    "backend/.venv/bin/python -B scripts/offline_valuation_query.py --audit --summary"
+  ]
+}

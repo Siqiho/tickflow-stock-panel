@@ -30,7 +30,8 @@ _write_count = 0
 
 
 def _path(data_dir: Path) -> Path:
-    p = data_dir / "user_data" / "alerts.jsonl"
+    from app.services.user_context import user_data_dir
+    p = user_data_dir(data_dir) / "alerts.jsonl"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 

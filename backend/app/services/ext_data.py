@@ -1,6 +1,7 @@
 """扩展数据服务 — 配置管理 + 文件解析 + Parquet 存储。"""
 from __future__ import annotations
 
+import codecs
 import json
 import logging
 from datetime import date, datetime
@@ -8,6 +9,8 @@ from pathlib import Path
 from typing import Literal
 
 import polars as pl
+
+from app.services.atomic_io import atomic_write_parquet
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +41,8 @@ class PullConfig:
         "url", "method", "headers", "body", "response_path",
         "field_map", "schedule_minutes", "enabled",
         "last_run", "last_status", "last_message", "last_rows",
-        "next_run",
+        "next_run", "time_window_start", "time_window_end", "date_param",
+        "auth",
     )
 
     def __init__(
@@ -56,6 +60,10 @@ class PullConfig:
         last_message: str | None = None,
         last_rows: int | None = None,
         next_run: str | None = None,
+        time_window_start: str | None = None,
+        time_window_end: str | None = None,
+        date_param: str | None = None,
+        auth: dict | None = None,
     ) -> None:
         self.url = url
         self.method = method              # GET | POST
@@ -70,6 +78,10 @@ class PullConfig:
         self.last_message = last_message
         self.last_rows = last_rows
         self.next_run = next_run            # 下次预计运行 (ISO, 调度器写入)
+        self.time_window_start = time_window_start
+        self.time_window_end = time_window_end
+        self.date_param = date_param
+        self.auth = auth
 
     def to_dict(self) -> dict:
         return {
@@ -86,6 +98,10 @@ class PullConfig:
             "last_message": self.last_message,
             "last_rows": self.last_rows,
             "next_run": self.next_run,
+            "time_window_start": self.time_window_start,
+            "time_window_end": self.time_window_end,
+            "date_param": self.date_param,
+            "auth": self.auth,
         }
 
     @classmethod
@@ -106,7 +122,25 @@ class PullConfig:
             last_message=d.get("last_message"),
             last_rows=d.get("last_rows"),
             next_run=d.get("next_run"),
+            time_window_start=d.get("time_window_start"),
+            time_window_end=d.get("time_window_end"),
+            date_param=d.get("date_param"),
+            auth=d.get("auth"),
         )
+
+
+def ext_api_key_field(config_id: str) -> str:
+    """扩展数据拉取 API Key 在 secrets.json 中的字段名。"""
+    return f"ext_{config_id}_api_key"
+
+
+def get_ext_api_key(config_id: str) -> str:
+    """取扩展数据拉取接口的 API Key: secrets.json 优先, 环境变量 EXT_{ID}_API_KEY 兜底。"""
+    from app import secrets_store
+
+    return secrets_store.get_env_backed_secret(
+        ext_api_key_field(config_id), f"EXT_{config_id.upper()}_API_KEY"
+    )
 
 
 class ExtConfig:
@@ -226,6 +260,8 @@ class ExtConfigStore:
             json.dumps(config.to_dict(), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        # 字段集/模式变化会改变扩展列集合: 失效扩展帧缓存与策略结果缓存
+        _invalidate_ext_derived(self._base.parent)
 
     def delete(self, config_id: str) -> bool:
         import shutil
@@ -233,6 +269,7 @@ class ExtConfigStore:
         if not cp.exists():
             return False
         shutil.rmtree(cp.parent, ignore_errors=True)
+        _invalidate_ext_derived(self._base.parent)
         return True
 
     def _migrate_legacy(self, old_path: Path) -> None:
@@ -309,6 +346,44 @@ def normalize_symbol(series: pl.Series, lookup: dict[str, str] | None = None) ->
     return series.map_elements(_fix_one, return_dtype=pl.Utf8)
 
 
+_TRANSCODE_CHUNK_BYTES = 64 * 1024
+
+
+def _decodes_as(file_path: Path, encoding: str) -> bool:
+    try:
+        decoder = codecs.getincrementaldecoder(encoding)()
+        with file_path.open("rb") as fh:
+            while True:
+                chunk = fh.read(_TRANSCODE_CHUNK_BYTES)
+                if not chunk:
+                    decoder.decode(b"", final=True)
+                    return True
+                decoder.decode(chunk, final=False)
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def _transcode_to_utf8(src: Path, dest: Path, encoding: str) -> bool:
+    try:
+        decoder = codecs.getincrementaldecoder(encoding)()
+        with src.open("rb") as inf, dest.open("w", encoding="utf-8", newline="") as outf:
+            while True:
+                chunk = inf.read(_TRANSCODE_CHUNK_BYTES)
+                if not chunk:
+                    text = decoder.decode(b"", final=True)
+                    if text:
+                        outf.write(text)
+                    return True
+                text = decoder.decode(chunk, final=False)
+                if text:
+                    outf.write(text)
+    except Exception:  # noqa: BLE001
+        dest.unlink(missing_ok=True)
+        return False
+    return True
+
+
 def ensure_utf8_csv(file_path: Path) -> Path:
     """确保 CSV 文件以 UTF-8 编码可读，非 UTF-8（如 GBK/GB18030）则转换。
 
@@ -319,21 +394,14 @@ def ensure_utf8_csv(file_path: Path) -> Path:
     返回值：若已是 UTF-8 则返回原路径；否则在同目录写一个 *.utf8 文件并返回它
     （调用方用临时目录，随目录一起清理）。
     """
-    raw = file_path.read_bytes()
     # BOM 处理：UTF-8-SIG 等带 BOM 文件直接交给 Polars（它认识 BOM）
-    try:
-        raw.decode("utf-8")
+    if _decodes_as(file_path, "utf-8"):
         return file_path  # 已是合法 UTF-8
-    except UnicodeDecodeError:
-        pass
     # 依次尝试常见中文编码，第一个能完整解码的即为命中
     for enc in ("gb18030", "gbk", "gb2312", "big5"):
-        try:
-            text = raw.decode(enc)
-        except UnicodeDecodeError:
-            continue
         out_path = file_path.with_suffix(file_path.suffix + ".utf8")
-        out_path.write_text(text, encoding="utf-8")
+        if not _transcode_to_utf8(file_path, out_path, enc):
+            continue
         logger.info("CSV 编码转换 %s → %s (%s)", file_path.name, out_path.name, enc)
         return out_path
     # 都无法解码：返回原路径，让 Polars 抛出更精确的原始错误
@@ -378,11 +446,24 @@ def _config_dir(config_id: str, data_dir: Path) -> Path:
     return data_dir / "ext_data" / config_id
 
 
+def _ext_merge_keys(df: pl.DataFrame, existing: pl.DataFrame | None = None) -> list[str]:
+    cols = set(df.columns)
+    if existing is not None:
+        cols.update(existing.columns)
+    if "symbol" in cols:
+        return ["symbol"]
+    if "code" in cols:
+        return ["code"]
+    return [df.columns[0]]
+
+
 def write_ext_parquet(
     df: pl.DataFrame,
     config: ExtConfig,
     data_dir: Path,
     snapshot_date: date | None = None,
+    *,
+    atomic: bool = False,
 ) -> int:
     """将 DataFrame 写入扩展数据 Parquet。
 
@@ -410,8 +491,8 @@ def write_ext_parquet(
         if out_path.exists():
             try:
                 existing = pl.read_parquet(out_path)
-                key = "symbol" if "symbol" in df.columns else df.columns[0]
-                df = pl.concat([existing, df]).unique(subset=[key], keep="last")
+                key = _ext_merge_keys(df, existing)
+                df = pl.concat([existing, df], how="diagonal_relaxed").unique(subset=key, keep="last")
             except Exception as e:
                 # schema 不一致 (列不同) 时 concat 失败 → 直接用新 df 覆盖。
                 # 记日志而非静默吞掉, 便于排查"数据结构错乱"类问题。
@@ -422,19 +503,39 @@ def write_ext_parquet(
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / "part.parquet"
 
-        # 如果已有文件，合并去重
+        # 如果已有文件，按 code/symbol 合并去重；失败时禁止整日覆盖。
         if out_path.exists():
             try:
                 existing = pl.read_parquet(out_path)
-                key = "symbol" if "symbol" in df.columns else df.columns[0]
-                df = pl.concat([existing, df]).unique(subset=[key], keep="last")
+                key = _ext_merge_keys(df, existing)
+                df = pl.concat([existing, df], how="diagonal_relaxed").unique(subset=key, keep="last")
             except Exception as e:
-                logger.warning("扩展表 %s 合并去重失败, 将覆盖写入: %s", config.id, e)
+                logger.error("扩展表 %s 合并去重失败, 拒绝覆盖写入: %s", config.id, e)
+                raise
 
     df = cast_df_to_schema(df, config.fields)
-    df.write_parquet(out_path)
+    if atomic:
+        atomic_write_parquet(df, out_path)
+    else:
+        df.write_parquet(out_path)
     logger.info("扩展表写入: %s → %s (%d 行)", config.id, out_path, len(df))
+    # 扩展列已接入 enriched 帧/因子注册表: 写入后必须失效相关缓存
+    _invalidate_ext_derived(data_dir)
     return len(df)
+
+
+def _invalidate_ext_derived(data_dir: Path) -> None:
+    """扩展数据/配置变更 → 扩展帧缓存 + 因子同步状态 + 策略结果缓存。
+
+    惰性导入避免与 ext_factors (反向惰性引用本模块) 构成模块级环。
+    repo 内存 enriched 缓存由 API 层 repo.clear_cache() 补充清理。
+    """
+    try:
+        from app.factors.ext_factors import invalidate_ext_caches
+
+        invalidate_ext_caches(data_dir)
+    except Exception as e:
+        logger.warning("扩展数据缓存失效失败: %s", e)
 
 
 def delete_ext_parquet(config_id: str, data_dir: Path) -> None:
@@ -453,6 +554,7 @@ def delete_ext_parquet(config_id: str, data_dir: Path) -> None:
     if ts_dir.exists():
         import shutil
         shutil.rmtree(ts_dir, ignore_errors=True)
+    _invalidate_ext_derived(data_dir)
 
 
 def fix_symbol_format(config: ExtConfig, data_dir: Path) -> int:

@@ -1,0 +1,601 @@
+{
+  "started_at": "2026-09-09T15:54:05.956894+08:00",
+  "data_dir": "/Users/simon/Trading/one-trading/data/news-isolated-20260909",
+  "market": {
+    "cls": {
+      "ok": true,
+      "error": null,
+      "preserved": false,
+      "count": 20,
+      "fetched_at": "2026-09-09T15:54:06.229400+08:00",
+      "endpoint": "https://www.cls.cn/api/cache",
+      "elapsed_s": 0.27,
+      "samples": [
+        {
+          "title": "北京：全面推动产业绿色化转型 到2030年国家绿色工厂产值占规模以上制造业总产值比重达到50%",
+          "date": "2026-09-09T15:51:49+08:00",
+          "source": "财联社电报",
+          "url": "https://www.cls.cn/telegraph/2478230"
+        },
+        {
+          "title": "北京：提升高速通信网络能级 超前布局未来通信网络",
+          "date": "2026-09-09T15:51:39+08:00",
+          "source": "财联社电报",
+          "url": "https://www.cls.cn/telegraph/2478228"
+        },
+        {
+          "title": "北京：到2030年建设1000家先进级智能工厂、100家卓越级和领航级智能工厂",
+          "date": "2026-09-09T15:50:49+08:00",
+          "source": "财联社电报",
+          "url": "https://www.cls.cn/telegraph/2478227"
+        }
+      ]
+    },
+    "sina": {
+      "ok": true,
+      "error": null,
+      "preserved": false,
+      "count": 20,
+      "fetched_at": "2026-09-09T15:54:06.522107+08:00",
+      "endpoint": "https://zhibo.sina.com.cn/api/zhibo/feed",
+      "elapsed_s": 0.29,
+      "samples": [
+        {
+          "title": "长三角（嘉兴）智算科技有限公司成立",
+          "date": "2026-09-09T15:53:56+08:00",
+          "source": "新浪财经",
+          "url": "https://finance.sina.cn/7x24/2026-09-09/detail-inirfivs8925286.d.html"
+        },
+        {
+          "title": "深圳在香港发行40亿元离岸人民币地方政府债券",
+          "date": "2026-09-09T15:53:49+08:00",
+          "source": "新浪财经",
+          "url": "https://finance.sina.cn/7x24/2026-09-09/detail-inirfivu5697726.d.html"
+        },
+        {
+          "title": "浙商证券：维持五粮液“买入”评级，核心大单品表现稳固",
+          "date": "2026-09-09T15:53:40+08:00",
+          "source": "新浪财经",
+          "url": "https://finance.sina.cn/7x24/2026-09-09/detail-inirfivu5697544.d.html"
+        }
+      ]
+    },
+    "foreign": {
+      "ok": true,
+      "error": null,
+      "preserved": false,
+      "count": 20,
+      "fetched_at": "2026-09-09T15:54:19.904647+08:00",
+      "endpoint": "https://news-mediator.tradingview.com/news-flow/v2/news",
+      "elapsed_s": 13.38,
+      "samples": [
+        {
+          "title": "《汇市简讯》能源价格飙升可能抑制欧元兑美元的涨势",
+          "date": "2026-09-09T15:52:16+08:00",
+          "source": "外媒",
+          "url": "https://cn.tradingview.com/news/tag:reuters.com,2026:newsml_L6S4510F9:0"
+        },
+        {
+          "title": "恐慌指数“醒了”！华尔街挨了一记重拳，道指暴跌628点 美联储不得不加息？",
+          "date": "2026-09-09T15:46:31+08:00",
+          "source": "外媒",
+          "url": "https://cn.tradingview.com/news/fx168:aa7cd85dee3f9:0"
+        },
+        {
+          "title": "川宁生物(301301.SZ)：甲醇蛋白项目已完成中试",
+          "date": "2026-09-09T15:45:44+08:00",
+          "source": "外媒",
+          "url": "https://cn.tradingview.com/news/gelonghui:0d1ab0671e3f9:0"
+        }
+      ]
+    }
+  },
+  "departments": {
+    "ok": true,
+    "error": null,
+    "count": 82,
+    "elapsed_s": 0.33,
+    "endpoint": "https://www.gov.cn/home/2023-03/29/content_5748953.htm",
+    "names": [
+      "外交部",
+      "国防部",
+      "国家发展和改革委员会",
+      "教育部",
+      "科学技术部",
+      "工业和信息化部",
+      "国家民族事务委员会",
+      "公安部",
+      "民政部",
+      "司法部",
+      "财政部",
+      "人力资源和社会保障部",
+      "自然资源部",
+      "生态环境部",
+      "住房和城乡建设部",
+      "交通运输部",
+      "水利部",
+      "农业农村部",
+      "商务部",
+      "文化和旅游部",
+      "国家卫生健康委员会",
+      "退役军人事务部",
+      "应急管理部",
+      "中国人民银行",
+      "审计署",
+      "国家航天局",
+      "国家原子能机构",
+      "国家核安全局",
+      "国务院国有资产监督管理委员会",
+      "海关总署",
+      "国家税务总局",
+      "国家市场监督管理总局",
+      "国家金融监督管理总局",
+      "中国证券监督管理委员会",
+      "国家广播电视总局",
+      "国家体育总局",
+      "国家信访局",
+      "国家统计局",
+      "国家知识产权局",
+      "国家国际发展合作署",
+      "国家医疗保障局",
+      "国务院参事室",
+      "国家机关事务管理局",
+      "国家认证认可监督管理委员会",
+      "国家标准化管理委员会",
+      "国家新闻出版署",
+      "（国家版权局）",
+      "国家宗教事务局",
+      "国务院侨务办公室",
+      "国务院港澳事务办公室",
+      "国务院台湾事务办公室",
+      "国家互联网信息办公室",
+      "国务院新闻办公室",
+      "新华通讯社",
+      "中国科学院",
+      "中国社会科学院",
+      "中国工程院",
+      "国务院发展研究中心",
+      "中国气象局",
+      "国家行政学院",
+      "国家粮食和物资储备局",
+      "国家能源局",
+      "国家数据局",
+      "国家国防科技工业局",
+      "国家烟草专卖局",
+      "国家移民管理局",
+      "国家林业和草原局",
+      "国家铁路局",
+      "中国民用航空局",
+      "国家邮政局",
+      "国家文物局",
+      "国家中医药管理局",
+      "国家疾病预防控制局",
+      "国家矿山安全监察局",
+      "国家消防救援局",
+      "国家外汇管理局",
+      "国家药品监督管理局",
+      "全国人大",
+      "全国政协",
+      "国家监察委员会",
+      "最高人民法院",
+      "最高人民检察院"
+    ]
+  },
+  "policy_key": {
+    "国家发展和改革委员会": {
+      "ok": true,
+      "error": null,
+      "fetched": 30,
+      "added": 26,
+      "total_after": 26,
+      "elapsed_s": 1.74,
+      "samples": [
+        {
+          "title": "法治护航民营经济 |《民营经济促进法》典型案例视频（15）：准确把握民事执行财产责任边界，依法推进涉企民事执行监督",
+          "date": "2026-09-09",
+          "source": "国家发展和改革委员会",
+          "url": "https://www.ndrc.gov.cn/xwdt/spfg/zfzjt/202609/t20260909_1407485.html"
+        },
+        {
+          "title": "法治护航民营经济 |《民营经济促进法》典型案例视频（14）：严格区分经济纠纷与刑事犯罪，平等保护各类经营主体合法权益",
+          "date": "2026-09-08",
+          "source": "国家发展和改革委员会",
+          "url": "https://www.ndrc.gov.cn/xwdt/spfg/zfzjt/202609/t20260908_1407466.html"
+        },
+        {
+          "title": "周海兵副主任会见芬兰经济事务与就业部经济事务部长普伊斯托",
+          "date": "2026-09-08",
+          "source": "国家发展和改革委员会",
+          "url": "https://www.ndrc.gov.cn/xwdt/xwfb/202609/t20260908_1407472.html"
+        }
+      ]
+    },
+    "中国人民银行": {
+      "ok": true,
+      "error": null,
+      "fetched": 15,
+      "added": 15,
+      "total_after": 15,
+      "elapsed_s": 0.27,
+      "samples": [
+        {
+          "title": "中国人民银行副行长宣昌能出席国际清算银行行长例会",
+          "date": "2026-09-09",
+          "source": "中国人民银行",
+          "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090909080511735/index.html"
+        },
+        {
+          "title": "中国人民银行召开树立和践行正确政绩观学习教育总结会议",
+          "date": "2026-09-04",
+          "source": "中国人民银行",
+          "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090414583025333/index.html"
+        },
+        {
+          "title": "2026年2季度末金融业机构总资产562.2万亿元",
+          "date": "2026-09-03",
+          "source": "中国人民银行",
+          "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/2026090314250952275/index.html"
+        }
+      ]
+    },
+    "中国证券监督管理委员会": {
+      "ok": true,
+      "error": null,
+      "fetched": 30,
+      "added": 30,
+      "total_after": 30,
+      "elapsed_s": 1.12,
+      "samples": [
+        {
+          "title": "吴清主席会见阿曼金融服务管理局执行总裁萨尔米",
+          "date": "2026-09-07",
+          "source": "中国证券监督管理委员会",
+          "url": "https://www.csrc.gov.cn/csrc/c106311/c7657128/content.shtml"
+        },
+        {
+          "title": "吴清主席会见沙特投资部助理大臣穆巴拉克",
+          "date": "2026-09-07",
+          "source": "中国证券监督管理委员会",
+          "url": "https://www.csrc.gov.cn/csrc/c106311/c7657131/content.shtml"
+        },
+        {
+          "title": "境外发行上市备案补充材料要求公示（2026年8月31日—2026年9月4日）",
+          "date": "2026-09-04",
+          "source": "中国证券监督管理委员会",
+          "url": "https://www.csrc.gov.cn/csrc/c105983/c7656798/content.shtml"
+        }
+      ]
+    },
+    "财政部": {
+      "ok": true,
+      "error": null,
+      "fetched": 5,
+      "added": 5,
+      "total_after": 5,
+      "elapsed_s": 0.36,
+      "samples": [
+        {
+          "title": "常军红出席第四届亚太廉洁合规论坛开幕式并致辞",
+          "date": "2026-09-08",
+          "source": "财政部",
+          "url": "https://www.mof.gov.cn/zhengwuxinxi/caizhengxinwen/202609/t20260908_3996972.htm"
+        },
+        {
+          "title": "财政部积极支持有关中央金融企业补充核心一级资本",
+          "date": "2026-09-07",
+          "source": "财政部",
+          "url": "https://www.mof.gov.cn/zhengwuxinxi/caizhengxinwen/202609/t20260904_3996751.htm"
+        },
+        {
+          "title": "廖岷会见国际投资机构调研团",
+          "date": "2026-09-07",
+          "source": "财政部",
+          "url": "https://www.mof.gov.cn/zhengwuxinxi/caizhengxinwen/202609/t20260907_3996774.htm"
+        }
+      ]
+    },
+    "国家统计局": {
+      "ok": false,
+      "error": "_ssl.c:1011: The handshake operation timed out",
+      "fetched": 0,
+      "added": 0,
+      "total_after": 0,
+      "elapsed_s": 15.16,
+      "samples": []
+    },
+    "国家外汇管理局": {
+      "ok": true,
+      "error": null,
+      "fetched": 20,
+      "added": 19,
+      "total_after": 20,
+      "elapsed_s": 0.42,
+      "samples": [
+        {
+          "title": "国家外汇管理局公布2026年8月末外汇储备规模数据",
+          "date": "2026-09-07",
+          "source": "国家外汇管理局",
+          "url": "https://www.safe.gov.cn/safe/2026/0907/27859.html"
+        },
+        {
+          "title": "朱鹤新：外汇领域高水平开放服务中国式现代化",
+          "date": "2026-09-01",
+          "source": "国家外汇管理局",
+          "url": "https://www.safe.gov.cn/safe/2026/0901/27831.html"
+        },
+        {
+          "title": "国家外汇管理局公布2026年7月我国国际收支货物和服务贸易数据",
+          "date": "2026-08-28",
+          "source": "国家外汇管理局",
+          "url": "https://www.safe.gov.cn/safe/2026/0828/27815.html"
+        }
+      ]
+    },
+    "商务部": {
+      "ok": true,
+      "error": null,
+      "fetched": 16,
+      "added": 15,
+      "total_after": 15,
+      "elapsed_s": 0.45,
+      "samples": [
+        {
+          "title": "习近平同英国首相伯纳姆通电话",
+          "date": "2026-09-09",
+          "source": "商务部",
+          "url": "http://www.mofcom.gov.cn/syxwfb/art/2026/art_60e8b4459f354c2c90153e42162e7155.html"
+        },
+        {
+          "title": "商务部公告2026年第37号 公布对原产于日本的进口二氯二氢硅反倾销调查的初步裁定",
+          "date": "2026-09-07",
+          "source": "商务部",
+          "url": "http://www.mofcom.gov.cn/zwgk/zcfb/art/2026/art_01c15948864a45d186abb146fe30a42b.html"
+        },
+        {
+          "title": "商务部召开例行新闻发布会（2026年9月3日）",
+          "date": "2026-09-03",
+          "source": "商务部",
+          "url": "https://www.mofcom.gov.cn/xwfbzt/2026/swbzklxxwfbh2026n9y3r/index.html"
+        }
+      ]
+    },
+    "工业和信息化部": {
+      "ok": true,
+      "error": null,
+      "fetched": 30,
+      "added": 27,
+      "total_after": 28,
+      "elapsed_s": 0.56,
+      "samples": [
+        {
+          "title": "贵州通信管理局召开树立和践行正确政绩观学习教育总结会议",
+          "date": "2026-09-08",
+          "source": "工业和信息化部",
+          "url": "https://www.miit.gov.cn/xwfb/gxdt/dfdt/art/2026/art_1355ef6c71f94475be748c2893a18e82.html"
+        },
+        {
+          "title": "四川通信管理局召开会议 总结树立和践行正确政绩观学习教育 部署巩固拓展学习教育成果工作",
+          "date": "2026-09-08",
+          "source": "工业和信息化部",
+          "url": "https://www.miit.gov.cn/xwfb/gxdt/dfdt/art/2026/art_dc44cef1a5a242f4aed122e0c8e1beaf.html"
+        },
+        {
+          "title": "光缆行业数智化转型“一图四清单”建设成果交流会在京召开",
+          "date": "2026-09-08",
+          "source": "工业和信息化部",
+          "url": "https://www.miit.gov.cn/xwfb/gxdt/sjdt/art/2026/art_fd1aa7e988294bde8d36d4d864c4018b.html"
+        }
+      ]
+    },
+    "住房和城乡建设部": {
+      "ok": true,
+      "error": null,
+      "fetched": 30,
+      "added": 30,
+      "total_after": 30,
+      "elapsed_s": 0.31,
+      "samples": [
+        {
+          "title": "让公共数据“跑起来”，杭州停车充电一体化服务入选国家级示范场景",
+          "date": "2026-09-09",
+          "source": "住房和城乡建设部",
+          "url": "https://www.mohurd.gov.cn/xinwen/dfxx/art/2026/art_e57892ba51f043d49f89cd045c1211ad.html"
+        },
+        {
+          "title": "贵州规范保护提升项目消防审验工作",
+          "date": "2026-09-08",
+          "source": "住房和城乡建设部",
+          "url": "https://www.mohurd.gov.cn/xinwen/dfxx/art/2026/art_4ad0b2fe6774433a9f13dc2ba2bf498b.html"
+        },
+        {
+          "title": "激活存量资源潜力　江苏着力营造高品质城市生活空间",
+          "date": "2026-09-08",
+          "source": "住房和城乡建设部",
+          "url": "https://www.mohurd.gov.cn/xinwen/dfxx/art/2026/art_0b571bcc7fd2453ea78e53b79c33cc90.html"
+        }
+      ]
+    },
+    "交通运输部": {
+      "ok": true,
+      "error": null,
+      "fetched": 28,
+      "added": 28,
+      "total_after": 28,
+      "elapsed_s": 0.48,
+      "samples": [
+        {
+          "title": "黄石海事局气象类大风四级（蓝色）水上交通安全预警 (2026)216",
+          "date": "2026-09-09",
+          "source": "交通运输部",
+          "url": "https://www.mot.gov.cn/fuwu/yujingtishi/cjanquanyujing/202609/t20260909_4224032.html"
+        },
+        {
+          "title": "青岛加速电动重卡规模化应用",
+          "date": "2026-09-09",
+          "source": "交通运输部",
+          "url": "https://www.mot.gov.cn/xinwen/jiaotongyaowen/202609/t20260909_4224015.html"
+        },
+        {
+          "title": "重庆海事局气象类高温二级（橙色）水上交通安全预警",
+          "date": "2026-09-09",
+          "source": "交通运输部",
+          "url": "https://www.mot.gov.cn/fuwu/yujingtishi/cjanquanyujing/202609/t20260909_4224033.html"
+        }
+      ]
+    },
+    "国家数据局": {
+      "ok": true,
+      "error": null,
+      "fetched": 25,
+      "added": 23,
+      "total_after": 23,
+      "elapsed_s": 0.39,
+      "samples": [
+        {
+          "title": "署名文章 | 刘烈宏：把握数智化发展大势 深入推进数字中国建设",
+          "date": "2026-09-08",
+          "source": "国家数据局",
+          "url": "https://www.nda.gov.cn/sjj/jgsz/jld/llh/llhldhd/0908/20260908091721448477945_pc.html"
+        },
+        {
+          "title": "地方动态 | 乘“数”而上 赋能八闽——2026年“数据要素×”大赛福建分赛圆满收官",
+          "date": "2026-09-06",
+          "source": "国家数据局",
+          "url": "https://www.nda.gov.cn/sjj/swdt/dfdt/0906/20260906141327955491767_pc.html"
+        },
+        {
+          "title": "新闻直播间 | 自然资源部：北斗基准站服务数据首次向社会共享开放",
+          "date": "2026-09-05",
+          "source": "国家数据局",
+          "url": "https://www.nda.gov.cn/sjj/swdt/mtsy/0905/20260905111358252715152_pc.html"
+        }
+      ]
+    },
+    "国家能源局": {
+      "ok": true,
+      "error": null,
+      "fetched": 30,
+      "added": 30,
+      "total_after": 30,
+      "elapsed_s": 1.1,
+      "samples": [
+        {
+          "title": "关于2026年7月全国新增建档立卡新能源发电（不含户用光伏）项目情况的公告",
+          "date": "2026-09-04",
+          "source": "国家能源局",
+          "url": "http://www.nea.gov.cn/20260904/324fdc3e4908431392b82d19ab10de6b/c.html"
+        },
+        {
+          "title": "《电力安全事故应急处置和调查处理条例》全文",
+          "date": "2026-09-04",
+          "source": "国家能源局",
+          "url": "https://www.nea.gov.cn/20260904/2165aeebb935486cb20e8b560414bed0/c.html"
+        },
+        {
+          "title": "中共国家能源局党组第六轮巡视公告",
+          "date": "2026-09-03",
+          "source": "国家能源局",
+          "url": "https://www.nea.gov.cn/20260903/b95bac39f8fa4dada7235b671a0a2c8d/c.html"
+        }
+      ]
+    }
+  },
+  "policy_all": {
+    "ok": true,
+    "error": null,
+    "fetched": 302,
+    "added": 247,
+    "total_after": 495,
+    "failure_count": 7,
+    "failures": [
+      {
+        "department": "公安部",
+        "error": "HTTP 521"
+      },
+      {
+        "department": "司法部",
+        "error": "too many redirects"
+      },
+      {
+        "department": "海关总署",
+        "error": "HTTP 412"
+      },
+      {
+        "department": "国务院新闻办公室",
+        "error": "HTTP 521"
+      },
+      {
+        "department": "国家消防救援局",
+        "error": "HTTP 405"
+      },
+      {
+        "department": "国家药品监督管理局",
+        "error": "HTTP 412"
+      },
+      {
+        "department": "国家卫生健康委员会",
+        "error": "HTTP 502"
+      }
+    ],
+    "elapsed_s": 13.03,
+    "samples": [
+      {
+        "title": "新闻发布会：介绍教师队伍建设有关情况和第42个教师节宣传庆祝活动",
+        "date": "2026-78-35",
+        "source": "教育部",
+        "url": "http://www.moe.gov.cn/fbh/live/2026/78355/"
+      },
+      {
+        "title": "全国基础教育工作会议",
+        "date": "2026-20-26",
+        "source": "教育部",
+        "url": "http://www.moe.gov.cn/jyb_xwfb/xw_zt/moe_357/2026/2026_zt09/"
+      },
+      {
+        "title": "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍发展社会主义民主有关情况",
+        "date": "2026-09-11",
+        "source": "国家民族事务委员会",
+        "url": "https://www.neac.gov.cn/seac/xwzx/202609/1194319.shtml"
+      }
+    ],
+    "has_more": true,
+    "page_size": 100
+  },
+  "local_search": {
+    "keyword_total": 4,
+    "keyword_from_cache": true,
+    "keyword_samples": [
+      {
+        "title": "关于2026年7月全国新增建档立卡新能源发电（不含户用光伏）项目情况的公告",
+        "date": "2026-09-04",
+        "source": "国家能源局",
+        "url": "http://www.nea.gov.cn/20260904/324fdc3e4908431392b82d19ab10de6b/c.html"
+      },
+      {
+        "title": "关于2026年6月全国新增建档立卡新能源发电（不含户用光伏）项目情况的公告",
+        "date": "2026-07-20",
+        "source": "国家能源局",
+        "url": "https://www.nea.gov.cn/20260720/f978dbe5fcbc4d8085a3909410b9366e/c.html"
+      },
+      {
+        "title": "关于2026年5月全国新增建档立卡新能源发电（不含户用光伏）项目情况的公告",
+        "date": "2026-06-30",
+        "source": "国家能源局",
+        "url": "http://www.nea.gov.cn/20260630/7d369a8776544e32adbd1bbaca577b4b/c.html"
+      }
+    ],
+    "dept_and_keyword_total": 4,
+    "elapsed_s": 0.17,
+    "note": "GET/local query only; no remote policy-library search"
+  },
+  "get_after": {
+    "market_counts": {
+      "cls": 20,
+      "sina": 20,
+      "foreign": 20
+    },
+    "department_count": 82,
+    "policy_total": 495
+  },
+  "finished_at": "2026-09-09T15:54:55.898302+08:00"
+}

@@ -306,6 +306,71 @@ def test_fatal_scan_failure_records_failed_run_and_preserves_last_good_snapshot(
     assert response.datasets
 
 
+def test_degraded_catalog_rescan_records_legacy_lineage_reason(tmp_path: Path) -> None:
+    artifact = _write_parquet(
+        tmp_path / "kline_daily" / "date=2026-08-12" / "part.parquet",
+        [_bar("600000.SH")],
+    )
+    lineage = tmp_path / "lineage" / "kline_daily" / "date=2026-08-12" / "run.json"
+    lineage.parent.mkdir(parents=True)
+    lineage.write_text(
+        json.dumps(
+            {
+                "source": "public_quote_eod",
+                "unit_version": "canonical_daily_v1",
+                "quality_status": "degraded",
+                "row_count": 1,
+                "target_artifact": artifact.relative_to(tmp_path).as_posix(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    db = CatalogControlDB(tmp_path)
+    service = CatalogService(tmp_path, db, manifests=())
+
+    service.rescan("stock_daily")
+
+    run = db.list_sync_runs("stock_daily", limit=1)[0]
+    assert run.status == "degraded"
+    assert run.error_code == "catalog_quality_degraded"
+    assert run.error_message is not None
+    assert "public_quote_eod" in run.error_message
+
+
+def test_catalog_rescan_is_succeeded_when_current_lineage_matches_file(tmp_path: Path) -> None:
+    artifact = _write_parquet(
+        tmp_path / "kline_daily" / "date=2026-08-14" / "part.parquet",
+        [_bar("600519.SH")],
+    )
+    lineage = tmp_path / "lineage" / "kline_daily" / "date=2026-08-14" / "current.json"
+    lineage.parent.mkdir(parents=True)
+    lineage.write_text(
+        json.dumps(
+            {
+                "source": "public_quote_eod_merged",
+                "unit_version": "canonical_daily_v1",
+                "quality": "pending_gate",
+                "row_count": 1,
+                "scope": "CSI1800",
+                "target_artifact": artifact.relative_to(tmp_path).as_posix(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    db = CatalogControlDB(tmp_path)
+    service = CatalogService(tmp_path, db, manifests=())
+
+    service.rescan("stock_daily")
+
+    run = db.list_sync_runs("stock_daily", limit=1)[0]
+    state = db.get_dataset_state("stock_daily")
+    assert state is not None
+    assert state.quality_status == "healthy"
+    assert run.status == "succeeded"
+    assert run.error_code is None
+    assert run.error_message is None
+
+
 def test_dataset_rescan_replaces_only_target_snapshot_and_rebuilds_cached_totals(
     tmp_path: Path,
 ) -> None:
@@ -466,6 +531,8 @@ def test_compatibility_status_preserves_exact_legacy_keys_and_all_financial_tabl
         "instruments_size_mb",
         "ext_data_files",
         "ext_data_size_mb",
+        "f10_files",
+        "f10_size_mb",
         "financials_files",
         "financials_size_mb",
         "total_size_mb",
@@ -491,6 +558,41 @@ def test_compatibility_checked_at_uses_fresh_clock_without_changing_catalog_fres
     assert first["checked_at"] == "2026-07-21T09:00:00Z"
     assert second["checked_at"] == "2026-07-21T09:00:01Z"
     assert service.list_catalog().refreshed_at == "2026-07-21T08:00:00Z"
+
+
+def test_list_catalog_uses_current_chinese_storage_titles_for_legacy_english_meta(
+    tmp_path: Path,
+) -> None:
+    db = CatalogControlDB(tmp_path)
+    db.set_meta(
+        "storage_breakdown",
+        {
+            "managed_data_bytes": 10,
+            "operational_bytes": 2,
+            "total_bytes": 12,
+            "categories": [
+                {
+                    "key": "ext_data",
+                    "title": "External data",
+                    "kind": "managed",
+                    "bytes": 10,
+                    "files": 396,
+                },
+                {
+                    "key": "stocks",
+                    "title": "Stocks",
+                    "kind": "managed",
+                    "bytes": 2,
+                    "files": 1,
+                },
+            ],
+        },
+    )
+    service = CatalogService(tmp_path, db, manifests=())
+
+    titles = {item.key: item.title for item in service.list_catalog().storage.categories}
+    assert titles["ext_data"] == "扩展数据"
+    assert titles["stocks"] == "股票"
 
 
 def test_schema_admission_failure_retains_previous_healthy_snapshot_as_stale(
@@ -532,7 +634,7 @@ def test_schema_admission_failure_retains_previous_healthy_snapshot_as_stale(
     assert failed.error_code == "catalog_quality_failed"
 
 
-def test_mixed_full_rescan_retains_the_entire_previous_admitted_snapshot(
+def test_mixed_full_rescan_commits_successes_and_retains_failed_serving_state(
     tmp_path: Path,
 ) -> None:
     stock_artifact = _write_parquet(
@@ -586,12 +688,14 @@ def test_mixed_full_rescan_retains_the_entire_previous_admitted_snapshot(
     response = service.rescan()
 
     assert response.stale is True
-    assert db.list_dataset_states() == old_states
-    assert db.list_artifacts() == old_artifacts
-    assert {
-        key: db.get_meta(key)
-        for key in ("dataset_storage", "storage_breakdown", "catalog_refreshed_at")
-    } == old_meta
+    assert db.get_dataset_state("stock_daily").row_count == 2  # type: ignore[union-attr]
+    assert db.get_dataset_state("index_daily") == next(
+        state for state in old_states if state.dataset_id == "index_daily"
+    )
+    assert db.list_artifacts("index_daily") == [
+        item for item in old_artifacts if item.dataset_id == "index_daily"
+    ]
+    assert db.get_meta("catalog_refreshed_at") != old_meta["catalog_refreshed_at"]
     assert db.list_sync_runs("stock_daily", limit=1)[0].status == "succeeded"
     assert db.list_sync_runs("index_daily", limit=1)[0].status == "failed"
 

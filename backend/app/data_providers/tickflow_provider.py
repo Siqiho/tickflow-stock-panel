@@ -64,6 +64,7 @@ class TickFlowProvider:
         adj_factor=True,
         minute=True,
         realtime=True,
+        depth5=True,
         financial=True,
     )
     dataset_manifests = (
@@ -280,3 +281,9 @@ class TickFlowProvider:
         else:
             return pl.DataFrame()
         return pl.DataFrame(resp or [])
+
+    def get_depth_batch(self, symbols: list[str]) -> dict[str, dict]:
+        if not symbols:
+            return {}
+        data = get_client().depth.batch(symbols)
+        return data if isinstance(data, dict) else {}

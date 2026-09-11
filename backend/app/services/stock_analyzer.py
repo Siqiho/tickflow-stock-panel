@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator
 
 import polars as pl
 
@@ -49,6 +49,10 @@ def _load_kline(repo, symbol: str) -> pl.DataFrame:
     if df.is_empty():
         return df
     return df.tail(_KLINE_WINDOW)
+
+
+def clean_kline_analysis_rows(df: pl.DataFrame, keep_cols: list[str] | None = None) -> list[dict]:
+    return _clean_rows(df, keep_cols or KLINE_ANALYSIS_COLS)
 
 
 def _clean_rows(df: pl.DataFrame, keep_cols: list[str]) -> list[dict]:
@@ -93,6 +97,7 @@ def _load_financials(data_dir: Path, symbol: str) -> dict[str, list[dict]]:
             continue
         if "period_end" in df.columns:
             df = df.sort("period_end", descending=True).head(2)  # 只取最近 2 期
+        import datetime
         import math
         rows = []
         for rec in df.to_dicts():
@@ -102,6 +107,8 @@ def _load_financials(data_dir: Path, symbol: str) -> dict[str, list[dict]]:
                     continue
                 if isinstance(v, float):
                     clean[k] = None if not math.isfinite(v) else v
+                elif isinstance(v, (datetime.date, datetime.datetime)):
+                    clean[k] = v.isoformat()
                 else:
                     clean[k] = v
             rows.append(clean)
@@ -226,7 +233,7 @@ def _build_user_prompt(
 # 关键列筛选(控制上下文体积)
 # ================================================================
 
-_KLINE_KEEP_COLS = [
+KLINE_ANALYSIS_COLS = [
     "date", "open", "high", "low", "close", "volume", "change_pct",
     "ma5", "ma10", "ma20", "ma60",
     "macd_dif", "macd_dea", "macd_hist",
@@ -240,6 +247,7 @@ _KLINE_KEEP_COLS = [
     "signal_macd_death", "signal_ma_golden_5_20", "signal_volume_surge",
     "signal_boll_breakout_upper", "signal_boll_breakout_lower",
 ]
+_KLINE_KEEP_COLS = KLINE_ANALYSIS_COLS
 
 
 # ================================================================
@@ -301,7 +309,7 @@ async def analyze_stock_stream(
         ):
             yield json.dumps({"type": "delta", "content": delta}, ensure_ascii=False)
 
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.exception("AI stock analysis failed for %s: %s", symbol, e)
         yield json.dumps({"type": "error", "message": f"AI 分析失败: {e}"}, ensure_ascii=False)
         return
