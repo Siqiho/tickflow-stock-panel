@@ -41,36 +41,13 @@ def _fallback_index_quotes_from_daily(request: Request, symbols: list[str] | Non
         if not symbols:
             symbols = ["000001.SH", "399001.SZ", "399006.SZ", "000680.SH"]
 
-    params: list[str] = []
-    symbol_filter = ""
-    if symbols:
-        placeholders = ", ".join("?" for _ in symbols)
-        symbol_filter = f"WHERE symbol IN ({placeholders})"
-        params.extend(symbols)
-
     try:
-        rows = repo.execute_all(
-            f"""
-            WITH ranked AS (
-                SELECT symbol, date, close,
-                       row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
-                FROM kline_index_daily
-                {symbol_filter}
-            ), latest AS (
-                SELECT symbol,
-                       max(CASE WHEN rn = 1 THEN date END) AS date,
-                       max(CASE WHEN rn = 1 THEN close END) AS last_price,
-                       max(CASE WHEN rn = 2 THEN close END) AS prev_close
-                FROM ranked
-                WHERE rn <= 2
-                GROUP BY symbol
-            )
-            SELECT latest.symbol, latest.date, latest.last_price, latest.prev_close
-            FROM latest
-            ORDER BY latest.symbol
-            """,
-            params,
-        )
+        from app.services.kline_sync import load_usable_index_latest_quotes
+
+        data_dir = getattr(getattr(repo, "store", None), "data_dir", None)
+        if data_dir is None:
+            return []
+        rows = load_usable_index_latest_quotes(data_dir, symbols)
     except Exception:  # noqa: BLE001
         return []
 

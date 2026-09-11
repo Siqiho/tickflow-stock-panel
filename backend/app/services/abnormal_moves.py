@@ -134,8 +134,14 @@ def _normalize_ratio_columns(df: pl.DataFrame, *names: str) -> pl.DataFrame:
 def _hist_snapshot(repo: Any) -> dict[str, Any]:
     """enriched 最新日的偏离列快照 (60s 进程内缓存)。"""
     now = time.monotonic()
+    try:
+        from app.services.kline_sync import daily_route
+        route_token = daily_route()
+    except Exception:  # noqa: BLE001
+        route_token = "unresolved"
+    cache_key = f"data|{route_token}"
     with _hist_cache_lock:
-        cached = _hist_cache.get("data")
+        cached = _hist_cache.get(cache_key)
         if cached is not None and now - cached["_ts"] < _HIST_CACHE_TTL:
             return cached
 
@@ -156,7 +162,7 @@ def _hist_snapshot(repo: Any) -> dict[str, Any]:
             }
     payload = {"_ts": now, "rows": rows, "cache_date": cache_date.isoformat() if cache_date else None}
     with _hist_cache_lock:
-        _hist_cache["data"] = payload
+        _hist_cache[cache_key] = payload
     return payload
 
 

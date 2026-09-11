@@ -200,7 +200,12 @@ def build_rps_rotation(
     if latest is None:
         return {"dates": [], "columns": {}, "concept_count": 0}
 
-    cache_key = f"{kind}|{level}|{latest.isoformat()}"
+    try:
+        from app.services.kline_sync import daily_route
+        route_token = daily_route()
+    except Exception:  # noqa: BLE001
+        route_token = "unresolved"
+    cache_key = f"{kind}|{level}|{latest.isoformat()}|{route_token}"
     now = time.time()
     cached = _cache.get(cache_key)
     if cached and (now - _cache_ts.get(cache_key, 0)) < _CACHE_TTL:

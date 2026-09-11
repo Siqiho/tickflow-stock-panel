@@ -1760,7 +1760,8 @@ def minute_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("minute partition probe failed %s: %s", part, exc)
-        return False
+        # Leftover TickFlow still sees unreadable date markers; custom does not.
+        return expected in {"tickflow", "public"}
     return minute_cache_usable(df, expected)
 
 
@@ -1805,6 +1806,100 @@ def safe_usable_minute_partition_dates(
     except Exception as exc:  # noqa: BLE001
         logger.debug("usable minute dates failed: %s", exc)
         return []
+
+
+def usable_minute_partition_paths(
+    data_dir,
+    route: str | None = None,
+    *,
+    asset_type: str = "stock",
+):
+    """Parquet paths for :func:`safe_usable_minute_partition_dates`.
+
+    Probe / prefs failures return no paths (fail-closed). Callers that
+    used to glob ``kline_minute/**/*.parquet`` were letting leftover
+    TickFlow schema empty the current route. Leftover TickFlow still
+    sees untagged partitions through the happy path.
+    """
+    from pathlib import Path
+
+    subdir = "kline_etf_minute" if asset_type == "etf" else "kline_minute"
+    root = Path(data_dir) / subdir
+    paths = []
+    for day in safe_usable_minute_partition_dates(data_dir, route, asset_type=asset_type):
+        part = root / f"date={day.isoformat()}"
+        preferred = part / "part.parquet"
+        if preferred.is_file():
+            paths.append(preferred)
+            continue
+        extras = sorted(part.glob("*.parquet"))
+        if extras:
+            paths.append(extras[0])
+    return paths
+
+
+def scan_usable_minute(
+    data_dir,
+    route: str | None = None,
+    *,
+    asset_type: str = "stock",
+):
+    """Lazy scan of route-usable minute partitions, or ``None``.
+
+    HTTP / repo minute reads must not glob leftover TickFlow files after
+    a custom switch. Leftover TickFlow still sees untagged partitions
+    via :func:`usable_minute_partition_paths`.
+    """
+    paths = usable_minute_partition_paths(data_dir, route, asset_type=asset_type)
+    if not paths:
+        return None
+    return pl.scan_parquet([p.as_posix() for p in paths])
+
+
+def load_usable_index_latest_quotes(
+    data_dir,
+    symbols: list[str],
+    as_of: date | None = None,
+) -> list[tuple]:
+    """Latest + previous close per index from current-route index daily.
+
+    Overview / SSE fallbacks used to query DuckDB ``kline_index_daily``,
+    which can be temporarily ungated and serve leftover TickFlow after a
+    custom switch. File provenance is the source of truth. Leftover
+    TickFlow still sees untagged partitions.
+    """
+    wanted = [str(s or "").strip() for s in symbols if str(s or "").strip()]
+    if not wanted:
+        return []
+    try:
+        lf = scan_usable_daily(data_dir, table="kline_index_daily")
+        if lf is None:
+            return []
+        names = set(lf.collect_schema().names())
+        keep = [c for c in ("symbol", "date", "close", "route") if c in names]
+        if "symbol" not in keep or "date" not in keep or "close" not in keep:
+            return []
+        df = filter_daily_cache(
+            lf.select(keep).filter(pl.col("symbol").is_in(wanted)).collect()
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("usable index latest quotes failed: %s", exc)
+        return []
+    if df is None or df.is_empty():
+        return []
+    if as_of is not None:
+        df = df.filter(pl.col("date") <= as_of)
+        if df.is_empty():
+            return []
+    df = df.sort(["symbol", "date"])
+    out: list[tuple] = []
+    for part in df.partition_by("symbol", maintain_order=True):
+        symbol = str(part["symbol"][-1])
+        last_date = part["date"][-1]
+        last_price = part["close"][-1]
+        prev_close = part["close"][-2] if part.height >= 2 else None
+        out.append((symbol, last_date, last_price, prev_close))
+    return out
 
 
 def latest_usable_minute_datetime(data_dir, route: str | None = None, *, asset_type: str = "stock"):
@@ -2476,23 +2571,38 @@ def _latest_minute_datetime(repo: KlineRepository) -> datetime | None:
 
 
 def _cleanup_null_datetime_minute(repo: KlineRepository) -> None:
-    """检测并清除 datetime 全为 null 的旧版分钟 K 数据(迁移用)。"""
+    """检测并清除当前 minute route 上 datetime 全为 null 的旧分区。
+
+    DuckDB ``kline_minute`` can be temporarily ungated. A leftover-visible
+    count must not wipe custom-route files, and a custom-route repair must
+    not delete leftover TickFlow history. File provenance is the source of
+    truth. Leftover TickFlow still sees untagged partitions.
+    """
     minute_dir = repo.store.data_dir / "kline_minute"
     if not minute_dir.exists():
         return
     try:
-        row = repo.execute_one(
-            "SELECT count(*) AS total, count(datetime) AS non_null FROM kline_minute"
-        )
-        if row and row[0] > 0 and (row[1] is None or row[1] == 0):
-            # 全部 datetime 为 null — 清除所有分钟 K parquet
-            n = 0
-            for f in minute_dir.rglob("*.parquet"):
-                f.unlink()
+        paths = usable_minute_partition_paths(repo.store.data_dir)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("minute cleanup path probe failed: %s", exc)
+        return
+    n = 0
+    for part in paths:
+        try:
+            df = pl.read_parquet(part, columns=["datetime"])
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("minute cleanup skip unreadable %s: %s", part, exc)
+            continue
+        if df.is_empty() or "datetime" not in df.columns:
+            continue
+        if df["datetime"].null_count() == df.height:
+            try:
+                part.unlink()
                 n += 1
-            logger.info("cleaned %d corrupted minute-K parquet files (null datetime)", n)
-    except Exception as e:  # noqa: BLE001
-        logger.debug("minute cleanup check failed: %s", e)
+            except OSError as exc:
+                logger.debug("minute cleanup unlink failed %s: %s", part, exc)
+    if n:
+        logger.info("cleaned %d corrupted minute-K parquet files (null datetime)", n)
 
 
 def _migrate_symbol_to_date_partition(repo: KlineRepository) -> None:

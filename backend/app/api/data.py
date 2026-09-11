@@ -97,28 +97,25 @@ def _get_table_stats(name: str, fetch: Callable[[], dict | None]) -> dict | None
 
 
 def _safe_aggregate(repo, view: str) -> dict | None:
-    """聚合视图基础统计;视图不存在或为空时返 None。"""
+    """Fail-closed leftover SQL landmine. Use provenance helpers only."""
+    helpers = {
+        "kline_daily": lambda: _safe_aggregate_daily(repo, "kline_daily"),
+        "kline_enriched": lambda: _safe_aggregate_enriched(repo),
+        "kline_index_daily": lambda: _safe_aggregate_index_daily(repo),
+        "kline_index_enriched": lambda: _safe_aggregate_index_enriched(repo),
+        "kline_etf_daily": lambda: _safe_aggregate_etf_daily(repo),
+        "kline_etf_enriched": lambda: _safe_aggregate_etf_enriched(repo),
+        "kline_minute": lambda: _safe_aggregate_minute(repo),
+        "adj_factor": lambda: _safe_aggregate_adj_factor(repo),
+    }
+    helper = helpers.get(view)
+    if helper is None:
+        return None
     try:
-        row = repo.execute_one(
-            f"""SELECT count(*) AS rows,
-                       min(date) AS earliest,
-                       max(date) AS latest,
-                       count(DISTINCT symbol) AS symbols,
-                       count(DISTINCT date) AS trading_days
-                FROM {view}"""
-        )
+        return helper()
     except Exception as e:  # noqa: BLE001
         logger.debug("aggregate %s failed: %s", view, e)
         return None
-    if not row or not row[0]:
-        return None
-    return {
-        "rows": int(row[0]),
-        "earliest_date": str(row[1]) if row[1] else None,
-        "latest_date": str(row[2]) if row[2] else None,
-        "symbols_covered": int(row[3] or 0),
-        "trading_days": int(row[4] or 0),
-    }
 
 
 def _safe_aggregate_daily(repo, view: str = "kline_daily") -> dict | None:
@@ -351,36 +348,39 @@ def _safe_aggregate_adj_factor(repo) -> dict | None:
         if not daily_dates:
             return None
         d_min, d_max = daily_dates[0], daily_dates[-1]
-        row = repo.execute_one(
-            """SELECT count(*) AS rows,
-                      count(DISTINCT symbol) AS symbols,
-                      count(DISTINCT trade_date) AS trading_days
-               FROM adj_factor
-               WHERE trade_date BETWEEN ? AND ?""",
-            [str(d_min), str(d_max)],
-        )
-        if not row or not row[0]:
+        import polars as pl
+        from app.services.kline_sync import get_adj_factor_df
+
+        # Gated reader only — DuckDB adj_factor can be temporarily leftover-visible.
+        adf = get_adj_factor_df(repo.store.data_dir, asset_type="stock")
+        if adf is None or adf.is_empty() or "trade_date" not in adf.columns:
             base = None
         else:
-            base = {
-                "rows": int(row[0]),
-                "symbols_covered": int(row[1]) if isinstance(row[1], (int, float)) else 0,
-                "earliest_date": str(d_min),
-                "latest_date": str(d_max),
-                "trading_days": int(row[2] or 0),
-            }
+            try:
+                window = adf.filter(
+                    (pl.col("trade_date") >= d_min) & (pl.col("trade_date") <= d_max)
+                )
+            except Exception:  # noqa: BLE001
+                window = adf
+            if window.is_empty():
+                base = None
+            else:
+                base = {
+                    "rows": int(window.height),
+                    "symbols_covered": int(window["symbol"].n_unique()) if "symbol" in window.columns else 0,
+                    "earliest_date": str(d_min),
+                    "latest_date": str(d_max),
+                    "trading_days": int(window["trade_date"].n_unique()),
+                }
 
         try:
-            import polars as pl
             from pathlib import Path
             from app.services.free_sources.adj_factor_public import read_adj_coverage
 
             data_dir = Path(repo.store.data_dir)
             event_syms = 0
             all_syms = 0
-            from app.services.kline_sync import get_adj_factor_df
-            adf = get_adj_factor_df(data_dir, asset_type="stock")
-            if not adf.is_empty() and {"symbol", "ex_factor"} <= set(adf.columns):
+            if adf is not None and not adf.is_empty() and {"symbol", "ex_factor"} <= set(adf.columns):
                 real = adf.filter((pl.col("ex_factor") - 1.0).abs() > 1e-12)
                 event_syms = int(real["symbol"].n_unique()) if not real.is_empty() else 0
                 all_syms = int(adf["symbol"].n_unique())

@@ -717,21 +717,25 @@ def get_minute_range(
             logger.warning("minute-range getter failed: %s", exc)
             minute = pl.DataFrame()
     if minute is None or minute.is_empty():
-        glob = getattr(repo, "_minute_glob", None)
-        if not isinstance(glob, str) or not glob:
+        data_dir = getattr(getattr(repo, "store", None), "data_dir", None)
+        if data_dir is None:
             return _gzip_payload(
                 request,
                 {**base_response, "sessions": [], "source": "none"},
                 pref_key="minute_batch_compress",
             )
         try:
-            minute = kline_sync.filter_minute_cache(
-                pl.scan_parquet(glob).filter(
-                    (pl.col("symbol") == symbol)
-                    & (pl.col("datetime").dt.date() >= start)
-                    & (pl.col("datetime").dt.date() <= end)
-                ).collect()
-            )
+            lf = kline_sync.scan_usable_minute(data_dir)
+            if lf is None:
+                minute = pl.DataFrame()
+            else:
+                minute = kline_sync.filter_minute_cache(
+                    lf.filter(
+                        (pl.col("symbol") == symbol)
+                        & (pl.col("datetime").dt.date() >= start)
+                        & (pl.col("datetime").dt.date() <= end)
+                    ).collect()
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("minute-range scan failed: %s", exc)
             if minute is None or minute.is_empty():

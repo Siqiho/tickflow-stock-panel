@@ -1762,17 +1762,19 @@ class QuoteService:
 
                 cutoff = today - timedelta(days=90)
                 table = "kline_etf_daily" if asset_type == "etf" else "kline_daily"
-                daily_glob = str(self._repo.store.data_dir / table / "**" / "*.parquet")
                 ohlcv_cols = ["symbol", "date", "open", "high", "low", "close", "volume", "amount"]
-                from app.parquet import scan_daily_parquet
                 from app.polars_guard import guarded_collect
-                hist_df = guarded_collect(
-                    scan_daily_parquet(daily_glob)
-                    .filter(pl.col("date") >= cutoff)
-                    .sort(["symbol", "date"]),
-                    priority="background",
+                from app.services.kline_sync import filter_daily_cache, scan_usable_daily
+                lf = scan_usable_daily(self._repo.store.data_dir, table=table)
+                if lf is None:
+                    return
+                hist_df = filter_daily_cache(
+                    guarded_collect(
+                        lf.filter(pl.col("date") >= cutoff).sort(["symbol", "date"]),
+                        priority="background",
+                    )
                 )
-                if hist_df.is_empty():
+                if hist_df is None or hist_df.is_empty():
                     return
 
                 hist_cols = [c for c in ohlcv_cols if c in hist_df.columns]
