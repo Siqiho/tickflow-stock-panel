@@ -168,6 +168,7 @@ def test_failed_index_refresh_keeps_last_known_good_cache(monkeypatch):
     _disable_record_processing_side_effects(monkeypatch, service)
     cached = service._build_index_quotes([_index_rec("000001.SH")])
     service._index_quotes_cache = cached
+    service._index_quotes_cache_token = service._realtime_cache_token()
     service._index_symbol_count = cached.height
 
     service._process_full_market_records(
