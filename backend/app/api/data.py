@@ -758,10 +758,7 @@ def clear_data(request: Request):
             )
         except Exception:
             pass
-    try:
-        repo.store._register_gated_catalog_views()
-    except Exception:
-        pass
+    repo.store.re_gate_catalog_views()
 
     logger.info("数据已清除: 删除 %d 个 parquet 文件", deleted)
     invalidate_data_cache(None)

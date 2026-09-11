@@ -258,7 +258,6 @@ class ScreenerService:
         from app.indicators.pipeline import compute_indicators, compute_signals, compute_limit_signals
 
         # 加载 warmup 历史 (目标日期前 ~120 天)
-        enriched_dir = self.repo.store.data_dir / "kline_daily_enriched"
         start = target_date - timedelta(days=150)
         # turnover_rate 是 enriched 存储列, 必须随行透传: 否则即时计算后该列
         # 丢失, 自定义 SQL 用它做条件会 Binder Error 被吞成空结果 (#187)
@@ -267,18 +266,23 @@ class ScreenerService:
                      "route"]
 
         try:
-            from app.services.kline_sync import filter_daily_cache
+            from app.services.kline_sync import filter_daily_cache, scan_usable_daily
 
-            lf = (
-                pl.scan_parquet(str(enriched_dir / "**" / "*.parquet"))
-                .filter(
-                    (pl.col("date") >= start)
-                    & (pl.col("date") <= target_date)
-                )
-                .sort(["symbol", "date"])
+            lf = scan_usable_daily(
+                self.repo.store.data_dir, table="kline_daily_enriched",
             )
-            available = [c for c in read_cols if c in lf.collect_schema().names()]
-            df_hist = filter_daily_cache(lf.select(available).collect())
+            if lf is None:
+                df_hist = df_target
+            else:
+                lf = (
+                    lf.filter(
+                        (pl.col("date") >= start)
+                        & (pl.col("date") <= target_date)
+                    )
+                    .sort(["symbol", "date"])
+                )
+                available = [c for c in read_cols if c in lf.collect_schema().names()]
+                df_hist = filter_daily_cache(lf.select(available).collect())
         except Exception as e:  # noqa: BLE001
             logger.warning("warmup history load failed: %s", e)
             df_hist = df_target

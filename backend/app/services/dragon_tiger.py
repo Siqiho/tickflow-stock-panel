@@ -19,7 +19,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import re
 from datetime import date as date_cls
 from pathlib import Path
 from typing import Any
@@ -29,29 +28,13 @@ from app.market_time import cn_today
 logger = logging.getLogger(__name__)
 
 _BOARDS = ("all", "org", "hot_money")
-_DATE_DIR_RE = re.compile(r"^date=(\d{4}-\d{2}-\d{2})$")
 
 
 def _local_trading_days(data_dir: Path) -> list[date_cls]:
     """本地日K分区日期 = 当前 route 可用交易日集合 (升序)。扫描失败返回空。"""
-    try:
-        from app.services.kline_sync import usable_daily_partition_dates
+    from app.services.kline_sync import safe_usable_daily_partition_dates
 
-        return usable_daily_partition_dates(data_dir, table="kline_daily")
-    except Exception:
-        root = data_dir / "kline_daily"
-        out: list[date_cls] = []
-        try:
-            for d in root.iterdir():
-                m = _DATE_DIR_RE.match(d.name)
-                if d.is_dir() and m:
-                    try:
-                        out.append(date_cls.fromisoformat(m.group(1)))
-                    except ValueError:
-                        continue
-        except OSError:
-            return []
-        return sorted(out)
+    return safe_usable_daily_partition_dates(data_dir, table="kline_daily")
 
 
 def resolve_trade_date(data_dir: Path, target: date_cls | None) -> date_cls | None:

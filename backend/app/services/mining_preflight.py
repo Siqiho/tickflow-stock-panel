@@ -43,9 +43,9 @@ def enriched_partition_dates(
     start: date | None = None,
     end: date | None = None,
 ) -> list[date]:
-    from app.services.kline_sync import usable_daily_partition_dates
+    from app.services.kline_sync import safe_usable_daily_partition_dates
 
-    values = usable_daily_partition_dates(
+    values = safe_usable_daily_partition_dates(
         data_dir, table=enriched_dirname(asset_type),
     )
     if start is not None:

@@ -689,9 +689,9 @@ def compute_regime_incremental(repo, data_dir: Path, *, today: date | None = Non
 def enriched_date_set(repo) -> set[date]:
     """Route-usable kline_daily_enriched dates. Leftover TickFlow after a
     custom daily switch is omitted so regime writers do not persist mix."""
-    from app.services.kline_sync import usable_daily_partition_dates
+    from app.services.kline_sync import safe_usable_daily_partition_dates
 
-    return set(usable_daily_partition_dates(
+    return set(safe_usable_daily_partition_dates(
         repo.store.data_dir, table="kline_daily_enriched",
     ))
 

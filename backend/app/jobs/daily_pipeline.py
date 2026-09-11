@@ -1187,10 +1187,7 @@ def _refresh_views(repo: KlineRepository) -> None:
             )
         except Exception as e:
             logger.warning("refresh view %s failed: %s", name, e)
-    try:
-        repo.store._register_gated_catalog_views()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("re-gate catalog views after pipeline refresh failed: %s", e)
+    repo.store.re_gate_catalog_views()
     repo.store._register_unified_views()
 
 
@@ -1222,10 +1219,7 @@ def _refresh_single_view(repo: KlineRepository, name: str) -> None:
         )
     except Exception as e:
         logger.warning("refresh view %s failed: %s", name, e)
-    try:
-        repo.store._register_gated_catalog_views()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("re-gate catalog views after %s refresh failed: %s", name, e)
+    repo.store.re_gate_catalog_views()
 
 
 def _resolve_minute_symbols(capset: CapabilitySet) -> list[str]:

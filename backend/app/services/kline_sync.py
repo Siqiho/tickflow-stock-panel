@@ -309,8 +309,8 @@ def usable_daily_partition_dates(
             day = date.fromisoformat(child.name[5:])
         except ValueError:
             continue
-        part = child / "part.parquet"
-        if daily_partition_usable(part, expected):
+        files = [child / "part.parquet"] if (child / "part.parquet").is_file() else sorted(child.glob("*.parquet"))
+        if any(daily_partition_usable(part, expected) for part in files):
             dates.append(day)
     dates.sort()
     return dates
@@ -342,14 +342,27 @@ def usable_daily_partition_paths(
     *,
     table: str = "kline_daily",
 ):
-    """Parquet paths for :func:`usable_daily_partition_dates`."""
+    """Parquet paths for :func:`safe_usable_daily_partition_dates`.
+
+    Probe / prefs failures return no paths (fail-closed). Callers that
+    used to let ``usable_daily_partition_dates`` raise would then except
+    and leftover-glob. Leftover TickFlow still sees untagged partitions
+    through the happy path.
+    """
     from pathlib import Path
 
     root = Path(data_dir) / table
-    return [
-        root / f"date={day.isoformat()}" / "part.parquet"
-        for day in usable_daily_partition_dates(data_dir, route, table=table)
-    ]
+    paths = []
+    for day in safe_usable_daily_partition_dates(data_dir, route, table=table):
+        part = root / f"date={day.isoformat()}"
+        preferred = part / "part.parquet"
+        if preferred.is_file():
+            paths.append(preferred)
+            continue
+        extras = sorted(part.glob("*.parquet"))
+        if extras:
+            paths.append(extras[0])
+    return paths
 
 
 def scan_usable_daily(
@@ -395,7 +408,7 @@ def _refresh_daily_view(repo: KlineRepository) -> None:
     except Exception as e:  # noqa: BLE001
         logger.warning("refresh view failed: %s", e)
     try:
-        repo.store._register_gated_catalog_views()
+        repo.store.re_gate_catalog_views()
     except Exception as e:  # noqa: BLE001
         logger.warning("re-gate catalog views after daily refresh failed: %s", e)
 
@@ -1789,7 +1802,7 @@ def latest_usable_minute_datetime(data_dir, route: str | None = None, *, asset_t
     from pathlib import Path
 
     expected = route if route is not None else minute_route()
-    dates = usable_minute_partition_dates(data_dir, expected, asset_type=asset_type)
+    dates = safe_usable_minute_partition_dates(data_dir, expected, asset_type=asset_type)
     if not dates:
         return None
     subdir = "kline_etf_minute" if asset_type == "etf" else "kline_minute"

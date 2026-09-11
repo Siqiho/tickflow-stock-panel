@@ -19,8 +19,23 @@ from app.services import dragon_tiger as dt
 
 
 def _mk_days(data_dir: Path, *days: str) -> None:
+    import polars as pl
+
     for d in days:
-        (data_dir / "kline_daily" / f"date={d}").mkdir(parents=True, exist_ok=True)
+        part = data_dir / "kline_daily" / f"date={d}"
+        part.mkdir(parents=True, exist_ok=True)
+        # Untagged leftover TickFlow marker so route-usable calendars still
+        # see these days. Empty date=* dirs are not a trading-day contract.
+        pl.DataFrame({
+            "symbol": ["000001.SZ"],
+            "date": [date.fromisoformat(d)],
+            "open": [10.0],
+            "high": [10.2],
+            "low": [9.9],
+            "close": [10.1],
+            "volume": [100.0],
+            "amount": [1010.0],
+        }).write_parquet(part / "part.parquet")
 
 
 @pytest.fixture()
