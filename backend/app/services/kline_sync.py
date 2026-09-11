@@ -332,6 +332,24 @@ def usable_daily_partition_paths(
     ]
 
 
+def scan_usable_daily(
+    data_dir,
+    route: str | None = None,
+    *,
+    table: str = "kline_daily",
+):
+    """Lazy scan of route-usable daily/enriched partitions, or ``None``.
+
+    Backtest / live-agg / mainline / overlay must not glob leftover TickFlow
+    files after a custom switch. Leftover TickFlow still sees untagged
+    partitions via :func:`usable_daily_partition_paths`.
+    """
+    paths = usable_daily_partition_paths(data_dir, route, table=table)
+    if not paths:
+        return None
+    return pl.scan_parquet([p.as_posix() for p in paths])
+
+
 def adj_public_write_allowed() -> bool:
     """Public sina adj / coverage writers may run only for an explicit public adj route."""
     return adj_route() == "public"

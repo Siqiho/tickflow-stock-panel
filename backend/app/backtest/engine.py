@@ -340,10 +340,12 @@ class BacktestEngine:
                 logger.debug("backtest load panel cache miss: %s", e)
 
         panel_dir = "kline_etf_enriched" if asset_type == "etf" else "kline_daily_enriched"
-        enriched_glob = str(self.repo.store.data_dir / panel_dir / "**" / "*.parquet")
-
         try:
-            lf = pl.scan_parquet(enriched_glob)
+            from app.services.kline_sync import filter_daily_cache, scan_usable_daily
+
+            lf = scan_usable_daily(self.repo.store.data_dir, table=panel_dir)
+            if lf is None:
+                return pl.DataFrame()
             if symbols is not None:
                 lf = lf.filter(pl.col("symbol").is_in(symbols))
             if columns is not None:
@@ -353,8 +355,10 @@ class BacktestEngine:
                     selected.insert(0, "symbol")
                 if "date" not in selected and "date" in available:
                     selected.insert(1, "date")
+                if "route" in available and "route" not in selected:
+                    selected.append("route")
                 lf = lf.select(selected)
-            df = (
+            df = filter_daily_cache(
                 lf.filter(
                     (pl.col("date") >= start)
                     & (pl.col("date") <= end)
@@ -362,6 +366,9 @@ class BacktestEngine:
                 .sort(["symbol", "date"])
                 .collect(streaming=True)
             )
+            if columns is not None and df is not None and not df.is_empty() and "route" in df.columns:
+                if "route" not in columns:
+                    df = df.drop("route")
         except Exception as e:
             logger.warning("backtest load panel failed: %s", e)
             return pl.DataFrame()

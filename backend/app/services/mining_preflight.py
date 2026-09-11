@@ -43,20 +43,16 @@ def enriched_partition_dates(
     start: date | None = None,
     end: date | None = None,
 ) -> list[date]:
-    root = data_dir / enriched_dirname(asset_type)
-    values: set[date] = set()
-    for partition in root.glob("date=*"):
-        try:
-            value = date.fromisoformat(partition.name.removeprefix("date="))
-        except ValueError:
-            continue
-        if start is not None and value < start:
-            continue
-        if end is not None and value > end:
-            continue
-        if (partition / "part.parquet").is_file():
-            values.add(value)
-    return sorted(values)
+    from app.services.kline_sync import usable_daily_partition_dates
+
+    values = usable_daily_partition_dates(
+        data_dir, table=enriched_dirname(asset_type),
+    )
+    if start is not None:
+        values = [value for value in values if value >= start]
+    if end is not None:
+        values = [value for value in values if value <= end]
+    return values
 
 
 def mining_availability(

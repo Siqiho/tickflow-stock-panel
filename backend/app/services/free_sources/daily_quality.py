@@ -11,6 +11,14 @@ from app.services.atomic_io import atomic_write_json
 
 
 def _latest_partition_date(kline_dir: Path) -> str | None:
+    try:
+        from app.services.kline_sync import usable_daily_partition_dates
+
+        dates = usable_daily_partition_dates(kline_dir.parent, table=kline_dir.name)
+        if dates:
+            return dates[-1].isoformat()
+    except Exception:
+        pass
     parts = sorted([p.name for p in kline_dir.iterdir() if p.is_dir() and p.name.startswith("date=")])
     if not parts:
         return None
@@ -60,6 +68,32 @@ def run_daily_quality_check(data_dir: Path | str, date: str | None = None) -> di
         return report
 
     df = pl.concat([pl.read_parquet(f) for f in files], how="diagonal_relaxed")
+    try:
+        from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+
+        if files and not any(daily_partition_usable(f) for f in files):
+            report = {
+                "ok": False,
+                "date": target,
+                "issues": [{"code": "unusable_route", "message": f"partition {target} is not the current daily route"}],
+                "metrics": metrics,
+                "checked_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            _write_report(data_dir, report)
+            return report
+        df = filter_daily_cache(df)
+    except Exception:
+        df = df.head(0)
+    if df.is_empty():
+        report = {
+            "ok": False,
+            "date": target,
+            "issues": [{"code": "missing_partition", "message": f"no usable parquet for {target}"}],
+            "metrics": metrics,
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        _write_report(data_dir, report)
+        return report
     metrics["rows"] = df.height
     metrics["symbols"] = df["symbol"].n_unique() if "symbol" in df.columns else 0
 

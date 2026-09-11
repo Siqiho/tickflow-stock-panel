@@ -161,10 +161,14 @@ class BacktestService:
         **全项目唯一从 Polars 转 pandas 的边界**(§7.4 / ADR-19)。
         """
         try:
-            enriched_glob = str(self.repo.store.data_dir / "kline_daily_enriched" / "**" / "*.parquet")
-            df = (
-                pl.scan_parquet(enriched_glob)
-                .filter(
+            from app.services.kline_sync import filter_daily_cache, scan_usable_daily
+
+            warmup_start = start - timedelta(days=int(_WARMUP_CALENDAR_DAYS))
+            lf = scan_usable_daily(self.repo.store.data_dir, table="kline_daily_enriched")
+            if lf is None:
+                return pd.DataFrame()
+            df = filter_daily_cache(
+                lf.filter(
                     (pl.col("symbol").is_in(symbols))
                     & (pl.col("date") >= warmup_start)
                     & (pl.col("date") <= end)

@@ -39,20 +39,25 @@ _DATE_DIR_RE = re.compile(r"^date=(\d{4}-\d{2}-\d{2})$")
 
 
 def _local_trading_days(data_dir: Path) -> list[date_cls]:
-    """本地日K分区日期 = 已知交易日集合 (升序)。扫描失败返回空。"""
-    root = data_dir / "kline_daily"
-    out: list[date_cls] = []
+    """本地日K分区日期 = 当前 route 可用交易日集合 (升序)。扫描失败返回空。"""
     try:
-        for d in root.iterdir():
-            m = _DATE_DIR_RE.match(d.name)
-            if d.is_dir() and m:
-                try:
-                    out.append(date_cls.fromisoformat(m.group(1)))
-                except ValueError:
-                    continue
-    except OSError:
-        return []
-    return sorted(out)
+        from app.services.kline_sync import usable_daily_partition_dates
+
+        return usable_daily_partition_dates(data_dir, table="kline_daily")
+    except Exception:
+        root = data_dir / "kline_daily"
+        out: list[date_cls] = []
+        try:
+            for d in root.iterdir():
+                m = _DATE_DIR_RE.match(d.name)
+                if d.is_dir() and m:
+                    try:
+                        out.append(date_cls.fromisoformat(m.group(1)))
+                    except ValueError:
+                        continue
+        except OSError:
+            return []
+        return sorted(out)
 
 
 def resolve_trade_date(data_dir: Path, target: date_cls | None) -> date_cls | None:
@@ -113,10 +118,24 @@ def _read_kline_closes(data_dir: Path, d: date_cls) -> dict[str, float]:
     """某交易日全市场 {symbol: close}; 无分区/读失败返回空。"""
     root = data_dir / "kline_daily" / f"date={d.isoformat()}"
     try:
+        from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+
         files = sorted(root.glob("*.parquet"))
         if not files:
             return {}
-        df = pl.concat([pl.read_parquet(f, columns=["symbol", "close"]) for f in files])
+        if not any(daily_partition_usable(f) for f in files):
+            return {}
+        cols = ["symbol", "close"]
+        frames = []
+        for f in files:
+            names = pl.read_parquet_schema(f).names()
+            use = [c for c in cols if c in names]
+            if "route" in names:
+                use.append("route")
+            frames.append(pl.read_parquet(f, columns=use))
+        df = filter_daily_cache(pl.concat(frames, how="diagonal_relaxed"))
+        if df.is_empty() or "symbol" not in df.columns or "close" not in df.columns:
+            return {}
         return dict(zip(df["symbol"].to_list(), df["close"].to_list()))
     except (OSError, pl.exceptions.PolarsError):
         return {}

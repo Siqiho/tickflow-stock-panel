@@ -162,9 +162,17 @@ def compute_mainline_range(repo, data_dir: Path, start: date, end: date,
         if map_df.is_empty():
             return pl.DataFrame()
 
-    limit_rows = (
-        pl.scan_parquet(enriched_dir / "**" / "*.parquet")
-        .select(["date", "symbol", "consecutive_limit_ups", "amount"])
+    from app.services.kline_sync import filter_daily_cache, scan_usable_daily
+
+    lf = scan_usable_daily(repo.store.data_dir, table="kline_daily_enriched")
+    if lf is None:
+        return pl.DataFrame()
+    available = set(lf.collect_schema().names())
+    keep = [c for c in ("date", "symbol", "consecutive_limit_ups", "amount", "route") if c in available]
+    if "symbol" not in keep or "consecutive_limit_ups" not in keep:
+        return pl.DataFrame()
+    limit_rows = filter_daily_cache(
+        lf.select(keep)
         .filter(
             (pl.col("date") >= start) & (pl.col("date") <= end)
             & (pl.col("consecutive_limit_ups") >= 1)
