@@ -309,8 +309,8 @@ def usable_daily_partition_dates(
             day = date.fromisoformat(child.name[5:])
         except ValueError:
             continue
-        part = child / "part.parquet"
-        if daily_partition_usable(part, expected):
+        files = [child / "part.parquet"] if (child / "part.parquet").is_file() else sorted(child.glob("*.parquet"))
+        if any(daily_partition_usable(part, expected) for part in files):
             dates.append(day)
     dates.sort()
     return dates
@@ -352,10 +352,17 @@ def usable_daily_partition_paths(
     from pathlib import Path
 
     root = Path(data_dir) / table
-    return [
-        root / f"date={day.isoformat()}" / "part.parquet"
-        for day in safe_usable_daily_partition_dates(data_dir, route, table=table)
-    ]
+    paths = []
+    for day in safe_usable_daily_partition_dates(data_dir, route, table=table):
+        part = root / f"date={day.isoformat()}"
+        preferred = part / "part.parquet"
+        if preferred.is_file():
+            paths.append(preferred)
+            continue
+        extras = sorted(part.glob("*.parquet"))
+        if extras:
+            paths.append(extras[0])
+    return paths
 
 
 def scan_usable_daily(

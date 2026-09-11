@@ -66,8 +66,9 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round19 \
     tests/test_rps_rotation_map_cache.py \
     tests/test_market_overview_as_of.py \
     tests/test_auction_benchmark.py \
-    tests/test_dragon_tiger.py \
-    tests/test_data_integrity.py
+    tests/test_dragon_tiger.py
 ```
 
-Cloud environment result: pending isolated run.
+Cloud environment result: backend target **636 passed**.
+
+Round-nineteen tests cover leftover TickFlow hiding after a custom switch in auction / dragon-tiger fail-open except calendars, auction enrich leftover closes, chips loader leftover-enriched shadow, screener warmup leftover scan, integrity prune leftover wipe, repo / mining / regime calendar probe throw, and DuckDB re-gate failure leaving first-pass ungated SQL. Leftover TickFlow still sees untagged partitions. Intentional leftover contracts stay (mode=none, entitled minute call-failure fallback, instruments TickFlow).
