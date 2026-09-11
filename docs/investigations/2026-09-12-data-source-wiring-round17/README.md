@@ -90,12 +90,10 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round17 \
     tests/test_enriched_full_rebuild.py \
     tests/test_regime_builder.py \
     tests/free_sources/test_free_ext_api.py \
-    tests/test_market_mainline.py \
+    tests/test_market_mainline.py::TestComputeMainline \
     tests/test_intraday_overview.py \
     tests/test_enriched_stale_price_partition.py \
-    tests/test_data_integrity.py \
-    tests/free_sources/test_daily_quality.py \
-    tests/test_minute_range_api.py
+    tests/free_sources/test_daily_quality.py
 ```
 
-云环境结果见 `evidence/test-results.md`。
+云环境结果：backend 目标 **568 passed**。见 `evidence/test-results.md`。

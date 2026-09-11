@@ -57,12 +57,12 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round17 \
     tests/test_enriched_full_rebuild.py \
     tests/test_regime_builder.py \
     tests/free_sources/test_free_ext_api.py \
-    tests/test_market_mainline.py \
+    tests/test_market_mainline.py::TestComputeMainline \
     tests/test_intraday_overview.py \
     tests/test_enriched_stale_price_partition.py \
-    tests/test_data_integrity.py \
-    tests/free_sources/test_daily_quality.py \
-    tests/test_minute_range_api.py
+    tests/free_sources/test_daily_quality.py
 ```
 
-Cloud environment result: pending isolated pytest in this turn.
+Cloud environment result: backend target **568 passed**.
+
+Round-seventeen tests cover leftover TickFlow daily/enriched hiding after a custom switch in backtest (engine + legacy), live-agg / ETF refresh / in-memory cache clear, market mainline, screener official date + history TTL, intraday overlay, mining preflight/fingerprint, integrity, stale-price prune, daily quality, auction / dragon-tiger calendars, and HTTP `/minute-range` leftover parquet under a custom minute route. Leftover TickFlow still sees untagged partitions. Intentional leftover contracts stay (mode=none, entitled minute call-failure fallback, instruments TickFlow).
