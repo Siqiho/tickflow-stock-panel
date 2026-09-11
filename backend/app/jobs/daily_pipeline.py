@@ -170,7 +170,8 @@ def adj_sync_uses_public_adapter(capset: CapabilitySet) -> bool:
         if fate in {"custom", "skip"}:
             return False
     except Exception:  # noqa: BLE001
-        pass
+        # Prefs unreadable: do not shrink universe to public_data_scope.
+        return False
     return not capset.has(Cap.ADJ_FACTOR)
 
 
@@ -954,9 +955,7 @@ def run_now(
         "fallback_hint": minute_info.get("fallback_hint"),
     }
 
-    if minute_on and (
-        capset.has(Cap.KLINE_MINUTE_BATCH) or kline_sync.minute_provider_is_custom()
-    ):
+    if minute_on and kline_sync.minute_sync_allowed(capset):
         minute_start = today - _td(days=minute_days)
         emit("sync_minute", 90, f"获取分钟K [{minute_start} ~ {today}]…")
         logger.info("sync_minute: [%s ~ %s] start", minute_start, today)

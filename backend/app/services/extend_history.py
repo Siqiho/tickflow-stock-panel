@@ -40,10 +40,13 @@ def _resolve_universe(capset: CapabilitySet) -> list[str]:
     """解析标的池 — 与 daily_pipeline 独立的副本。"""
     if capset.has(Cap.KLINE_DAILY_BATCH):
         try:
+            from app.services import preferences as _prefs
             from app.tickflow.pools import get_pool
-            all_a = get_pool("CN_Equity_A", refresh=True)
-            if all_a:
-                return sorted(all_a)
+            # Public pool must not silently expand ALL via TickFlow universes.
+            if not _prefs.is_public_pool_provider():
+                all_a = get_pool("CN_Equity_A", refresh=True)
+                if all_a:
+                    return sorted(all_a)
         except Exception as e:
             logger.warning("CN_Equity_A pool unavailable: %s", e)
 
@@ -164,26 +167,25 @@ def run_extend_history(
     adj_start_str = new_start.strftime("%Y-%m-%d")
     adj_end_str = today.strftime("%Y-%m-%d")
 
-    if capset.has(Cap.ADJ_FACTOR):
-        emit("extend_history", 48, f"获取除权因子 [{adj_start_str} ~ {adj_end_str}]…")
-        logger.info("extend_history: adj_factor [%s ~ %s]", adj_start_str, adj_end_str)
+    # Match daily_pipeline: always attempt adj. Leftover TickFlow + no
+    # Cap.ADJ_FACTOR uses the public sina adapter inside sync_adj_factor.
+    # Declared custom / prefs-unreadable are fail-closed there.
+    emit("extend_history", 48, f"获取除权因子 [{adj_start_str} ~ {adj_end_str}]…")
+    logger.info("extend_history: adj_factor [%s ~ %s]", adj_start_str, adj_end_str)
 
-        def _adj_chunk(cur: int, tot: int) -> None:
-            emit("extend_history", 48 + int(10 * cur / tot),
-                 f"除权因子批次 {cur}/{tot}", stage_pct=int(100 * cur / tot), skip_log=True)
+    def _adj_chunk(cur: int, tot: int) -> None:
+        emit("extend_history", 48 + int(10 * cur / tot),
+             f"除权因子批次 {cur}/{tot}", stage_pct=int(100 * cur / tot), skip_log=True)
 
-        written_adj, _affected = kline_sync.sync_adj_factor(
-            universe, repo, capset,
-            start_time=adj_start, end_time=adj_end,
-            on_chunk_done=_adj_chunk,
-        )
-        emit("extend_history", 60, f"除权因子完成,{written_adj} 行")
-        logger.info("extend_history: adj_factor done, %d rows", written_adj)
-        _refresh_single_view(repo, "adj_factor")
-        _invalidate("adj_factor")
-    else:
-        emit("extend_history", 60, "除权因子跳过(无权限)")
-        logger.info("extend_history: adj_factor skipped, no ADJ_FACTOR capability")
+    written_adj, _affected = kline_sync.sync_adj_factor(
+        universe, repo, capset,
+        start_time=adj_start, end_time=adj_end,
+        on_chunk_done=_adj_chunk,
+    )
+    emit("extend_history", 60, f"除权因子完成,{written_adj} 行")
+    logger.info("extend_history: adj_factor done, %d rows", written_adj)
+    _refresh_single_view(repo, "adj_factor")
+    _invalidate("adj_factor")
 
     # 5. 全量重算 enriched
     emit("extend_history", 65, "全量计算 enriched…")

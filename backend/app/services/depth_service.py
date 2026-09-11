@@ -279,7 +279,11 @@ class DepthService:
         """
         from app.services import preferences
 
-        provider_name = preferences.get_depth5_data_provider()
+        try:
+            provider_name = preferences.get_depth5_data_provider()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("depth prefs unreadable, fail-closed (no public/TickFlow mix): %s", e)
+            return {}
         if provider_name == "public":
             return self._call_public_depth_l1(symbols)
         if provider_name != "tickflow":
@@ -734,7 +738,10 @@ class DepthService:
 
     def _depth_source(self) -> str:
         from app.services import preferences
-        provider = preferences.get_depth5_data_provider()
+        try:
+            provider = preferences.get_depth5_data_provider()
+        except Exception:
+            return "none"
         if provider not in {"tickflow", "public"}:
             return provider
         if provider == "public":

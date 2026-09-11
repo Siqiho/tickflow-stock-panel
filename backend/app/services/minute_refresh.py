@@ -153,20 +153,23 @@ class MinuteRefreshService:
         """全量分钟生效源名 ("tickflow" 或自定义源名, 偏好 full_minute_data_provider)。"""
         try:
             return preferences.get_full_minute_data_provider()
-        except Exception:  # noqa: BLE001 — 偏好文件异常按 TickFlow 处理
-            return "tickflow"
+        except Exception:  # noqa: BLE001 — 偏好不可读 fail-closed, 不混 TickFlow
+            return ""
 
     def _resolve_custom(self) -> tuple[object | None, str]:
         """解析自定义源。返回 (provider_or_None, effective_name):
 
         - 偏好 tickflow / 源未声明 full_minute 数据集 → (None, "tickflow")
           (旧契约: 未声明仍回退 TickFlow, 能力门控决定能否真正运行)
-        - 解析异常 → (None, name) fail-closed, 本轮不混 TickFlow
+        - 偏好不可读 / 解析异常 → (None, name) fail-closed, 本轮不混 TickFlow
         - 成功 → (provider, name)
         """
         from app.services import kline_sync
 
         name = self.active_provider()
+        if not name:
+            logger.warning("full_minute prefs unreadable, fail-closed (不降级 TickFlow)")
+            return (None, "unresolved")
         if name == "tickflow":
             return (None, "tickflow")
         provider, use_tickflow, err = kline_sync._resolve_full_minute_provider(name)

@@ -60,15 +60,7 @@ def _http_capset(request: Request) -> CapabilitySet:
 
 def _minute_allowed(capset) -> bool:
     """是否有分钟K权限 (TickFlow 批量 或 已解析成功的 custom minute 源)。resolver 异常 fail-closed。"""
-    if capset is not None and capset.has(Cap.KLINE_MINUTE_BATCH):
-        return True
-    from app.services import preferences
-    provider = preferences.get_minute_data_provider()
-    _, fallback, error = kline_sync._resolve_minute_provider(provider)
-    if error is not None:
-        logger.warning("minute provider resolution failed while checking access: %s", error)
-        return False
-    return not fallback
+    return kline_sync.minute_sync_allowed(capset)
 
 
 def _gzip_payload(request: Request, payload: dict, *, pref_key: str) -> dict | Response:
