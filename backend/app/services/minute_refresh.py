@@ -159,8 +159,9 @@ class MinuteRefreshService:
     def _resolve_custom(self) -> tuple[object | None, str]:
         """解析自定义源。返回 (provider_or_None, effective_name):
 
-        - 偏好 tickflow / 源未声明 full_minute 数据集 / 解析异常 → (None, "tickflow")
-          (与 minute 数据集同纪律: 静默降级 TickFlow, 能力门控决定能否真正运行)
+        - 偏好 tickflow / 源未声明 full_minute 数据集 → (None, "tickflow")
+          (旧契约: 未声明仍回退 TickFlow, 能力门控决定能否真正运行)
+        - 解析异常 → (None, name) fail-closed, 本轮不混 TickFlow
         - 成功 → (provider, name)
         """
         from app.services import kline_sync
@@ -169,11 +170,13 @@ class MinuteRefreshService:
         if name == "tickflow":
             return (None, "tickflow")
         provider, use_tickflow, err = kline_sync._resolve_full_minute_provider(name)
+        if err is not None:
+            logger.warning(
+                "full_minute provider %s 解析失败, fail-closed (不降级 TickFlow): %s",
+                name, err,
+            )
+            return (None, name)
         if use_tickflow:
-            if err is not None:
-                logger.warning(
-                    "full_minute provider %s 解析失败, 本轮降级 TickFlow: %s", name, err,
-                )
             return (None, "tickflow")
         return (provider, name)
 
@@ -282,6 +285,12 @@ class MinuteRefreshService:
 
         t0 = time.perf_counter()
         custom, provider_name = self._resolve_custom()
+        if custom is None and provider_name != "tickflow":
+            self._state.last_error = f"full_minute provider {provider_name} unresolved"
+            logger.warning(
+                "全量分钟本轮中止: %s 解析失败, 不混 TickFlow", provider_name,
+            )
+            return
         mode = self._select_mode()
         if mode == "increment" and custom is not None and not self._custom_supports_increment(custom):
             # 无廉价增量端点的源: 增量轮退化为修复轮 (全天批量幂等覆盖, 数据不丢)

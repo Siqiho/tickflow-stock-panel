@@ -43,7 +43,7 @@ def test_quote_pool_does_not_overwrite_custom_daily(monkeypatch, tmp_path):
     )
     assert captured.get("quotes") is None
     assert "daily" in captured
-    assert result["daily_source"] == "tickflow_batch"
+    assert result["daily_source"] == "custom"
 
 
 def test_public_pool_csi_failure_does_not_call_tickflow(monkeypatch):

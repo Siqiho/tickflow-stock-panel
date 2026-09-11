@@ -51,6 +51,32 @@ def test_pipeline_public_adj_gate_matches_sync_fallback(monkeypatch):
     assert adj_sync_uses_public_adapter(paid) is False
 
 
+def test_pipeline_custom_adj_is_not_public_adapter(monkeypatch):
+    from app.jobs.daily_pipeline import adj_sync_uses_public_adapter
+    from app.tickflow.capabilities import Cap, CapabilityLimits, CapabilitySet
+
+    monkeypatch.setattr(
+        "app.jobs.daily_pipeline._prefs.is_public_adj_factor_provider",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "app.jobs.daily_pipeline._prefs.get_adj_factor_provider",
+        lambda: "fuyao",
+    )
+    monkeypatch.setattr(
+        "app.data_providers.custom.provider_has_dataset",
+        lambda name, dataset: name == "fuyao" and dataset == "adj_factor",
+    )
+    monkeypatch.setattr(
+        "app.data_providers.custom.get_provider",
+        lambda name: object(),
+    )
+    empty = CapabilitySet()
+    assert adj_sync_uses_public_adapter(empty) is False
+    paid = CapabilitySet({Cap.ADJ_FACTOR: CapabilityLimits()})
+    assert adj_sync_uses_public_adapter(paid) is False
+
+
 def test_pipeline_public_adj_pref_uses_public_even_with_tickflow_cap(monkeypatch):
     from app.jobs.daily_pipeline import adj_sync_uses_public_adapter
     from app.tickflow.capabilities import Cap, CapabilityLimits, CapabilitySet

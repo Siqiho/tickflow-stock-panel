@@ -152,13 +152,26 @@ def _resolve_daily_provider(
         provider = custom_sources.get_provider(provider_name)
         return (provider, False, None)
     except Exception as e:  # noqa: BLE001
-        return (None, True, str(e))
+        # Declared-or-unknown resolve failure: fail-closed. Do not TickFlow-mix.
+        return (None, False, str(e))
 
 
 def daily_provider_is_custom() -> bool:
-    """True when daily_data_provider resolves to a declared custom/plugin source."""
+    """True when daily_data_provider resolves to a declared custom/plugin source.
+
+    Resolve failure of a non-TickFlow selection also returns True so callers
+    refuse TickFlow overwrite / public EOD mix.
+    """
     _, fallback, _ = _resolve_daily_provider(preferences.get_daily_data_provider())
     return not fallback
+
+
+def routed_daily_source_label() -> str:
+    """Pipeline ``daily_source`` for the batch path."""
+    if daily_provider_is_custom():
+        name = (preferences.get_daily_data_provider() or "").strip().lower()
+        return name if name and name != "tickflow" else "custom"
+    return "tickflow_batch"
 
 
 def _refresh_daily_view(repo: KlineRepository) -> None:
@@ -229,9 +242,10 @@ def sync_and_persist_daily_batch(
     provider, fallback, err = _resolve_daily_provider(provider_name)
     if err is not None:
         logger.warning(
-            "custom daily provider %s resolution failed, falling back to TickFlow: %s",
+            "custom daily provider %s resolution failed, fail-closed (no TickFlow mix): %s",
             provider_name, err,
         )
+        return 0
     if not fallback and provider is not None:
         written = _persist_daily_chunks(
             _iter_custom_daily_chunks(
@@ -289,7 +303,11 @@ def fetch_routed_daily(
     provider_name = preferences.get_daily_data_provider()
     provider, fallback, err = _resolve_daily_provider(provider_name)
     if err is not None:
-        logger.warning("custom daily provider %s resolution failed: %s", provider_name, err)
+        logger.warning(
+            "custom daily provider %s resolution failed, fail-closed (no TickFlow mix): %s",
+            provider_name, err,
+        )
+        return pl.DataFrame()
     if not fallback and provider is not None:
         frames = list(
             _iter_custom_daily_chunks(
@@ -1002,13 +1020,17 @@ def intraday_monitor_support(capset: CapabilitySet | None) -> dict[str, object]:
     """返回分时信号监控可用的数据能力和单轮标的上限。"""
     provider_name = preferences.get_minute_data_provider()
     _, fallback, error = _resolve_minute_provider(provider_name)
+    if error is not None:
+        logger.warning("minute provider resolution failed while checking monitor support: %s", error)
+        return {
+            "available": False, "source": None, "max_symbols": 0,
+            "reason": "分钟数据源解析失败",
+        }
     if not fallback:
         return {
             "available": True, "source": "custom_minute", "max_symbols": 100,
             "reason": "使用已配置的分钟数据插件",
         }
-    if error is not None:
-        logger.warning("minute provider resolution failed while checking monitor support: %s", error)
     if capset is None:
         return {
             "available": False, "source": None, "max_symbols": 0,
@@ -1184,7 +1206,8 @@ def _resolve_minute_provider(
         provider = custom_sources.get_provider(provider_name)
         return (provider, False, None)
     except Exception as e:  # noqa: BLE001
-        return (None, True, str(e))
+        # Declared-or-unknown resolve failure: fail-closed. Do not TickFlow-mix.
+        return (None, False, str(e))
 
 
 def minute_provider_is_custom() -> bool:
@@ -1199,6 +1222,7 @@ def _resolve_full_minute_provider(
     """解析全量分钟源。返回 (provider, should_fallback_to_tickflow, error_msg)。
 
     未声明 full_minute 仍按旧契约回退 TickFlow（与 minute 数据集同纪律）。
+    解析异常 fail-closed，不混 TickFlow。
     """
     if provider_name == "tickflow":
         return (None, True, None)
@@ -1213,7 +1237,230 @@ def _resolve_full_minute_provider(
         provider = custom_sources.get_provider(provider_name)
         return (provider, False, None)
     except Exception as e:  # noqa: BLE001
-        return (None, True, str(e))
+        return (None, False, str(e))
+
+
+_BURST_SYSTEMIC_FAIL_CHUNKS = 4
+
+
+def _frames_from_intraday_payload(raw) -> list[pl.DataFrame]:
+    """Normalize TickFlow CompactKlineData / {symbol: payload} / DataFrame."""
+    frames: list[pl.DataFrame] = []
+    if raw is None:
+        return frames
+    if isinstance(raw, dict):
+        values = list(raw.values())
+        looks_like_symbol_map = bool(values) and all(
+            v is None or isinstance(v, (dict, pl.DataFrame)) or hasattr(v, "columns")
+            for v in values
+        ) and "timestamp" not in raw
+        if looks_like_symbol_map:
+            for sym, payload in raw.items():
+                normalized = _normalize_intraday_monitor_payload(payload, default_symbol=sym)
+                if not normalized.is_empty():
+                    frames.append(normalized)
+            return frames
+        normalized = _normalize_intraday_monitor_payload(raw)
+        if not normalized.is_empty():
+            frames.append(normalized)
+        return frames
+    normalized = _normalize_intraday_monitor_payload(raw)
+    if not normalized.is_empty():
+        frames.append(normalized)
+    return frames
+
+
+def fetch_intraday_full_market_burst(
+    symbols: list[str],
+    capset: CapabilitySet | None,
+    *,
+    count: int = 300,
+) -> tuple[pl.DataFrame, int]:
+    """TickFlow full-market repair pulse with per-chunk isolation.
+
+    A failed chunk is retried once unless more than four chunks failed
+    (systemic overload — skip retries). No public mix.
+    """
+    if not symbols:
+        return pl.DataFrame(), 0
+    if capset is not None and not capset.has(Cap.INTRADAY_BATCH):
+        return pl.DataFrame(), 0
+
+    limits = capset.limits(Cap.INTRADAY_BATCH) if capset is not None else None
+    batch_size = max(1, int(limits.batch or 100)) if limits else 100
+    chunks = [symbols[i:i + batch_size] for i in range(0, len(symbols), batch_size)]
+    tf = get_client()
+    frames: list[pl.DataFrame] = []
+    requests = 0
+    failed: list[list[str]] = []
+
+    def _pull(chunk: list[str]) -> None:
+        nonlocal requests
+        requests += 1
+        raw = tf.klines.intraday_batch(
+            list(chunk),
+            count=count,
+            as_dataframe=False,
+            show_progress=False,
+            batch_size=len(chunk),
+        )
+        frames.extend(_frames_from_intraday_payload(raw))
+
+    for chunk in chunks:
+        try:
+            _pull(chunk)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("intraday burst chunk failed (%d symbols): %s", len(chunk), e)
+            failed.append(chunk)
+
+    if failed and len(failed) <= _BURST_SYSTEMIC_FAIL_CHUNKS:
+        for chunk in failed:
+            try:
+                _pull(chunk)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "intraday burst retry failed (%d symbols): %s", len(chunk), e,
+                )
+
+    if not frames:
+        return pl.DataFrame(), requests
+    out = pl.concat(frames, how="diagonal_relaxed")
+    keep = [c for c in CANONICAL_MINUTE_COLS if c in out.columns]
+    return out.select(keep), requests
+
+
+def fetch_intraday_universe_increment(*, count: int = 3) -> tuple[pl.DataFrame, int]:
+    """TickFlow universe increment: latest N bars, one request. No public mix."""
+    try:
+        tf = get_client()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("intraday universe increment: no client: %s", e)
+        return pl.DataFrame(), 0
+    fn = getattr(getattr(tf, "klines", None), "intraday_universe", None)
+    if not callable(fn):
+        logger.warning("TickFlow klines.intraday_universe missing, skip increment")
+        return pl.DataFrame(), 0
+    try:
+        raw = fn(count=count, as_dataframe=True, show_progress=False)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("intraday universe increment failed: %s", e)
+        return pl.DataFrame(), 1
+    frames = _frames_from_intraday_payload(raw)
+    if frames:
+        out = pl.concat(frames, how="diagonal_relaxed")
+        keep = [c for c in CANONICAL_MINUTE_COLS if c in out.columns]
+        return out.select(keep), 1
+    if isinstance(raw, pl.DataFrame) and not raw.is_empty():
+        return _normalize_minute(raw), 1
+    return pl.DataFrame(), 1
+
+
+def _coerce_intraday_frame(raw) -> pl.DataFrame:
+    if raw is None or getattr(raw, "is_empty", lambda: False)():
+        return pl.DataFrame()
+    if isinstance(raw, pl.DataFrame) and "datetime" in raw.columns:
+        keep = [c for c in CANONICAL_MINUTE_COLS if c in raw.columns]
+        return raw.select(keep) if keep else raw
+    frames = _frames_from_intraday_payload(raw)
+    if frames:
+        out = pl.concat(frames, how="diagonal_relaxed")
+        keep = [c for c in CANONICAL_MINUTE_COLS if c in out.columns]
+        return out.select(keep)
+    return _normalize_minute(raw)
+
+
+def fetch_intraday_custom_batch(
+    provider: object,
+    provider_name: str,
+    symbols: list[str],
+    *,
+    count: int = 300,
+) -> tuple[pl.DataFrame, int]:
+    """Custom full_minute repair round. Fail-closed: no TickFlow / public mix.
+
+    Prefer ``get_intraday_batch``; otherwise today's ``get_minute`` window.
+    """
+    if not symbols:
+        return pl.DataFrame(), 0
+    batch_fn = getattr(provider, "get_intraday_batch", None)
+    if callable(batch_fn):
+        try:
+            try:
+                raw = batch_fn(symbols, count=count, asset_type="stock")
+            except TypeError:
+                raw = batch_fn(symbols)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "custom full_minute %s get_intraday_batch failed, fail-closed: %s",
+                provider_name, e,
+            )
+            return pl.DataFrame(), 1
+        return _coerce_intraday_frame(raw), 1
+
+    minute_fn = getattr(provider, "get_minute", None)
+    if not callable(minute_fn):
+        logger.warning(
+            "custom full_minute %s has neither get_intraday_batch nor get_minute",
+            provider_name,
+        )
+        return pl.DataFrame(), 0
+
+    clock = datetime.now(tz=CN_TZ)
+    trade_date = clock.astimezone(CN_TZ).date()
+    start_time = datetime(
+        trade_date.year, trade_date.month, trade_date.day, 9, 25, 0, tzinfo=CN_TZ,
+    )
+    end_time = datetime(
+        trade_date.year, trade_date.month, trade_date.day, 15, 5, 0, tzinfo=CN_TZ,
+    )
+    requests_box = [0]
+
+    def _cb(cur: int, tot: int) -> None:
+        requests_box[0] = max(requests_box[0], int(tot or cur or 1))
+
+    try:
+        try:
+            raw = minute_fn(
+                symbols,
+                start_time=start_time,
+                end_time=end_time,
+                asset_type="stock",
+                freq="1m",
+                on_chunk_done=_cb,
+            )
+        except TypeError:
+            raw = minute_fn(symbols, start_time, end_time, "stock")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "custom full_minute %s get_minute failed, fail-closed: %s",
+            provider_name, e,
+        )
+        return pl.DataFrame(), max(requests_box[0], 1)
+    return _coerce_intraday_frame(raw), max(requests_box[0], 1)
+
+
+def fetch_intraday_custom_latest(
+    provider: object,
+    provider_name: str,
+    *,
+    count: int = 3,
+) -> tuple[pl.DataFrame, int] | None:
+    """Custom full_minute increment. None = hook not implemented (repair-only)."""
+    fn = getattr(provider, "get_intraday_latest", None)
+    if not callable(fn):
+        return None
+    try:
+        try:
+            raw = fn(symbols=None, count=count)
+        except TypeError:
+            raw = fn(count)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "custom full_minute %s get_intraday_latest failed, fail-closed: %s",
+            provider_name, e,
+        )
+        return pl.DataFrame(), 1
+    return _coerce_intraday_frame(raw), 1
 
 
 def _try_custom_minute(
@@ -1227,12 +1474,13 @@ def _try_custom_minute(
     """尝试自定义分钟源。 (None, True) 回退 TickFlow；(df, False) 直接用。"""
     provider_name = preferences.get_minute_data_provider()
     provider, fallback, err = _resolve_minute_provider(provider_name)
+    if err is not None:
+        logger.warning(
+            "custom minute provider %s resolution failed, fail-closed (no TickFlow mix): %s",
+            provider_name, err,
+        )
+        return (None, False)
     if fallback:
-        if err is not None:
-            logger.warning(
-                "custom minute provider %s resolution failed, falling back to TickFlow: %s",
-                provider_name, err,
-            )
         return (None, True)
 
     wrapped_cb: Callable[[int, int], None] | None = None
@@ -1335,6 +1583,10 @@ def fetch_minute_single(
         except Exception as e:  # noqa: BLE001
             logger.warning("fetch_minute_single(%s, %s) TickFlow failed: %s", symbol, trade_date, e)
 
+    # Leftover TickFlow / undeclared: single-symbol public view (does not persist).
+    # Declared custom call failure must not mix public bars.
+    if minute_provider_is_custom():
+        return pl.DataFrame()
     return _public_minute_fallback(symbol, trade_date)
 
 
@@ -1647,12 +1899,13 @@ def sync_and_persist_minute(
     """
     minute_provider = preferences.get_minute_data_provider()
     _, fallback, resolve_err = _resolve_minute_provider(minute_provider)
-    minute_is_custom = not fallback
+    minute_is_custom = not fallback and resolve_err is None
     if resolve_err is not None:
         logger.warning(
-            "custom minute provider %s resolution failed at sync_and_persist_minute, treating as non-custom: %s",
+            "custom minute provider %s resolution failed at sync_and_persist_minute, fail-closed: %s",
             minute_provider, resolve_err,
         )
+        return 0
     if not symbols:
         return 0
     if not minute_is_custom and not capset.has(Cap.KLINE_MINUTE_BATCH):
