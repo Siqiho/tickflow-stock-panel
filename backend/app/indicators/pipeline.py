@@ -1829,10 +1829,10 @@ def run_pipeline(data_dir: Path | None = None,
 
 def _load_factors(factor_path: Path) -> pl.DataFrame:
     """加载复权因子文件。"""
-    if not factor_path.exists():
-        return pl.DataFrame()
     try:
-        return pl.read_parquet(factor_path)
+        from app.services.kline_sync import get_adj_factor_df
+        asset_type = "etf" if "etf" in factor_path.parent.name else "stock"
+        return get_adj_factor_df(factor_path.parent.parent, asset_type=asset_type)
     except Exception as e:  # noqa: BLE001
         logger.warning("复权因子读取失败: %s", e)
         return pl.DataFrame()

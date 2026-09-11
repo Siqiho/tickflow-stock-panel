@@ -382,15 +382,14 @@ def _safe_aggregate_adj_factor(repo) -> dict | None:
             from app.services.free_sources.adj_factor_public import read_adj_coverage
 
             data_dir = Path(repo.store.data_dir)
-            adj_path = data_dir / "adj_factor" / "all.parquet"
             event_syms = 0
             all_syms = 0
-            if adj_path.exists():
-                adf = pl.read_parquet(adj_path, columns=["symbol", "ex_factor"])
-                if not adf.is_empty():
-                    real = adf.filter((pl.col("ex_factor") - 1.0).abs() > 1e-12)
-                    event_syms = int(real["symbol"].n_unique()) if not real.is_empty() else 0
-                    all_syms = int(adf["symbol"].n_unique())
+            from app.services.kline_sync import get_adj_factor_df
+            adf = get_adj_factor_df(data_dir, asset_type="stock")
+            if not adf.is_empty() and {"symbol", "ex_factor"} <= set(adf.columns):
+                real = adf.filter((pl.col("ex_factor") - 1.0).abs() > 1e-12)
+                event_syms = int(real["symbol"].n_unique()) if not real.is_empty() else 0
+                all_syms = int(adf["symbol"].n_unique())
             cov = read_adj_coverage(data_dir)
             status_counts: dict[str, int] = {}
             no_event_n = 0

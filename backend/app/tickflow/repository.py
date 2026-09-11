@@ -216,7 +216,73 @@ class DataStore:
                 self.db.execute(sql)
             except duckdb.IOException:
                 logger.debug("view registration skipped (no parquet yet): %s", sql[:60])
+        self._register_gated_catalog_views()
         self._register_unified_views()
+
+    def _register_gated_catalog_views(self) -> None:
+        """Replace financial / adj DuckDB views with route-gated scans.
+
+        Raw parquet views stay as the first-pass registration (empty dirs
+        skip). After a provider switch, leftover TickFlow/public rows must
+        not be visible through SQL when the current route is custom.
+        """
+        try:
+            from app.services.financial_sync import FINANCIAL_TABLES, get_financial_df
+        except Exception:  # noqa: BLE001
+            FINANCIAL_TABLES = ()
+            get_financial_df = None
+        d = self.data_dir.as_posix()
+        for table in FINANCIAL_TABLES:
+            path = self.data_dir / "financials" / table / "part.parquet"
+            if not path.exists() or get_financial_df is None:
+                continue
+            name = f"financials_{table}"
+            glob = f"{d}/financials/{table}/*.parquet"
+            try:
+                df = get_financial_df(self.data_dir, table)
+                self.db.execute(f"DROP VIEW IF EXISTS {name}")
+                self.db.execute(f"DROP TABLE IF EXISTS {name}")
+                if df is None or df.is_empty():
+                    self.db.execute(
+                        f"CREATE OR REPLACE VIEW {name} AS "
+                        f"SELECT * FROM read_parquet('{glob}', union_by_name=true) WHERE 1=0"
+                    )
+                    continue
+                tmp = f"_tf_gate_{name}"
+                self.db.register(tmp, df.to_arrow())
+                self.db.execute(f"CREATE TABLE {name} AS SELECT * FROM {tmp}")
+                self.db.unregister(tmp)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("gated financial view %s skipped: %s", name, exc)
+
+        try:
+            from app.services.kline_sync import get_adj_factor_df
+        except Exception:  # noqa: BLE001
+            return
+        for asset_type, view_name, subdir in (
+            ("stock", "adj_factor", "adj_factor"),
+            ("etf", "adj_factor_etf", "adj_factor_etf"),
+        ):
+            path = self.data_dir / subdir / "all.parquet"
+            if not path.exists():
+                continue
+            glob = f"{d}/{subdir}/**/*.parquet"
+            try:
+                df = get_adj_factor_df(self.data_dir, asset_type=asset_type)
+                self.db.execute(f"DROP VIEW IF EXISTS {view_name}")
+                self.db.execute(f"DROP TABLE IF EXISTS {view_name}")
+                if df is None or df.is_empty():
+                    self.db.execute(
+                        f"CREATE OR REPLACE VIEW {view_name} AS "
+                        f"SELECT * FROM read_parquet('{glob}', union_by_name=true) WHERE 1=0"
+                    )
+                    continue
+                tmp = f"_tf_gate_{view_name}"
+                self.db.register(tmp, df.to_arrow())
+                self.db.execute(f"CREATE TABLE {view_name} AS SELECT * FROM {tmp}")
+                self.db.unregister(tmp)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("gated adj view %s skipped: %s", view_name, exc)
 
     def _has_parquet(self, subdir: str) -> bool:
         return any((self.data_dir / subdir).rglob("*.parquet"))
@@ -316,6 +382,8 @@ class KlineRepository:
         # ---- Polars 缓存 ----
         self._enriched_cache: pl.DataFrame | None = None       # 最新一天 (~5500行)
         self._enriched_cache_date: date | None = None
+        self._enriched_cache_live: bool = False
+        self._etf_enriched_cache_live: bool = False
         self._live_agg_cache: pl.DataFrame | None = None       # 预计算聚合表 (~5500行)
         self._live_agg_cache_date: date | None = None
         self._live_agg_check_date: date | None = None          # 上次跨日校验时的 today (快路径节流)
@@ -373,6 +441,7 @@ class KlineRepository:
         """
         self._enriched_cache = None
         self._enriched_cache_date = None
+        self._enriched_cache_live = False
         self._enriched_history_cache = None
         self._enriched_history_start = None
         self._live_agg_cache = None
@@ -382,6 +451,7 @@ class KlineRepository:
         self._index_instruments_cache = None
         self._etf_enriched_cache = None
         self._etf_enriched_cache_date = None
+        self._etf_enriched_cache_live = False
         self._etf_live_agg_cache = None
         self._etf_live_agg_cache_date = None
         self._etf_instruments_cache = None
@@ -469,6 +539,7 @@ class KlineRepository:
                     if not df_today.is_empty():
                         self._enriched_cache = df_today
                         self._enriched_cache_date = latest
+                        self._enriched_cache_live = False
                         # 构建盘中递推基准: 若最新分区是今天的实时盘中数据,
                         # 递推状态必须停在上一交易日, 不能把今天作为“昨日”。
                         self._build_live_agg(self._live_agg_baseline_date(latest))
@@ -480,6 +551,7 @@ class KlineRepository:
             # 降级: 直接使用 14 列数据 + 构建 live_agg
             self._enriched_cache = df_latest
             self._enriched_cache_date = latest
+            self._enriched_cache_live = False
             self._build_live_agg(self._live_agg_baseline_date(latest))
 
             logger.info("enriched 缓存已加载: %d 只, 日期 %s", len(df_latest), latest)
@@ -702,6 +774,7 @@ class KlineRepository:
             if not dates:
                 self._etf_enriched_cache = None
                 self._etf_enriched_cache_date = None
+                self._etf_enriched_cache_live = False
                 return
             latest = date.fromisoformat(dates[-1])
             target_parquet = enriched_dir / f"date={dates[-1]}" / "part.parquet"
@@ -728,6 +801,7 @@ class KlineRepository:
                 df_full = compute_signals(compute_indicators(df_hist))
                 self._etf_enriched_cache = df_full.filter(pl.col("date") == latest).sort(["symbol"])
             self._etf_enriched_cache_date = latest
+            self._etf_enriched_cache_live = False
         except Exception as e:  # noqa: BLE001
             logger.debug("ETF enriched 缓存刷新跳过: %s", e)
 
@@ -774,8 +848,20 @@ class KlineRepository:
             self._etf_symbol_set_cache = None
             logger.info("ETF instruments 缓存已加载: %d 只", len(df_all))
 
+    def _live_enriched_overlay_allowed(self) -> bool:
+        try:
+            from app.services.kline_sync import live_enriched_overlay_allowed
+            return live_enriched_overlay_allowed()
+        except Exception:  # noqa: BLE001
+            return False
+
     def get_enriched_latest(self) -> tuple[pl.DataFrame, date | None]:
         """返回缓存的 enriched 最新日 DataFrame + 日期。如无缓存则懒加载。"""
+        if self._enriched_cache_live and not self._live_enriched_overlay_allowed():
+            self._enriched_cache = None
+            self._enriched_cache_date = None
+            self._enriched_cache_live = False
+            self._refresh_enriched()
         if self._enriched_cache is None:
             self._refresh_enriched()
         if self._enriched_cache is None:
@@ -795,6 +881,12 @@ class KlineRepository:
         if asset_type == "stock":
             return self.get_enriched_latest()
         if asset_type == "etf":
+            if self._etf_enriched_cache_live and not self._live_enriched_overlay_allowed():
+                self._etf_enriched_cache = None
+                self._etf_enriched_cache_date = None
+                self._etf_enriched_cache_live = False
+                if refresh:
+                    self._refresh_etf_enriched()
             if self._etf_enriched_cache is None and refresh:
                 self._refresh_etf_enriched()
             if self._etf_enriched_cache is None:
@@ -1532,6 +1624,7 @@ class KlineRepository:
                 )
             self._enriched_cache = live.sort("symbol")
             self._enriched_cache_date = dt
+            self._enriched_cache_live = True
         elif asset_type == "etf":
             existing = self._etf_enriched_cache if merge and self._etf_enriched_cache_date == dt else None
             if existing is not None and not existing.is_empty():
@@ -1540,6 +1633,7 @@ class KlineRepository:
                 )
             self._etf_enriched_cache = live.sort("symbol")
             self._etf_enriched_cache_date = dt
+            self._etf_enriched_cache_live = True
 
     def save_index_instruments(self, df: pl.DataFrame) -> None:
         """保存指数标的维表。"""
@@ -1690,9 +1784,11 @@ class KlineRepository:
         if asset_type == "stock":
             self._enriched_cache = merged_cache
             self._enriched_cache_date = dt
+            self._enriched_cache_live = False
         elif asset_type == "etf":
             self._etf_enriched_cache = merged_cache
             self._etf_enriched_cache_date = dt
+            self._etf_enriched_cache_live = False
 
         from app.indicators.pipeline import ENRICHED_STORAGE_COLS
         storage_cols = [c for c in ENRICHED_STORAGE_COLS if c in df.columns]
@@ -1747,10 +1843,12 @@ class KlineRepository:
         if asset_type == "stock":
             self._enriched_cache = df.sort(["symbol"])
             self._enriched_cache_date = dt
+            self._enriched_cache_live = False
             table = "kline_daily_enriched"
         elif asset_type == "etf":
             self._etf_enriched_cache = df.sort(["symbol"])
             self._etf_enriched_cache_date = dt
+            self._etf_enriched_cache_live = False
             table = "kline_etf_enriched"
         elif asset_type == "index":
             table = "kline_index_enriched"

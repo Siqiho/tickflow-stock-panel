@@ -509,6 +509,12 @@ def _latest_live_candle(
     refresh_asset: bool = True,
 ) -> dict | None:
     """从内存缓存读取单只标的的当日实时 enriched 行。"""
+    try:
+        from app.services.kline_sync import live_enriched_overlay_allowed
+        if not live_enriched_overlay_allowed():
+            return None
+    except Exception:  # noqa: BLE001
+        return None
     if asset_type == "etf":
         df_today, enriched_date = request.app.state.repo.get_enriched_latest_asset("etf")
         if df_today.is_empty():
