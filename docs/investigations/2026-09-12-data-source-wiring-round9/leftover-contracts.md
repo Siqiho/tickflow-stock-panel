@@ -16,4 +16,4 @@ in a later hardening round unless product explicitly changes the contract.
 | Lab `/api/free-ext` explicit public writes | `free_ext.py` | Lab is an explicit public write surface |
 | `.env` / auth | settings / secrets | Out of scope for routing hardening |
 
-Closed in this round (not leftovers): stale pool cache, ALL-scope `CN_Equity_A` / DEMO under custom pool, live adj skip when sync already uses sina, minute persist prefs throw, undeclared depth/realtime capability lies, `watchlist.fetch_quotes` ignoring realtime prefs.
+Closed in this round (not leftovers): stale pool cache, ALL-scope `CN_Equity_A` / DEMO under custom pool, pipeline and extend-history last-resort DEMO under custom/unresolved pool, live adj skip when sync already uses sina, minute persist prefs throw, undeclared depth/realtime capability lies, `watchlist.fetch_quotes` ignoring realtime prefs.
