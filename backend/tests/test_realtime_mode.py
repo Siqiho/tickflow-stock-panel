@@ -29,3 +29,16 @@ def test_tickflow_paid_is_full_market(monkeypatch):
     monkeypatch.setattr(preferences, "get_realtime_data_provider", lambda: "tickflow")
     monkeypatch.setattr(QuoteService, "_current_tier", lambda: "pro")
     assert QuoteService.realtime_mode() == "full_market"
+
+
+def test_fetch_quotes_does_not_hit_any_source_when_mode_is_none(monkeypatch):
+    from app.services import preferences
+    monkeypatch.setattr(preferences, "get_realtime_data_provider", lambda: "tickflow")
+    monkeypatch.setattr(QuoteService, "_current_tier", lambda: "free")
+
+    qs = QuoteService.__new__(QuoteService)
+    hit = {"watchlist": False, "full": False}
+    monkeypatch.setattr(qs, "_fetch_watchlist_quotes", lambda: hit.__setitem__("watchlist", True))
+    monkeypatch.setattr(qs, "_fetch_full_market_quotes", lambda: hit.__setitem__("full", True))
+    qs._fetch_quotes()
+    assert hit == {"watchlist": False, "full": False}

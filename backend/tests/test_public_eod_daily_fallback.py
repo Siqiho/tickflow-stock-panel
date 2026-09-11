@@ -61,6 +61,27 @@ def test_sync_daily_by_public_quotes_writes_partition(tmp_path, monkeypatch):
     assert set(df["symbol"].to_list()) == {"000001.SZ", "600519.SH"}
 
 
+def test_public_eod_decision_ignores_realtime_provider():
+    """Daily completeness fallback is not a realtime routing decision."""
+    from app.jobs.daily_pipeline import should_use_public_eod_fallback
+
+    assert should_use_public_eod_fallback(
+        pull_a_share=True, today_missing=True, weekday=0, has_quote_pool=False,
+    ) is True
+    assert should_use_public_eod_fallback(
+        pull_a_share=False, today_missing=True, weekday=0, has_quote_pool=False,
+    ) is False
+    assert should_use_public_eod_fallback(
+        pull_a_share=True, today_missing=False, weekday=0, has_quote_pool=False,
+    ) is False
+    assert should_use_public_eod_fallback(
+        pull_a_share=True, today_missing=True, weekday=5, has_quote_pool=False,
+    ) is False
+    assert should_use_public_eod_fallback(
+        pull_a_share=True, today_missing=True, weekday=0, has_quote_pool=True,
+    ) is False
+
+
 def test_sync_daily_by_public_quotes_empty_fetch(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "app.services.free_sources.quote_fallback.fetch_public_market_quotes",

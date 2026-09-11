@@ -283,13 +283,20 @@ def feature_availability(
         quote_source = "local_public"
         quote_status = "public_fallback"
         quote_mode = "full_market_public"
-    else:
+    elif realtime_provider and realtime_provider != "tickflow":
         quote_ok = True
         quote_reason = None
         quote_code = "ok"
-        quote_source = "local_public"
-        quote_status = "public_fallback"
-        quote_mode = "watchlist_public"
+        quote_source = realtime_provider
+        quote_status = "available"
+        quote_mode = "full_market"
+    else:
+        quote_ok = False
+        quote_reason = "当前档位无实时行情权限，且未选择公开源"
+        quote_code = "no_capability"
+        quote_source = "none"
+        quote_status = "unavailable"
+        quote_mode = "none"
 
     minute_info = minute_availability(capset, user_enabled=minute_user_enabled)
 

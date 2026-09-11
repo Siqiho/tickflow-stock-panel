@@ -47,6 +47,12 @@ def _finite(v: Any) -> float | None:
     return f if math.isfinite(f) else None
 
 
+def _leader_sort_key(stock: dict) -> float:
+    """Rank a board constituent for 领涨. 0.00% is a real print; only None is missing."""
+    pct = _finite(stock.get("change_pct"))
+    return pct if pct is not None else float("-inf")
+
+
 def _json_safe(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: _json_safe(v) for k, v in value.items()}
@@ -429,7 +435,7 @@ def _dimension_rank(rows: list[dict], repo, kind: str, limit: int = 5, level: in
         changes = [v for v in changes if v is not None]
         if not changes:
             continue
-        leader = max(stocks, key=lambda s: _finite(s.get("change_pct")) or -999)
+        leader = max(stocks, key=_leader_sort_key)
         items.append({
             "name": name,
             "count": len(stocks),

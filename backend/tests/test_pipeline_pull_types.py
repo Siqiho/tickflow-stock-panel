@@ -14,10 +14,13 @@ from app.services import preferences
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
-    path = tmp_path / "preferences.json"
-    monkeypatch.setattr(preferences, "_path", lambda: path)
+    user = tmp_path / "user_preferences.json"
+    server = tmp_path / "server_preferences.json"
+    monkeypatch.setattr(preferences, "_path", lambda: user)
+    monkeypatch.setattr(preferences, "_server_path", lambda: server)
+    monkeypatch.setattr("app.services.user_context.is_admin", lambda: True)
     preferences._invalidate_cache()
-    yield path
+    yield server
     preferences._invalidate_cache()
 
 
@@ -30,7 +33,7 @@ def test_a_share_defaults_to_true_when_unset():
 
 def test_a_share_toggle_off_is_honored():
     """写入 False 后 getter 必须返回 False(修复前硬编码 True)。"""
-    preferences.save({"pipeline_pull_a_share": False})
+    preferences.save_server({"pipeline_pull_a_share": False})
     assert preferences.get_pipeline_pull_a_share() is False
 
 

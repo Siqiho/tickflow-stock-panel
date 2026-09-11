@@ -221,14 +221,15 @@ def get_adj_factor_provider() -> str:
     """Adj factor source: tickflow | public/sina/sina_qfq/free | same_as_daily.
 
     public/sina* bypass TickFlow Cap.ADJ_FACTOR and use free_sources.adj_factor_public.
+    Legacy same_as_daily heals to the current daily provider so callers receive a
+    real source name (capability-matrix status mapping still accepts the token).
     """
     provider = str(load_server().get("adj_factor_provider", "same_as_daily") or "same_as_daily").lower()
     if provider == "same_as_daily":
-        # If daily is still tickflow-only, keep same_as_daily token for callers.
-        return provider
+        return get_daily_data_provider()
     if provider in _ALLOWED_ADJ_FACTOR_PROVIDERS or provider in _allowed_data_providers():
         return provider
-    return "same_as_daily"
+    return get_daily_data_provider()
 
 
 def is_public_adj_factor_provider(name: str | None = None) -> bool:
@@ -322,8 +323,12 @@ def get_realtime_data_provider() -> str:
 # ===== 盘后管道拉取内容开关 (A股 / ETF / 指数 独立控制) =====
 
 def get_pipeline_pull_a_share() -> bool:
-    """A 股日K固定拉取。"""
-    return True
+    """Whether the after-hours pipeline pulls A-share daily bars.
+
+    Default True. Must read the saved preference — a hardcoded True made the
+    Data page checkbox a no-op (#216).
+    """
+    return bool(load_server().get("pipeline_pull_a_share", True))
 
 
 def get_pipeline_pull_etf() -> bool:
