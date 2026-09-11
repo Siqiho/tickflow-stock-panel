@@ -1416,21 +1416,13 @@ async def rebuild_enriched(request: Request):
                         lambda: run_pipeline(on_batch_done=_batch_progress),
                     )
 
-                    enriched_dir = repo.store.data_dir / "kline_daily_enriched"
-                    enriched_days = len(list(enriched_dir.glob("date=*"))) if enriched_dir.exists() else 0
+                    from app.jobs.daily_pipeline import _refresh_single_view
+                    from app.services.kline_sync import safe_usable_daily_partition_dates
 
-                    # 刷新视图
-                    d = repo.store.data_dir.as_posix()
-                    for view_name, glob in [
-                        ("kline_enriched", f"{d}/kline_daily_enriched/**/*.parquet"),
-                    ]:
-                        try:
-                            repo.db.execute(
-                                f"CREATE OR REPLACE VIEW {view_name} AS "
-                                f"SELECT * FROM read_parquet('{glob}', union_by_name=true)"
-                            )
-                        except Exception:
-                            pass
+                    enriched_days = len(safe_usable_daily_partition_dates(
+                        repo.store.data_dir, table="kline_daily_enriched",
+                    ))
+                    _refresh_single_view(repo, "kline_enriched")
 
                     progress("refresh_cache", 98, "刷新内存缓存…")
                     await loop.run_in_executor(_long_task_executor, repo.refresh_cache)

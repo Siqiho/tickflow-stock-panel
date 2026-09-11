@@ -46,11 +46,35 @@ def invalidate_cache() -> None:
 
 
 def _latest_enriched_date(repo) -> date | None:
-    """取 enriched 缓存里的最新交易日(矩阵的右端=最新日期)。"""
-    cache = repo._enriched_history_cache  # noqa: SLF001 —— 缓存字段无公开 getter
-    if cache is None or cache.is_empty() or "date" not in cache.columns:
+    """Newest current-route enriched date (matrix right edge).
+
+    Disk provenance wins so a leftover TickFlow cache after a custom
+    daily switch cannot become the as_of. Cache is only a fallback and
+    is still route-filtered.
+    """
+    getter = getattr(repo, "latest_enriched_date", None)
+    if callable(getter):
+        try:
+            return getter("stock")
+        except TypeError:
+            try:
+                return getter()
+            except Exception:  # noqa: BLE001
+                pass
+        except Exception:  # noqa: BLE001
+            pass
+    cache = getattr(repo, "_enriched_history_cache", None)
+    if cache is None or getattr(cache, "is_empty", lambda: True)() or "date" not in getattr(cache, "columns", []):
         return None
-    return cache["date"].max()
+    from app.services.kline_sync import filter_daily_cache
+
+    try:
+        filtered = filter_daily_cache(cache)
+    except Exception:  # noqa: BLE001
+        return None
+    if filtered is None or filtered.is_empty() or "date" not in filtered.columns:
+        return None
+    return filtered["date"].max()
 
 
 def _load_concept_map_df(repo, kind: str = "concept") -> tuple[pl.DataFrame, int]:

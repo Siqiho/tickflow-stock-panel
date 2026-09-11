@@ -113,15 +113,12 @@ def latest_official_enriched_date(repo) -> date | None:
     """Disk official enriched date. Live cache must not stand in for a written day."""
     if repo is None:
         return None
-    try:
-        from app.services.kline_sync import usable_daily_partition_dates
+    from app.services.kline_sync import safe_usable_daily_partition_dates
 
-        dates = usable_daily_partition_dates(
-            Path(repo.store.data_dir), table='kline_daily_enriched',
-        )
-        return dates[-1] if dates else None
-    except Exception:
-        return _latest_partition_date(Path(repo.store.data_dir) / 'kline_daily_enriched')
+    dates = safe_usable_daily_partition_dates(
+        Path(repo.store.data_dir), table='kline_daily_enriched',
+    )
+    return dates[-1] if dates else None
 
 
 def latest_quote_snapshot_date(repo) -> date | None:

@@ -195,16 +195,9 @@ def scan_recent_integrity(
         base = data_dir / table
         existing: set[date] = set()
         if base.exists():
-            try:
-                from app.services.kline_sync import usable_daily_partition_dates
+            from app.services.kline_sync import safe_usable_daily_partition_dates
 
-                existing.update(usable_daily_partition_dates(data_dir, table=table))
-            except Exception:  # noqa: BLE001
-                for part in base.glob("date=*"):
-                    try:
-                        existing.add(date.fromisoformat(part.name[5:]))
-                    except ValueError:
-                        continue
+            existing.update(safe_usable_daily_partition_dates(data_dir, table=table))
         latest = max(existing) if existing else None
         # 族内近期无活动 → 不判定 (首次启动 / 长期停用)
         if latest is None or latest < window_start:

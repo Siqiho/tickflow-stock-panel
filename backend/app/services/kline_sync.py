@@ -316,6 +316,26 @@ def usable_daily_partition_dates(
     return dates
 
 
+def safe_usable_daily_partition_dates(
+    data_dir,
+    route: str | None = None,
+    *,
+    table: str = "kline_daily",
+):
+    """Like :func:`usable_daily_partition_dates`, but never fail-open.
+
+    Callers that used to ``except: glob date=*`` were serving leftover
+    TickFlow calendars after a custom switch. An empty list is the
+    fail-closed answer. Leftover TickFlow still sees untagged partitions
+    through the happy path.
+    """
+    try:
+        return usable_daily_partition_dates(data_dir, route, table=table)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("usable daily dates failed for %s: %s", table, exc)
+        return []
+
+
 def usable_daily_partition_paths(
     data_dir,
     route: str | None = None,
@@ -374,6 +394,10 @@ def _refresh_daily_view(repo: KlineRepository) -> None:
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("refresh view failed: %s", e)
+    try:
+        repo.store._register_gated_catalog_views()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("re-gate catalog views after daily refresh failed: %s", e)
 
 
 def _iter_custom_daily_chunks(
@@ -752,14 +776,9 @@ def sync_daily_by_public_quotes(
         logger.debug("public eod lineage write skipped: %s", e)
 
     # 刷新 DuckDB 日K视图，确保后续 latest_daily_date / enriched 能看到今天。
-    try:
-        d = repo.store.data_dir.as_posix()
-        repo.db.execute(
-            f"""CREATE OR REPLACE VIEW kline_daily AS
-                SELECT * FROM read_parquet('{d}/kline_daily/**/*.parquet', union_by_name=true)"""
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.warning("refresh kline_daily view after public eod failed: %s", e)
+    # Re-gate immediately so leftover TickFlow partitions do not become the
+    # current SQL surface after a custom daily switch.
+    _refresh_daily_view(repo)
 
     logger.info(
         "sync_daily_by_public_quotes: %d symbols flushed for %s (raw=%d)",
@@ -1749,6 +1768,20 @@ def usable_minute_partition_dates(data_dir, route: str | None = None, *, asset_t
             dates.append(day)
     dates.sort()
     return dates
+
+
+def safe_usable_minute_partition_dates(
+    data_dir,
+    route: str | None = None,
+    *,
+    asset_type: str = "stock",
+):
+    """Like :func:`usable_minute_partition_dates`, but never fail-open."""
+    try:
+        return usable_minute_partition_dates(data_dir, route, asset_type=asset_type)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("usable minute dates failed: %s", exc)
+        return []
 
 
 def latest_usable_minute_datetime(data_dir, route: str | None = None, *, asset_type: str = "stock"):
