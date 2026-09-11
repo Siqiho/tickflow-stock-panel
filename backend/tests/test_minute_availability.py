@@ -52,7 +52,8 @@ def test_feature_availability_includes_daily_and_minute(monkeypatch):
     assert feats["daily"]["available"] is True
     assert feats["minute"]["available"] is False
     assert feats["minute"].get("view_available") is True
-    assert feats["depth"]["available"] is True
+    assert feats["depth"]["available"] is False
+    assert feats["depth"]["source"] == "none"
     assert feats["quote"]["available"] is True
     assert feats["quote"]["source"] == "local_public"
     assert feats["websocket"]["available"] is False
@@ -152,6 +153,6 @@ def test_feature_quote_tickflow_without_cap_is_unavailable(monkeypatch):
     assert feats["quote"]["available"] is False
     assert feats["quote"]["source"] == "none"
     assert feats["quote"]["mode"] == "none"
-    assert feats["adj_factor"]["available"] is True
-    assert feats["adj_factor"]["source"] == "local_public"
-    assert feats["adj_factor"]["reason_code"] == "public_fallback"
+    assert feats["adj_factor"]["available"] is False
+    assert feats["adj_factor"]["source"] == "none"
+    assert feats["adj_factor"]["reason_code"] == "no_capability"

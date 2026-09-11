@@ -187,10 +187,10 @@ def resolve_adj_sync_universe(
 def adj_sync_uses_public_adapter(capset: CapabilitySet) -> bool:
     """Whether adj sync will write via the public sina adapter.
 
-    Explicit public/sina* prefs use it. Leftover tickflow / healed
-    same_as_daily also use it when TickFlow has no Cap.ADJ_FACTOR —
-    matching ``kline_sync.sync_adj_factor``.
-    Declared custom adj must not be scoped as a public adapter.
+    Explicit public/sina* prefs use it. Leftover TickFlow no longer
+    silent-mixes sina when Cap.ADJ_FACTOR is missing.
+    Declared custom / undeclared custom / unresolved must not be scoped
+    as a public adapter.
     """
     try:
         if _prefs.is_public_adj_factor_provider():
@@ -202,7 +202,7 @@ def adj_sync_uses_public_adapter(capset: CapabilitySet) -> bool:
     except Exception:  # noqa: BLE001
         # Prefs unreadable: do not shrink universe to public_data_scope.
         return False
-    return not capset.has(Cap.ADJ_FACTOR)
+    return False
 
 
 def _prune_partial_enriched_partitions(daily_dir: Path, enriched_dir: Path) -> list[str]:

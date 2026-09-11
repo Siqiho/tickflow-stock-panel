@@ -46,7 +46,7 @@ def test_pipeline_public_adj_gate_matches_sync_fallback(monkeypatch):
         lambda: False,
     )
     empty = CapabilitySet()
-    assert adj_sync_uses_public_adapter(empty) is True
+    assert adj_sync_uses_public_adapter(empty) is False
     paid = CapabilitySet({Cap.ADJ_FACTOR: CapabilityLimits()})
     assert adj_sync_uses_public_adapter(paid) is False
 
@@ -108,6 +108,6 @@ def test_sync_adj_uses_public_when_tickflow_has_no_cap(monkeypatch):
         repo=type("R", (), {"store": type("S", (), {"data_dir": None})()})(),
         capset=CapabilitySet(),
     )
-    assert called.get("public") is True
-    assert rows == 3
-    assert symbols == ["000001.SZ"]
+    assert called.get("public") is None
+    assert rows == 0
+    assert symbols == []

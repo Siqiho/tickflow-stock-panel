@@ -264,7 +264,7 @@ def get_daily(
                 pref_key="daily_batch_compress",
             )
         # 拉除权因子做前复权: 公开/已声明自定义源不看 TickFlow cap;
-        # leftover TickFlow 有 cap 走 TickFlow, 无 cap 走公开新浪 qfq（与盘后同步同一契约）。
+        # leftover TickFlow 有 cap 走 TickFlow, 无 cap 不再静默公开新浪 qfq。
         factors = pl.DataFrame()
         capset = getattr(request.app.state, "capabilities", None)
         try:

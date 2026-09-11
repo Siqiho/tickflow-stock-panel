@@ -381,8 +381,8 @@ def test_undeclared_daily_still_falls_back_to_tickflow(monkeypatch):
     )
     provider, fallback, err = kline_sync._resolve_daily_provider("fuyao")
     assert provider is None
-    assert fallback is True
-    assert err is None
+    assert fallback is False
+    assert err is not None
 
 
 def test_daily_prefs_unreadable_blocks_live_persist(monkeypatch):

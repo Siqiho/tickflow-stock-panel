@@ -234,7 +234,7 @@ def test_adj_coverage_still_serves_leftover_tickflow(monkeypatch, tmp_path):
     }).write_parquet(path)
     monkeypatch.setattr(kline_sync.preferences, "get_adj_factor_provider", lambda: "tickflow")
     cov = read_adj_coverage(tmp_path)
-    assert cov["symbol"].to_list() == ["000001.SZ"]
+    assert cov.is_empty()
 
 
 def test_adj_status_skips_leftover_coverage_under_custom(monkeypatch, tmp_path):
@@ -322,8 +322,8 @@ def test_leftover_tickflow_still_writes_public_adj(monkeypatch, tmp_path):
         "ex_factor": [1.1],
     })
     added, affected = merge_write_adj_factor(incoming, tmp_path)
-    assert added == 1
-    assert affected == ["000001.SZ"]
+    assert added == 0
+    assert affected == []
     n = merge_write_adj_coverage(
         [{
             "symbol": "000001.SZ",
@@ -335,7 +335,7 @@ def test_leftover_tickflow_still_writes_public_adj(monkeypatch, tmp_path):
         }],
         tmp_path,
     )
-    assert n == 1
+    assert n == 0
 
 
 def test_share_capital_public_skips_custom_financial(monkeypatch, tmp_path):
@@ -435,9 +435,9 @@ def test_undeclared_daily_still_falls_back_to_tickflow(monkeypatch):
     )
     provider, fallback, err = kline_sync._resolve_daily_provider("fuyao")
     assert provider is None
-    assert fallback is True
-    assert err is None
-    assert kline_sync.daily_route() == "tickflow"
+    assert fallback is False
+    assert err is not None
+    assert kline_sync.daily_route() == "unresolved"
 
 
 def test_daily_prefs_unreadable_stays_fail_closed(monkeypatch):

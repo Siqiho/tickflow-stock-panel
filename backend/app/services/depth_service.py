@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 def depth_route() -> str:
     """Effective depth write/read route: public | tickflow | <custom name> | unresolved.
 
-    Leftover TickFlow stays tickflow (fetch may still use public L1).
+    Leftover TickFlow stays tickflow (empty TickFlow no longer mixes public L1).
     Undeclared custom names and unreadable prefs are unresolved — never
     serve leftover TickFlow/public sealed parquet as if it were current.
     """
@@ -66,8 +66,8 @@ def depth_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
     """Whether on-disk sealed depth may be served for the current route.
 
     Custom / unresolved never reuse untagged TickFlow or public files.
-    Leftover TickFlow may still serve public-tagged L1 (intentional leftover).
-    Untagged legacy files stay valid for leftover TickFlow / public only.
+    Leftover TickFlow no longer serves public-tagged L1. Untagged legacy
+    files stay valid for leftover TickFlow / public only.
     """
     if df is None or getattr(df, "is_empty", lambda: True)():
         return False
@@ -81,8 +81,6 @@ def depth_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
     if not nonempty:
         return expected in {"tickflow", "public"}
     allowed = {expected}
-    if expected == "tickflow":
-        allowed.add("public")
     if any(s not in allowed for s in nonempty):
         return False
     if len(nonempty) != len(stored):
@@ -98,10 +96,7 @@ def depth_stored_usable(stored: str | None, route: str) -> bool:
     token = (stored or "").strip().lower()
     if not token:
         return expected in {"tickflow", "public"}
-    allowed = {expected}
-    if expected == "tickflow":
-        allowed.add("public")
-    return token in allowed
+    return token == expected
 
 
 def _tag_depth_route(df: pl.DataFrame) -> pl.DataFrame:
@@ -358,7 +353,9 @@ class DepthService:
         """Fetch depth for sealed judgment.
 
         Custom/908 providers are fail-closed with no cross-source fallback.
-        Default tickflow keeps the local TickFlow → public L1 sealed path.
+        Default tickflow uses TickFlow only — empty/failed results stay
+        empty (no silent public L1 mix). Explicit depth5=public still
+        uses public L1.
         """
         from app.services import preferences
 
@@ -378,8 +375,8 @@ class DepthService:
             data = self._call_tickflow_depth_batch(symbols)
             if data:
                 return data
-            logger.warning("TickFlow depth empty/failed, falling back to public L1")
-        return self._call_public_depth_l1(symbols)
+            logger.warning("TickFlow depth empty/failed, fail-closed (no public L1 mix)")
+        return {}
 
     def _call_routed_depth_batch(
         self,
@@ -829,9 +826,9 @@ class DepthService:
     def _has_capability(self) -> bool:
         """Whether sealed-depth polling / boot may run for the current route.
 
-        Leftover TickFlow keeps the public L1 sealed fallback. Explicit public
-        is available. Declared custom needs a depth5 dataset. Unreadable prefs
-        and undeclared custom names are fail-closed (no silent public/TickFlow).
+        Leftover TickFlow may still poll TickFlow depth (empty stays empty).
+        Explicit public is available. Declared custom needs a depth5 dataset.
+        Unreadable prefs and undeclared custom names are fail-closed.
         """
         from app.services import preferences
 

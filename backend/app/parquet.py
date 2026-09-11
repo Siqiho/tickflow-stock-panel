@@ -15,6 +15,7 @@ DAILY_STORAGE_SCHEMA: dict[str, pl.DataType] = {
     "volume": pl.Float64,
     "amount": pl.Float64,
     "quote_ts": pl.Int64,
+    "route": pl.Utf8,
 }
 
 ENRICHED_STORAGE_SCHEMA: dict[str, pl.DataType] = {
@@ -33,6 +34,7 @@ ENRICHED_STORAGE_SCHEMA: dict[str, pl.DataType] = {
     "consecutive_limit_ups": pl.UInt32,
     "consecutive_limit_downs": pl.UInt32,
     "quote_ts": pl.Int64,
+    "route": pl.Utf8,
 }
 
 

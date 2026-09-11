@@ -145,10 +145,10 @@ def _resolve_daily_provider(
     try:
         if not custom_sources.provider_has_dataset(provider_name, "daily"):
             logger.info(
-                "daily provider %s 未声明 daily, 按旧契约回退 TickFlow",
+                "daily provider %s 未声明 daily, fail-closed (no TickFlow mix)",
                 provider_name,
             )
-            return (None, True, None)
+            return (None, False, f"{provider_name} did not declare daily")
         provider = custom_sources.get_provider(provider_name)
         return (provider, False, None)
     except Exception as e:  # noqa: BLE001
@@ -198,8 +198,8 @@ def live_daily_persist_allowed() -> bool:
 def daily_route() -> str:
     """Effective daily write/read route: tickflow | <custom name> | unresolved.
 
-    Leftover / undeclared names resolve to tickflow (logged by the resolver).
-    Resolve failures and unreadable prefs are unresolved.
+    Explicit leftover TickFlow stays tickflow. Undeclared custom names,
+    resolve failures, and unreadable prefs are unresolved.
     """
     try:
         name = (preferences.get_daily_data_provider() or "").strip().lower()
@@ -216,12 +216,11 @@ def daily_route() -> str:
 def daily_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
     """Whether a same-date daily/enriched partition may be used for ``route``.
 
-    Historical HTTP / screener *reads* stay leftover until re-sync. This
-    gate is for write/merge, status, pipeline, and derived writers: a
-    custom (or leftover TickFlow) re-sync must not concat-mix the other
-    source's bars, and operational coverage must not treat leftover
-    parquet as current. Untagged legacy files stay valid for leftover
-    TickFlow / public.
+    Write/merge, status, pipeline, derived writers, and historical HTTP /
+    screener reads share this partition-level check. A custom (or leftover
+    TickFlow) path must not concat-mix the other source's bars, and must
+    not treat leftover parquet as current. Untagged legacy files stay
+    valid for leftover TickFlow / public.
     """
     if df is None or getattr(df, "is_empty", lambda: True)():
         return False
@@ -245,9 +244,14 @@ def _tag_daily_route(df: pl.DataFrame) -> pl.DataFrame:
     route = daily_route()
     if df is None or getattr(df, "is_empty", lambda: True)():
         return df
-    if not route or route == "unresolved" or "route" in df.columns:
+    if not route or route == "unresolved":
         return df
-    return df.with_columns(pl.lit(route).alias("route"))
+    if "route" not in df.columns:
+        return df.with_columns(pl.lit(route).alias("route"))
+    tokens = pl.col("route").cast(pl.Utf8).fill_null("").str.strip_chars()
+    return df.with_columns(
+        pl.when(tokens == "").then(pl.lit(route)).otherwise(pl.col("route")).alias("route")
+    )
 
 
 def _incoming_daily_route(df: pl.DataFrame) -> str:
@@ -287,10 +291,9 @@ def usable_daily_partition_dates(
 ):
     """Date partitions that belong to the current daily route.
 
-    Status / pipeline / derived writers must not treat leftover TickFlow
-    partitions as current after a custom switch. Leftover TickFlow still
-    sees untagged partitions. Historical HTTP / screener reads stay on
-    the leftover contract and do not use this helper.
+    Status / pipeline / derived writers / HTTP / screener must not treat
+    leftover TickFlow partitions as current after a custom switch.
+    Leftover TickFlow still sees untagged partitions.
     """
     from pathlib import Path
 
@@ -330,8 +333,8 @@ def usable_daily_partition_paths(
 
 
 def adj_public_write_allowed() -> bool:
-    """Public sina adj / coverage writers may run only for leftover TickFlow or public."""
-    return adj_route() in {"public", "tickflow"}
+    """Public sina adj / coverage writers may run only for an explicit public adj route."""
+    return adj_route() == "public"
 
 
 def live_enriched_overlay_allowed() -> bool:
@@ -800,8 +803,7 @@ def _try_custom_adj_provider(provider_name: str) -> tuple[object | None, str]:
 
     Returns (provider, fate):
       - custom: declared adj_factor, use get_adj_factors (fail-closed)
-      - undeclared: leftover TickFlow / public-adapter contract
-      - skip: selected custom source failed to resolve — do not mix
+      - skip: undeclared custom name or resolve failure — do not mix
       - builtin: tickflow / public aliases
     """
     name = (provider_name or "").strip().lower()
@@ -810,7 +812,11 @@ def _try_custom_adj_provider(provider_name: str) -> tuple[object | None, str]:
     from app.data_providers import custom as custom_sources
     try:
         if not custom_sources.provider_has_dataset(name, "adj_factor"):
-            return None, "undeclared"
+            logger.info(
+                "adj provider %s 未声明 adj_factor, fail-closed (no TickFlow/public mix)",
+                name,
+            )
+            return None, "skip"
         return custom_sources.get_provider(name), "custom"
     except Exception as e:  # noqa: BLE001
         logger.warning(
@@ -830,8 +836,8 @@ def adj_live_fetch_allowed(capset: CapabilitySet | None) -> bool:
             return True
         if fate == "skip":
             return False
-        # leftover TickFlow / undeclared: TickFlow when entitled, else public sina
-        return True
+        # leftover TickFlow: TickFlow only when entitled. No silent sina qfq.
+        return bool(capset and capset.has(Cap.ADJ_FACTOR))
     except Exception:  # noqa: BLE001
         # Prefs unreadable: do not assume leftover TickFlow / public sina.
         return False
@@ -840,8 +846,8 @@ def adj_live_fetch_allowed(capset: CapabilitySet | None) -> bool:
 def adj_route() -> str:
     """Effective adj write/read route: public | tickflow | <custom name> | unresolved.
 
-    Leftover / undeclared names resolve to tickflow (logged by the resolver).
-    Resolve failures and unreadable prefs are unresolved.
+    Explicit leftover TickFlow / public aliases stay those tokens.
+    Undeclared custom names, resolve failures, and unreadable prefs are unresolved.
     """
     try:
         name = (preferences.get_adj_factor_provider() or "").strip().lower()
@@ -864,9 +870,9 @@ def adj_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
     """Whether on-disk adj factors may be served for the current route.
 
     Custom / unresolved never reuse untagged TickFlow or public files.
-    Tagged files must match, except leftover TickFlow which may still
-    serve public-sina tags (intentional leftover adj contract).
-    Untagged legacy files stay valid for leftover TickFlow / public only.
+    Tagged files must match the current route — leftover TickFlow no
+    longer serves public-sina tags. Untagged legacy files stay valid
+    for leftover TickFlow / public only.
     """
     if df is None or getattr(df, "is_empty", lambda: True)():
         return False
@@ -880,8 +886,6 @@ def adj_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
     if not nonempty:
         return expected in {"tickflow", "public"}
     allowed = {expected}
-    if expected == "tickflow":
-        allowed.add("public")
     if any(s not in allowed for s in nonempty):
         return False
     if len(nonempty) != len(stored):
@@ -1023,7 +1027,8 @@ def sync_adj_factor(symbols: list[str], repo: KlineRepository,
     - 默认 TickFlow Starter+：`tf.klines.ex_factors`（需 Cap.ADJ_FACTOR）
     - 当 preferences.adj_factor_provider ∈ {public,sina,sina_qfq,free} 时：
       走 free_sources.adj_factor_public（新浪 qfq.js），**不依赖** Cap.ADJ_FACTOR
-    - leftover TickFlow / 未声明 adj 且无 Cap.ADJ_FACTOR：公开新浪 qfq（旧契约）
+    - leftover TickFlow 且无 Cap.ADJ_FACTOR：空结果（不再静默公开新浪 qfq）
+    - 未声明自定义 adj：fail-closed，不混 TickFlow / 公开新浪
 
     支持增量: 传 start_time/end_time 只保留该时间范围内的新除权事件。
     返回 (写入行数, 受影响的 symbol 列表) — 供 enriched 局部重算使用。
@@ -1061,19 +1066,12 @@ def sync_adj_factor(symbols: list[str], repo: KlineRepository,
             )
             return 0, []
         return _persist_adj_factor_df(_normalize_adj_factor(raw), repo, asset_type)
-    if fate == "undeclared":
-        logger.info(
-            "adj provider %s 未声明 adj_factor, 按旧契约回退 TickFlow/公开适配器",
-            provider_name,
-        )
 
     if not capset.has(Cap.ADJ_FACTOR):
-        # TickFlow cannot provide adj on none/free. Public sina qfq is the only
-        # implemented free adapter. Leftover tickflow / healed same_as_daily
-        # prefs used to skip this path and leave adj empty.
-        return _sync_public_adj_factor(
-            symbols, repo, start_time, end_time, on_chunk_done, asset_type,
-        )
+        # Leftover TickFlow none/free cannot serve factors. Silent public
+        # sina qfq is closed; explicit public/sina* is handled above.
+        logger.info("leftover TickFlow adj without Cap.ADJ_FACTOR, fail-closed (no sina mix)")
+        return 0, []
 
     tf = get_client()
     lim = capset.limits(Cap.ADJ_FACTOR)
@@ -1212,6 +1210,27 @@ def filter_minute_cache(df: pl.DataFrame | None, route: str | None = None) -> pl
     if not minute_cache_usable(df, expected):
         return df.head(0)
     return df
+
+
+def filter_daily_cache(df: pl.DataFrame | None, route: str | None = None) -> pl.DataFrame:
+    """Keep daily/enriched rows that match the current daily route.
+
+    HTTP / screener / in-memory cache reads use row-level filtering so a
+    mixed-date scan can drop leftover TickFlow partitions after a custom
+    switch without failing the whole frame. Untagged rows stay visible
+    only for leftover TickFlow / public.
+    """
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return df if df is not None else pl.DataFrame()
+    expected = (route if route is not None else daily_route()).strip().lower()
+    if not expected or expected == "unresolved":
+        return df.head(0)
+    if "route" not in df.columns:
+        return df if expected in {"tickflow", "public"} else df.head(0)
+    tokens = pl.col("route").cast(pl.Utf8).fill_null("").str.strip_chars().str.to_lowercase()
+    if expected in {"tickflow", "public"}:
+        return df.filter((tokens == expected) | (tokens == ""))
+    return df.filter(tokens == expected)
 
 
 def _with_minute_route(df: pl.DataFrame, route: str | None = None) -> pl.DataFrame:
@@ -1556,10 +1575,10 @@ def _resolve_minute_provider(
     try:
         if not custom_sources.provider_has_dataset(provider_name, "minute"):
             logger.info(
-                "minute provider %s 未声明 minute, 按旧契约回退 TickFlow",
+                "minute provider %s 未声明 minute, fail-closed (no TickFlow mix)",
                 provider_name,
             )
-            return (None, True, None)
+            return (None, False, f"{provider_name} did not declare minute")
         provider = custom_sources.get_provider(provider_name)
         return (provider, False, None)
     except Exception as e:  # noqa: BLE001
@@ -1593,9 +1612,9 @@ def minute_may_use_leftover_public() -> bool:
 def minute_route() -> str:
     """Effective minute write/read route: public | tickflow | <custom name> | unresolved.
 
-    Leftover / undeclared names resolve to tickflow (logged by the resolver).
-    Resolve failures and unreadable prefs are unresolved — never serve stale
-    cache as if it belonged to the current source.
+    Explicit leftover TickFlow stays tickflow. Undeclared custom names,
+    resolve failures, and unreadable prefs are unresolved — never serve
+    stale cache as if it belonged to the current source.
     """
     try:
         name = (preferences.get_minute_data_provider() or "").strip().lower()
@@ -1790,8 +1809,8 @@ def _resolve_full_minute_provider(
 ) -> tuple[object | None, bool, str | None]:
     """解析全量分钟源。返回 (provider, should_fallback_to_tickflow, error_msg)。
 
-    未声明 full_minute 仍按旧契约回退 TickFlow（与 minute 数据集同纪律）。
-    解析异常 fail-closed，不混 TickFlow。
+    未声明 full_minute fail-closed，不混 TickFlow。
+    解析异常同样 fail-closed。
     """
     if provider_name == "tickflow":
         return (None, True, None)
@@ -1799,10 +1818,10 @@ def _resolve_full_minute_provider(
     try:
         if not custom_sources.provider_has_dataset(provider_name, "full_minute"):
             logger.info(
-                "full_minute provider %s 未声明 full_minute, 按旧契约回退 TickFlow",
+                "full_minute provider %s 未声明 full_minute, fail-closed (no TickFlow mix)",
                 provider_name,
             )
-            return (None, True, None)
+            return (None, False, f"{provider_name} did not declare full_minute")
         provider = custom_sources.get_provider(provider_name)
         return (provider, False, None)
     except Exception as e:  # noqa: BLE001
@@ -2322,8 +2341,8 @@ def fetch_adj_factor_single(
 
     返回结构: symbol, trade_date, ex_factor (空 DataFrame 表示无除权事件或拉取失败)。
     与 _apply_adj_factor / compute_enriched 的 factors 参数格式一致。
-    声明了 adj_factor 的自定义源 fail-closed；未声明仍回退 TickFlow（有 cap）
-    或公开新浪 qfq（无 cap，与 sync_adj_factor 同一旧契约）。
+    声明了 adj_factor 的自定义源 fail-closed；未声明同样 fail-closed。
+    leftover TickFlow 有 cap 走 TickFlow，无 cap 不再静默公开新浪 qfq。
     """
     try:
         provider_name = preferences.get_adj_factor_provider()
@@ -2352,19 +2371,13 @@ def fetch_adj_factor_single(
             )
             return pl.DataFrame()
         return _normalize_adj_factor(raw)
-    if fate == "undeclared":
-        logger.info(
-            "adj provider %s 未声明 adj_factor, 单股除权按旧契约回退 TickFlow/公开适配器",
-            provider_name,
-        )
 
     if not (capset and capset.has(Cap.ADJ_FACTOR)):
-        try:
-            from app.services.free_sources.adj_factor_public import fetch_adj_factors_symbol
-            return fetch_adj_factors_symbol(symbol)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("fetch_adj_factor_single(%s) leftover public failed: %s", symbol, e)
-            return pl.DataFrame()
+        logger.info(
+            "fetch_adj_factor_single(%s) leftover TickFlow without ADJ cap, fail-closed",
+            symbol,
+        )
+        return pl.DataFrame()
 
     tf = get_client()
     try:

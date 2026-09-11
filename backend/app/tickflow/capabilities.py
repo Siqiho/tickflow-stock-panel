@@ -404,17 +404,17 @@ def feature_availability(
         adj_source = "local_public"
         adj_status = "available"
     else:
-        # TickFlow none/free cannot serve factors. sync_adj_factor already
-        # uses the public sina qfq adapter — labels must not say "none".
-        adj_ok = True
-        adj_reason = "当前档位无复权因子权限，同步时走公开源（新浪 qfq）"
-        adj_code = "public_fallback"
-        adj_source = "local_public"
-        adj_status = "public_fallback"
+        # Leftover TickFlow none/free cannot serve factors. Silent sina
+        # qfq is closed — labels must not advertise a public fallback.
+        adj_ok = False
+        adj_reason = "当前档位无复权因子权限，且未选择公开复权源"
+        adj_code = "no_capability"
+        adj_source = "none"
+        adj_status = "unavailable"
 
-    # Depth / sealed: custom source, explicit public, TickFlow Pro+ batch,
-    # leftover TickFlow empty → public L1. Prefs unreadable: do not advertise
-    # TickFlow / public_l1.
+    # Depth / sealed: custom source, explicit public, TickFlow Pro+ batch.
+    # Leftover TickFlow empty no longer advertises public L1. Prefs
+    # unreadable: do not advertise TickFlow / public_l1.
     has_depth_batch = capset.has(Cap.DEPTH5_BATCH)
     has_depth_single = capset.has(Cap.DEPTH5)
     if prefs_unreadable and depth_provider is None:
@@ -455,11 +455,11 @@ def feature_availability(
         depth_source = "tickflow"
         depth_status = "available"
     else:
-        depth_ok = True  # leftover TickFlow: public L1 unlocks sealed judgment
-        depth_reason = None
-        depth_code = "ok"
-        depth_source = "local_public"
-        depth_status = "public_fallback"
+        depth_ok = False
+        depth_reason = "当前档位无五档权限，且未选择公开五档源"
+        depth_code = "no_capability"
+        depth_source = "none"
+        depth_status = "unavailable"
 
     # Quote realtime: TickFlow free+/paid, else public full-market snapshot
     has_quote = (

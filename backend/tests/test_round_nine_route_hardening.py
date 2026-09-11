@@ -350,8 +350,8 @@ def test_undeclared_daily_still_falls_back_to_tickflow(monkeypatch):
     )
     provider, fallback, err = kline_sync._resolve_daily_provider("fuyao")
     assert provider is None
-    assert fallback is True
-    assert err is None
+    assert fallback is False
+    assert err is not None
 
 
 def test_get_pool_skips_stale_cache_for_custom(monkeypatch, tmp_path):
@@ -503,10 +503,10 @@ def test_leftover_adj_live_without_cap_uses_public(monkeypatch):
     )
     tf = MagicMock(side_effect=AssertionError("must not call TickFlow without ADJ cap"))
     monkeypatch.setattr(kline_sync, "get_client", tf)
-    assert kline_sync.adj_live_fetch_allowed(CapabilitySet()) is True
+    assert kline_sync.adj_live_fetch_allowed(CapabilitySet()) is False
     out = kline_sync.fetch_adj_factor_single("000001.SZ", capset=CapabilitySet())
-    assert out["ex_factor"].to_list() == [1.1]
-    public.assert_called_once()
+    assert out.is_empty()
+    public.assert_not_called()
     tf.assert_not_called()
 
 

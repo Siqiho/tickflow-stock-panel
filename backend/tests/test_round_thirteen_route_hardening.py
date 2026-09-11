@@ -300,9 +300,9 @@ def test_undeclared_daily_still_falls_back_to_tickflow(monkeypatch):
     )
     provider, fallback, err = kline_sync._resolve_daily_provider("fuyao")
     assert provider is None
-    assert fallback is True
-    assert err is None
-    assert kline_sync.daily_route() == "tickflow"
+    assert fallback is False
+    assert err is not None
+    assert kline_sync.daily_route() == "unresolved"
 
 
 def test_daily_prefs_unreadable_stays_fail_closed(monkeypatch):

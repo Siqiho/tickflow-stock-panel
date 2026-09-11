@@ -298,9 +298,48 @@ class DataStore:
                     logger.debug("gated adj view %s skipped: %s", view_name, exc)
 
         try:
-            from app.services.kline_sync import minute_route
+            from app.services.kline_sync import daily_route, minute_route
         except Exception:  # noqa: BLE001
+            daily_route = None
             minute_route = None
+        if daily_route is not None:
+            daily_token = daily_route()
+            if self._has_parquet("kline_daily"):
+                self._register_route_filtered_view(
+                    "kline_daily",
+                    f"{d}/kline_daily/**/*.parquet",
+                    daily_token,
+                )
+            if self._has_parquet("kline_daily_enriched"):
+                self._register_route_filtered_view(
+                    "kline_enriched",
+                    f"{d}/kline_daily_enriched/**/*.parquet",
+                    daily_token,
+                )
+            if self._has_parquet("kline_index_daily"):
+                self._register_route_filtered_view(
+                    "kline_index_daily",
+                    f"{d}/kline_index_daily/**/*.parquet",
+                    daily_token,
+                )
+            if self._has_parquet("kline_index_enriched"):
+                self._register_route_filtered_view(
+                    "kline_index_enriched",
+                    f"{d}/kline_index_enriched/**/*.parquet",
+                    daily_token,
+                )
+            if self._has_parquet("kline_etf_daily"):
+                self._register_route_filtered_view(
+                    "kline_etf_daily",
+                    f"{d}/kline_etf_daily/**/*.parquet",
+                    daily_token,
+                )
+            if self._has_parquet("kline_etf_enriched"):
+                self._register_route_filtered_view(
+                    "kline_etf_enriched",
+                    f"{d}/kline_etf_enriched/**/*.parquet",
+                    daily_token,
+                )
         if minute_route is not None:
             if self._has_parquet("kline_minute"):
                 self._register_route_filtered_view(
@@ -330,7 +369,7 @@ class DataStore:
                     "depth5",
                     depth_globs if len(depth_globs) > 1 else depth_globs[0],
                     depth_route(),
-                    leftover_public=True,
+                    leftover_public=False,
                 )
 
     def _register_route_filtered_view(
@@ -344,8 +383,8 @@ class DataStore:
         """Register a DuckDB view that hides stale other-route parquet.
 
         Untagged legacy files stay visible only for leftover TickFlow / public.
-        ``leftover_public`` lets leftover TickFlow also see ``route=public``
-        tags (adj / depth sina-or-L1 leftover contract).
+        ``leftover_public`` is unused by current leftover TickFlow contracts
+        (silent sina / public L1 mix is closed).
         """
         if isinstance(glob, list):
             joined = ", ".join(f"'{g}'" for g in glob)
@@ -569,7 +608,9 @@ class KlineRepository:
         优化: 扩大历史读取范围, 同时缓存完整历史 (含指标), 供 filter_history 策略直接复用。
         """
         try:
-            latest = self._latest_enriched_date_duckdb()
+            from app.services.kline_sync import filter_daily_cache
+
+            latest = self.latest_enriched_date("stock")
             if not latest:
                 # 磁盘已无数据: 必须清空内存缓存, 否则旧数据会残留
                 # (清数据后看板仍显示旧数据的根因)
@@ -584,7 +625,7 @@ class KlineRepository:
             if not target_parquet.exists():
                 return
 
-            df_latest = pl.read_parquet(target_parquet)
+            df_latest = filter_daily_cache(pl.read_parquet(target_parquet))
             if df_latest.is_empty():
                 return
 
@@ -595,14 +636,15 @@ class KlineRepository:
                 from app.indicators.pipeline import compute_enriched_history_window
                 start_full = latest - timedelta(days=300)
                 read_cols = [c for c in ["symbol", "date", "open", "high", "low", "close",
-                                         "volume", "amount", "raw_close", "raw_high", "raw_low"]
+                                         "volume", "amount", "raw_close", "raw_high", "raw_low",
+                                         "route"]
                              if c in df_latest.columns]
                 lf = (
                     pl.scan_parquet(self._enriched_glob)
                     .filter(pl.col("date") >= start_full)
                     .sort(["symbol", "date"])
                 )
-                df_hist = lf.select(read_cols).collect()
+                df_hist = filter_daily_cache(lf.select(read_cols).collect())
                 if not df_hist.is_empty():
                     instruments = self._instruments_cache if self._instruments_cache is not None else pl.DataFrame()
                     # 分批执行 指标→偏离→信号→涨跌停; 与整帧顺序等价,
@@ -1070,7 +1112,7 @@ class KlineRepository:
                 # today 翻天了 (次日开盘首次轮询): 校验基准日是否需要前移重建。
                 # 同一天内多次调用直接跳过, 避免每轮都扫 parquet。
                 self._live_agg_check_date = today
-                disk_latest = self._latest_enriched_date_duckdb()
+                disk_latest = self.latest_enriched_date("stock")
                 if disk_latest is not None:
                     expected = self._live_agg_baseline_date(disk_latest)
                     if self._live_agg_cache_date != expected:
@@ -1407,6 +1449,23 @@ class KlineRepository:
             df = df.select(existing)
         return df.sort(["symbol", "date"])
 
+    def _collect_gated_daily(self, lf, columns: list[str] | None) -> pl.DataFrame:
+        """Collect a daily/enriched scan, hiding leftover other-route rows."""
+        from app.services.kline_sync import filter_daily_cache
+
+        schema_names = lf.collect_schema().names()
+        keep_route = bool(columns) and "route" in columns
+        if columns:
+            existing = [c for c in columns if c in schema_names]
+            if "route" in schema_names and "route" not in existing:
+                existing.append("route")
+            if existing:
+                lf = lf.select(existing)
+        df = filter_daily_cache(guarded_collect(lf))
+        if columns and not keep_route and df is not None and not df.is_empty() and "route" in df.columns:
+            df = df.drop("route")
+        return df
+
     def _scan_daily_symbol(self, symbol: str, start: date, end: date, columns: list[str] | None) -> pl.DataFrame:
         def _read() -> pl.DataFrame:
             lf = scan_enriched_parquet(self._enriched_glob,
@@ -1415,11 +1474,7 @@ class KlineRepository:
                 & (pl.col("date") >= start)
                 & (pl.col("date") <= end)
             ).sort("date")
-            if columns:
-                schema_names = lf.collect_schema().names()
-                existing = [c for c in columns if c in schema_names]
-                lf = lf.select(existing)
-            return guarded_collect(lf)
+            return self._collect_gated_daily(lf, columns)
 
         return _collect_local_parquet(_read, self._enriched_glob, "日K读取失败")
 
@@ -1431,11 +1486,7 @@ class KlineRepository:
                 & (pl.col("date") >= start)
                 & (pl.col("date") <= end)
             ).sort(["symbol", "date"])
-            if columns:
-                schema_names = lf.collect_schema().names()
-                existing = [c for c in columns if c in schema_names]
-                lf = lf.select(existing)
-            return guarded_collect(lf)
+            return self._collect_gated_daily(lf, columns)
         except Exception as e:  # noqa: BLE001
             logger.warning("日K批量查询失败: %s", e)
             return pl.DataFrame()
@@ -1448,11 +1499,7 @@ class KlineRepository:
                 & (pl.col("date") >= start)
                 & (pl.col("date") <= end)
             ).sort("date")
-            if columns:
-                schema_names = lf.collect_schema().names()
-                existing = [c for c in columns if c in schema_names]
-                lf = lf.select(existing)
-            return guarded_collect(lf)
+            return self._collect_gated_daily(lf, columns)
         except Exception as e:  # noqa: BLE001
             logger.warning("指数日K查询失败: %s", e)
             return pl.DataFrame()
@@ -1464,11 +1511,7 @@ class KlineRepository:
                 & (pl.col("date") >= start)
                 & (pl.col("date") <= end)
             ).sort("date")
-            if columns:
-                schema_names = lf.collect_schema().names()
-                existing = [c for c in columns if c in schema_names]
-                lf = lf.select(existing)
-            return guarded_collect(lf)
+            return self._collect_gated_daily(lf, columns)
         except Exception as e:  # noqa: BLE001
             logger.debug("ETF 日K查询跳过: %s", e)
             return pl.DataFrame()

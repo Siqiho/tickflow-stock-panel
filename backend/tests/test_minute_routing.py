@@ -163,7 +163,7 @@ def test_custom_provider_exception_no_500(monkeypatch):
 # ---------- 测试 4: 未配 minute dataset → 回退 TickFlow ----------
 
 def test_provider_without_minute_dataset_fallback(monkeypatch):
-    """§4 测试 4: provider_has_dataset 返回 False → (None, True) 回退 TickFlow。"""
+    """§4 测试 4: provider_has_dataset 返回 False → fail-closed, 不回退 TickFlow。"""
     mock_provider = MagicMock()
     _setup_custom_provider(monkeypatch, mock_provider, has_dataset=False)
 
@@ -171,9 +171,8 @@ def test_provider_without_minute_dataset_fallback(monkeypatch):
         ["600519.SH"], None, None, asset_type="stock",
     )
 
-    assert fallback is True
+    assert fallback is False
     assert df is None
-    # provider.get_minute 不应被调用 (回退决策在前)
     mock_provider.get_minute.assert_not_called()
 
 
@@ -777,15 +776,15 @@ def test_resolve_minute_provider_tickflow_returns_silent_fallback():
 
 
 def test_resolve_minute_provider_no_dataset_returns_silent_fallback(monkeypatch):
-    """观察项加固: 配了 custom 但未配 minute dataset → (None, True, None) 静默降级。"""
+    """配了 custom 但未配 minute dataset → fail-closed, 不静默降级 TickFlow。"""
     monkeypatch.setattr(
         "app.data_providers.custom.provider_has_dataset",
         lambda name, ds: False,  # 已注册但未配 minute
     )
     provider, fallback, err = kline_sync._resolve_minute_provider("mock_src")
     assert provider is None
-    assert fallback is True
-    assert err is None  # 未配 ≠ 异常, 不应触发 warning
+    assert fallback is False
+    assert err is not None
 
 
 def test_resolve_minute_provider_has_dataset_exception_returns_err(monkeypatch):

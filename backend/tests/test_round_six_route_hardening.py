@@ -77,9 +77,10 @@ def test_undeclared_daily_still_falls_back_to_tickflow(monkeypatch):
     monkeypatch.setattr("app.data_providers.custom.provider_has_dataset", lambda name, dataset: False)
     provider, fallback, err = kline_sync._resolve_daily_provider("fuyao")
     assert provider is None
-    assert fallback is True
-    assert err is None
-    assert kline_sync.routed_daily_source_label() == "tickflow_batch"
+    assert fallback is False
+    assert err is not None
+    assert kline_sync.daily_route() == "unresolved"
+    assert kline_sync.routed_daily_source_label() == "fuyao"
 
 
 def test_declared_minute_resolve_failure_is_fail_closed(monkeypatch):

@@ -30,11 +30,15 @@ def load_daily_bars_for_symbol(
     if not files:
         raise FileNotFoundError(f"no parquet under {source}")
 
+    from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+
     # Read in batches to avoid huge memory if needed; for one symbol polars filter is fine.
     dfs: list[pl.DataFrame] = []
     for f in files:
         try:
-            df = pl.read_parquet(f)
+            if not daily_partition_usable(f):
+                continue
+            df = filter_daily_cache(pl.read_parquet(f))
         except Exception:  # noqa: BLE001
             continue
         if "symbol" not in df.columns:
