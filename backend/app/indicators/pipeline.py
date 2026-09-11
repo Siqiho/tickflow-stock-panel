@@ -1369,7 +1369,14 @@ def _reconcile_enriched_lineage(
     known = _known_enriched_lineage_artifacts(data_dir)
     reconciled = 0
     unreadable_dates: set[str] = set()
+    from app.services.kline_sync import daily_partition_usable
+
     for out in sorted(enriched_base.glob("date=*/part.parquet")):
+        try:
+            if not daily_partition_usable(out):
+                continue
+        except Exception:
+            continue
         artifact = str(out.relative_to(data_dir))
         try:
             metadata = pq.read_metadata(out)

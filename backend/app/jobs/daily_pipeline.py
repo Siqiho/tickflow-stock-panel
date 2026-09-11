@@ -205,15 +205,38 @@ def adj_sync_uses_public_adapter(capset: CapabilitySet) -> bool:
     return False
 
 
+def _usable_partition_dates(data_dir: Path, table: str):
+    """Current-route date partitions. Empty on resolve failure (no leftover glob)."""
+    from app.services.kline_sync import safe_usable_daily_partition_dates
+
+    return safe_usable_daily_partition_dates(data_dir, table=table)
+
+
+def _coverage_calendars(data_dir: Path) -> tuple[list, list]:
+    """Daily / enriched calendars that belong to the current daily route."""
+    return (
+        _usable_partition_dates(data_dir, "kline_daily"),
+        _usable_partition_dates(data_dir, "kline_daily_enriched"),
+    )
+
+
 def _prune_partial_enriched_partitions(daily_dir: Path, enriched_dir: Path) -> list[str]:
     """Delete watchlist-only enriched dates so the next increment rebuilds the full day."""
     pruned: list[str] = []
     if not enriched_dir.exists():
         return pruned
+    from app.services.kline_sync import daily_partition_usable
+
     for part in sorted(p for p in enriched_dir.glob("date=*") if p.is_dir()):
         day = part.name.removeprefix("date=")
         daily_part = daily_dir / f"date={day}"
         if not daily_part.exists():
+            continue
+        daily_file = daily_part / "part.parquet"
+        enriched_file = part / "part.parquet"
+        if daily_file.exists() and not daily_partition_usable(daily_file):
+            continue
+        if enriched_file.exists() and not daily_partition_usable(enriched_file):
             continue
         daily_n = _partition_row_count(daily_part)
         enriched_n = _partition_row_count(part)
@@ -440,9 +463,7 @@ def run_now(
         override_start_date = today
 
     def _daily_partition_dates() -> list[_date]:
-        from app.services.kline_sync import usable_daily_partition_dates
-
-        return usable_daily_partition_dates(repo.store.data_dir)
+        return _usable_partition_dates(repo.store.data_dir, "kline_daily")
 
     def _count_new_daily_days(before: _date | None) -> int:
         """按真实 date= 分区统计新增交易日数,避免 (today-start).days 误报。"""
@@ -773,10 +794,11 @@ def run_now(
     #     - 无新日期 + 有新除权因子 → 增量: 只重算受影响个股的全部日期
     #     - 无新日期 + 无变化 → 跳过
     enriched_dir = repo.store.data_dir / "kline_daily_enriched"
-    enriched_exists = enriched_dir.exists() and any(enriched_dir.glob("date=*"))
     daily_dir = repo.store.data_dir / "kline_daily"
-    daily_days = len(list(daily_dir.glob("date=*"))) if daily_dir.exists() else 0
-    prev_enriched_days = len(list(enriched_dir.glob("date=*"))) if enriched_exists else 0
+    daily_dates, enriched_dates = _coverage_calendars(repo.store.data_dir)
+    daily_days = len(daily_dates)
+    prev_enriched_days = len(enriched_dates)
+    enriched_exists = bool(enriched_dates)
 
     # 部分分区修复 (#223) + 收盘价过期分区修复: 删除被实时合并提前创建、覆盖不全
     # 或收盘价停留在竞价前快照的 enriched 分区, 让下方计数比较与增量计算把它们
@@ -792,19 +814,21 @@ def run_now(
                 len(pruned_dates), len(partial_pruned), len(stale_pruned),
                 ", ".join(pruned_dates[:10]),
             )
-            enriched_exists = enriched_dir.exists() and any(enriched_dir.glob("date=*"))
-            prev_enriched_days = len(list(enriched_dir.glob("date=*"))) if enriched_exists else 0
+            daily_dates, enriched_dates = _coverage_calendars(repo.store.data_dir)
+            daily_days = len(daily_dates)
+            prev_enriched_days = len(enriched_dates)
+            enriched_exists = bool(enriched_dates)
 
     # 判断新日期方向: 找 daily 和 enriched 的日期集合做比较
     forward_incremental = False
     backward_extension = False
 
     if daily_days > prev_enriched_days and enriched_exists:
-        daily_dates = sorted(d.stem.split("=")[1] for d in daily_dir.glob("date=*"))
-        enriched_dates = sorted(d.stem.split("=")[1] for d in enriched_dir.glob("date=*"))
-        earliest_enriched = enriched_dates[0]
-        latest_enriched = enriched_dates[-1]
-        new_dates = set(daily_dates) - set(enriched_dates)
+        daily_date_strs = [d.isoformat() for d in daily_dates]
+        enriched_date_strs = [d.isoformat() for d in enriched_dates]
+        earliest_enriched = enriched_date_strs[0]
+        latest_enriched = enriched_date_strs[-1]
+        new_dates = set(daily_date_strs) - set(enriched_date_strs)
         if new_dates:
             # 有新日期早于 enriched 最早日期 → 往前扩展
             if any(d < earliest_enriched for d in new_dates):
@@ -823,7 +847,9 @@ def run_now(
         logger.info("compute_enriched: full rebuild (first=%s, backward=%s, daily=%d, enriched=%d)",
                     not enriched_exists, backward_extension, daily_days, prev_enriched_days)
         written_enriched = run_pipeline(on_batch_done=_enriched_batch_progress)
-        new_enriched_days = len(list(enriched_dir.glob("date=*")))
+        new_enriched_days = len(_usable_partition_dates(
+            repo.store.data_dir, "kline_daily_enriched",
+        ))
         emit("compute_enriched", 88, f"enriched 完成,覆盖 {new_enriched_days} 天")
         logger.info("compute_enriched: full rebuild done, %d days", new_enriched_days)
     elif forward_incremental:
@@ -839,7 +865,9 @@ def run_now(
             symbols=symbols_to_recompute or None,
             on_batch_done=_enriched_batch_progress,
         )
-        new_enriched_days = len(list(enriched_dir.glob("date=*")))
+        new_enriched_days = len(_usable_partition_dates(
+            repo.store.data_dir, "kline_daily_enriched",
+        ))
         emit("compute_enriched", 88, f"enriched 完成,覆盖 {new_enriched_days} 天")
         logger.info("compute_enriched: forward incremental done, %d days", new_enriched_days)
     elif affected_symbols:
@@ -882,11 +910,12 @@ def run_now(
                 emit("sync_index", 88, "同步指数维表…")
                 index_count = index_sync.sync_index_instruments(repo, pull_index=True, pull_etf=False)
                 emit("sync_index", 88, f"指数维表完成,{index_count} 只")
-                index_dir = repo.store.data_dir / "kline_index_enriched"
-                index_dates = sorted(
-                    d.name[5:] for d in index_dir.glob("date=*")
-                    if d.is_dir() and d.name.startswith("date=")
-                ) if index_dir.exists() else []
+                index_dates = [
+                    d.isoformat()
+                    for d in _usable_partition_dates(
+                        repo.store.data_dir, "kline_index_enriched",
+                    )
+                ]
                 default_index_start = _date.fromisoformat(index_dates[-1]) if index_dates else today - _td(days=365)
                 index_start = override_start_date if override_start_date is not None else default_index_start
                 if override_start_date is not None and index_start > today:
@@ -938,11 +967,12 @@ def run_now(
                         emit("sync_index", 88, f"ETF 除权因子完成,{etf_adj_symbols} 只")
                     except Exception as e:
                         logger.warning("ETF adj_factor skipped: %s", e)
-                etf_dir = repo.store.data_dir / "kline_etf_enriched"
-                etf_dates = sorted(
-                    d.name[5:] for d in etf_dir.glob("date=*")
-                    if d.is_dir() and d.name.startswith("date=")
-                ) if etf_dir.exists() else []
+                etf_dates = [
+                    d.isoformat()
+                    for d in _usable_partition_dates(
+                        repo.store.data_dir, "kline_etf_enriched",
+                    )
+                ]
                 default_etf_start = _date.fromisoformat(etf_dates[-1]) if etf_dates else today - _td(days=365)
                 etf_start = override_start_date if override_start_date is not None else default_etf_start
                 if override_start_date is not None and etf_start > today:
@@ -1007,8 +1037,9 @@ def run_now(
             minute_symbols, repo, capset, days=minute_days,
             on_chunk_done=_minute_chunk_progress,
         )
-        minute_dir = repo.store.data_dir / "kline_minute"
-        minute_cover_days = len(list(minute_dir.glob("date=*"))) if minute_dir.exists() else 0
+        from app.services.kline_sync import safe_usable_minute_partition_dates
+
+        minute_cover_days = len(safe_usable_minute_partition_dates(repo.store.data_dir))
         emit("sync_minute", 93, f"分钟K完成,覆盖 {minute_cover_days} 天")
         logger.info("sync_minute: [%s ~ %s] done, %d days", minute_start, today, minute_cover_days)
         _invalidate("minute")

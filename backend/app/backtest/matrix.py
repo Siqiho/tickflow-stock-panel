@@ -727,8 +727,11 @@ def load_market_data_matrix_from_parquet(
         pa.schema([("date", pa.date32())]),
         flavor="hive",
     )
+    usable_dirs = [partition for _, partition in _usable_partition_entries(root)]
+    if not usable_dirs:
+        raise ValueError("本地指标数据为空，请先在数据页面同步日K并完成指标计算")
     dataset = pads.dataset(
-        str(root),
+        [str(path) for path in usable_dirs],
         format="parquet",
         partitioning=partitioning,
     )
@@ -1535,6 +1538,36 @@ def _matrix_disk_cache_path(
     return cache_root / f"v{_DIRECT_MATRIX_LOADER_VERSION}-{digest.hexdigest()}"
 
 
+def _usable_partition_entries(root: Path) -> list[tuple[date, Path]]:
+    """Date partitions that match the current daily route.
+
+    Leftover TickFlow files after a custom switch must not enter matrix
+    bounds, fingerprints, or the Arrow dataset. Untagged leftover TickFlow
+    stays visible.
+    """
+    try:
+        from app.services.kline_sync import daily_partition_usable
+    except Exception:  # noqa: BLE001
+        return []
+    selected: list[tuple[date, Path]] = []
+    for partition in root.glob("date=*"):
+        try:
+            partition_date = date.fromisoformat(partition.name.removeprefix("date="))
+        except ValueError:
+            continue
+        files = sorted(partition.rglob("*.parquet"))
+        if not files:
+            continue
+        part = next((path for path in files if path.name == "part.parquet"), files[0])
+        try:
+            if not daily_partition_usable(part):
+                continue
+        except Exception:  # noqa: BLE001
+            continue
+        selected.append((partition_date, partition))
+    return selected
+
+
 def _partition_fingerprints(
     root: Path,
     start: date,
@@ -1544,11 +1577,7 @@ def _partition_fingerprints(
 ) -> dict[str, str]:
     selected: list[tuple[date, Path]] = []
     predecessor: tuple[date, Path] | None = None
-    for partition in root.glob("date=*"):
-        try:
-            partition_date = date.fromisoformat(partition.name.removeprefix("date="))
-        except ValueError:
-            continue
+    for partition_date, partition in _usable_partition_entries(root):
         if partition_date < start:
             if predecessor is None or partition_date > predecessor[0]:
                 predecessor = (partition_date, partition)
@@ -1575,11 +1604,7 @@ def _partition_fingerprints(
 def _partition_date_bounds(root: Path) -> tuple[date | None, date | None]:
     earliest: date | None = None
     latest: date | None = None
-    for partition in root.glob("date=*"):
-        try:
-            value = date.fromisoformat(partition.name.removeprefix("date="))
-        except ValueError:
-            continue
+    for value, _partition in _usable_partition_entries(root):
         if earliest is None or value < earliest:
             earliest = value
         if latest is None or value > latest:

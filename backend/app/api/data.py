@@ -127,10 +127,10 @@ def _safe_aggregate_daily(repo, view: str = "kline_daily") -> dict | None:
     自定义日K下 leftover TickFlow/public 分区不得算成覆盖。
     leftover TickFlow 仍可见无标签分区。标的数从 instruments 小表取。
     """
-    from app.services.kline_sync import usable_daily_partition_dates
+    from app.services.kline_sync import safe_usable_daily_partition_dates
 
     table = "kline_daily" if view == "kline_daily" else view
-    dates = usable_daily_partition_dates(repo.store.data_dir, table=table)
+    dates = safe_usable_daily_partition_dates(repo.store.data_dir, table=table)
     if not dates:
         return None
 
@@ -151,7 +151,7 @@ def _safe_aggregate_enriched(repo) -> dict | None:
     字段数从 DESCRIBE 读 schema（不碰数据）。日期范围按 provenance
     过滤，自定义日K下 leftover TickFlow 分区不得算成覆盖。
     """
-    from app.services.kline_sync import usable_daily_partition_dates
+    from app.services.kline_sync import safe_usable_daily_partition_dates
 
     fields = 0
     try:
@@ -160,7 +160,7 @@ def _safe_aggregate_enriched(repo) -> dict | None:
     except Exception:  # noqa: BLE001
         pass
 
-    dates = usable_daily_partition_dates(
+    dates = safe_usable_daily_partition_dates(
         repo.store.data_dir, table="kline_daily_enriched",
     )
     if not dates:
@@ -214,20 +214,39 @@ def _safe_aggregate_instruments(repo) -> dict | None:
     }
 
 
+def _safe_aggregate_routed_table(repo, view: str, table: str) -> dict | None:
+    """Status calendar for index/ETF tables — current daily route only."""
+    from app.services.kline_sync import safe_usable_daily_partition_dates
+
+    dates = safe_usable_daily_partition_dates(repo.store.data_dir, table=table)
+    if not dates:
+        return None
+    stats = _safe_aggregate(repo, view) or {}
+    return {
+        "rows": int(stats.get("rows") or 0),
+        "earliest_date": dates[0].isoformat(),
+        "latest_date": dates[-1].isoformat(),
+        "symbols_covered": int(stats.get("symbols_covered") or 0),
+        "trading_days": len(dates),
+    }
+
+
 def _safe_aggregate_index_daily(repo) -> dict | None:
-    """指数日K统计。指数数据量较小，直接读取 parquet 元数据统计真实行数。"""
-    return _safe_aggregate(repo, "kline_index_daily")
+    """指数日K统计 — 只数当前 daily route 可用的分区。"""
+    return _safe_aggregate_routed_table(repo, "kline_index_daily", "kline_index_daily")
 
 
 def _safe_aggregate_index_enriched(repo) -> dict | None:
-    """指数 enriched 统计。指数数据量较小，直接读取 parquet 元数据统计真实行数。"""
+    """指数 enriched 统计 — 只数当前 daily route 可用的分区。"""
     fields = 0
     try:
         cols = repo.execute_all("DESCRIBE kline_index_enriched")
         fields = len(cols)
     except Exception:  # noqa: BLE001
         pass
-    stats = _safe_aggregate(repo, "kline_index_enriched")
+    stats = _safe_aggregate_routed_table(
+        repo, "kline_index_enriched", "kline_index_enriched",
+    )
     if not stats:
         return None
     return {**stats, "fields": fields}
@@ -285,38 +304,41 @@ def _safe_aggregate_etf_instruments(repo) -> dict | None:
 
 
 def _safe_aggregate_etf_enriched(repo) -> dict | None:
-    """ETF enriched 统计 — 独立 kline_etf_enriched。"""
+    """ETF enriched 统计 — 独立 kline_etf_enriched，当前 daily route only。"""
     fields = 0
     try:
         cols = repo.execute_all("DESCRIBE kline_etf_enriched")
         fields = len(cols)
     except Exception:  # noqa: BLE001
         pass
-    stats = _safe_aggregate(repo, "kline_etf_enriched")
+    stats = _safe_aggregate_routed_table(
+        repo, "kline_etf_enriched", "kline_etf_enriched",
+    )
     if not stats:
         return None
     return {**stats, "fields": fields}
 
 
 def _safe_aggregate_etf_daily(repo) -> dict | None:
-    """ETF 日K统计 — 优先独立 kline_etf_daily，兼容旧 index 存储。"""
+    """ETF 日K统计 — 当前 daily route 日历 + 视图行数。"""
+    from app.services.kline_sync import safe_usable_daily_partition_dates
+
+    dates = safe_usable_daily_partition_dates(repo.store.data_dir, table="kline_etf_daily")
+    if not dates:
+        return None
     queries = [
         """SELECT count(*) AS rows,
-                  min(date) AS earliest,
-                  max(date) AS latest,
-                  count(DISTINCT symbol) AS symbols,
-                  count(DISTINCT date) AS trading_days
+                  count(DISTINCT symbol) AS symbols
            FROM kline_etf_daily""",
         """SELECT count(*) AS rows,
-                  min(date) AS earliest,
-                  max(date) AS latest,
-                  count(DISTINCT symbol) AS symbols,
-                  count(DISTINCT date) AS trading_days
+                  count(DISTINCT symbol) AS symbols
            FROM kline_index_daily
            WHERE symbol IN (
                SELECT DISTINCT symbol FROM instruments_index WHERE asset_type = 'etf'
            )""",
     ]
+    rows = 0
+    symbols = 0
     for sql in queries:
         try:
             row = repo.execute_one(sql)
@@ -324,14 +346,16 @@ def _safe_aggregate_etf_daily(repo) -> dict | None:
             logger.debug("aggregate etf daily fallback failed: %s", e)
             continue
         if row and row[0]:
-            return {
-                "rows": int(row[0]),
-                "earliest_date": str(row[1]) if row[1] else None,
-                "latest_date": str(row[2]) if row[2] else None,
-                "symbols_covered": int(row[3] or 0),
-                "trading_days": int(row[4] or 0),
-            }
-    return None
+            rows = int(row[0])
+            symbols = int(row[1] or 0)
+            break
+    return {
+        "rows": rows,
+        "earliest_date": dates[0].isoformat(),
+        "latest_date": dates[-1].isoformat(),
+        "symbols_covered": symbols,
+        "trading_days": len(dates),
+    }
 
 
 def _safe_aggregate_adj_factor(repo) -> dict | None:
@@ -341,9 +365,9 @@ def _safe_aggregate_adj_factor(repo) -> dict | None:
     no_event 表示已核实无除权除息，复权恒等，计入 covered。
     """
     try:
-        from app.services.kline_sync import usable_daily_partition_dates
+        from app.services.kline_sync import safe_usable_daily_partition_dates
 
-        daily_dates = usable_daily_partition_dates(repo.store.data_dir)
+        daily_dates = safe_usable_daily_partition_dates(repo.store.data_dir)
         if not daily_dates:
             return None
         d_min, d_max = daily_dates[0], daily_dates[-1]
@@ -421,9 +445,9 @@ def _safe_aggregate_minute(repo) -> dict | None:
     自定义分钟下 leftover TickFlow/public 分区不得算作成交日覆盖。
     leftover TickFlow 仍可见无标签分区。
     """
-    from app.services.kline_sync import usable_minute_partition_dates
+    from app.services.kline_sync import safe_usable_minute_partition_dates
 
-    dates = usable_minute_partition_dates(repo.store.data_dir)
+    dates = safe_usable_minute_partition_dates(repo.store.data_dir)
     if not dates:
         return None
     return {

@@ -227,8 +227,11 @@ def run_extend_history(
     from app.indicators.pipeline import run_pipeline
     run_pipeline()
 
-    enriched_dir = repo.store.data_dir / "kline_daily_enriched"
-    enriched_days = len(list(enriched_dir.glob("date=*"))) if enriched_dir.exists() else 0
+    from app.services.kline_sync import safe_usable_daily_partition_dates
+
+    enriched_days = len(safe_usable_daily_partition_dates(
+        repo.store.data_dir, table="kline_daily_enriched",
+    ))
     emit("extend_history", 92, f"enriched 完成,覆盖 {enriched_days} 天")
     logger.info("extend_history: enriched done, %d days", enriched_days)
     _refresh_single_view(repo, "kline_enriched")
@@ -242,8 +245,9 @@ def run_extend_history(
     _invalidate(None)
 
     # 7. 统计结果
-    daily_dir = repo.store.data_dir / "kline_daily"
-    daily_days = len(list(daily_dir.glob("date=*"))) if daily_dir.exists() else 0
+    daily_days = len(safe_usable_daily_partition_dates(
+        repo.store.data_dir, table="kline_daily",
+    ))
 
     emit("extend_history", 100, f"完成,已扩展至 {new_start}")
 

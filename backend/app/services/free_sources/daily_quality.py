@@ -11,18 +11,12 @@ from app.services.atomic_io import atomic_write_json
 
 
 def _latest_partition_date(kline_dir: Path) -> str | None:
-    try:
-        from app.services.kline_sync import usable_daily_partition_dates
+    from app.services.kline_sync import safe_usable_daily_partition_dates
 
-        dates = usable_daily_partition_dates(kline_dir.parent, table=kline_dir.name)
-        if dates:
-            return dates[-1].isoformat()
-    except Exception:
-        pass
-    parts = sorted([p.name for p in kline_dir.iterdir() if p.is_dir() and p.name.startswith("date=")])
-    if not parts:
-        return None
-    return parts[-1].removeprefix("date=")
+    dates = safe_usable_daily_partition_dates(kline_dir.parent, table=kline_dir.name)
+    if dates:
+        return dates[-1].isoformat()
+    return None
 
 
 def run_daily_quality_check(data_dir: Path | str, date: str | None = None) -> dict[str, Any]:

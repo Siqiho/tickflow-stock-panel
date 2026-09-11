@@ -615,11 +615,18 @@ def detect_stale_dates(data_dir: Path, repo) -> list[date]:
     if existing.is_empty():
         return []
     existing_dates = set(existing["date"].to_list())
+    from app.services.kline_sync import daily_partition_usable
+
     for part in enriched_dir.glob("date=*/part.parquet"):
         try:
             ds = part.parent.name.replace("date=", "")
             d = date.fromisoformat(ds)
         except (ValueError, OSError):
+            continue
+        try:
+            if not daily_partition_usable(part):
+                continue
+        except Exception:
             continue
         if d not in existing_dates:
             continue
