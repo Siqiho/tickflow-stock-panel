@@ -60,7 +60,8 @@ def _use_public_pools() -> bool:
         from app.services import preferences
         return preferences.is_public_pool_provider()
     except Exception:
-        return False
+        # Prefs unreadable: do not fail-open to TickFlow universes.
+        return True
 
 
 def get_pool(pool_id: PoolId, refresh: bool = False) -> list[str]:

@@ -646,7 +646,8 @@ def adj_live_fetch_allowed(capset: CapabilitySet | None) -> bool:
         if fate == "skip":
             return False
     except Exception:  # noqa: BLE001
-        return bool(capset and capset.has(Cap.ADJ_FACTOR))
+        # Prefs unreadable: do not assume leftover TickFlow / public sina.
+        return False
     return bool(capset and capset.has(Cap.ADJ_FACTOR))
 
 
@@ -733,8 +734,8 @@ def sync_adj_factor(symbols: list[str], repo: KlineRepository,
         provider_name = preferences.get_adj_factor_provider()
         use_public = preferences.is_public_adj_factor_provider()
     except Exception:  # noqa: BLE001
-        provider_name = "tickflow"
-        use_public = False
+        logger.warning("adj prefs unreadable, fail-closed (no TickFlow/public mix)")
+        return 0, []
 
     if use_public:
         return _sync_public_adj_factor(
@@ -1214,6 +1215,24 @@ def minute_provider_is_custom() -> bool:
     """True when minute_data_provider resolves to a declared custom/plugin source."""
     _, fallback, err = _resolve_minute_provider(preferences.get_minute_data_provider())
     return (not fallback) and err is None
+
+
+def minute_sync_allowed(capset: CapabilitySet | None) -> bool:
+    """Whether pipeline / HTTP may start a minute pull for the configured source.
+
+    Declared custom resolve failure is fail-closed even when TickFlow has
+    minute batch. Leftover TickFlow still requires ``KLINE_MINUTE_BATCH``.
+    """
+    try:
+        name = preferences.get_minute_data_provider()
+    except Exception:  # noqa: BLE001
+        return False
+    _, fallback, error = _resolve_minute_provider(name)
+    if error is not None:
+        return False
+    if not fallback:
+        return True
+    return capset is not None and capset.has(Cap.KLINE_MINUTE_BATCH)
 
 
 def _resolve_full_minute_provider(
@@ -1751,7 +1770,8 @@ def fetch_adj_factor_single(symbol: str) -> pl.DataFrame:
     try:
         provider_name = preferences.get_adj_factor_provider()
     except Exception:  # noqa: BLE001
-        provider_name = "tickflow"
+        logger.warning("fetch_adj_factor_single prefs unreadable, fail-closed")
+        return pl.DataFrame()
 
     if preferences.is_public_adj_factor_provider(provider_name):
         try:
@@ -1894,7 +1914,7 @@ def sync_and_persist_minute(
 ) -> int:
     """同步分钟 K 并存到 Parquet。返回写入行数。
 
-    自定义源成功时走 on_segment 流式落盘; resolver 异常视为非 custom, 再按 capset 门控。
+    自定义源成功时走 on_segment 流式落盘; resolver 异常 fail-closed, 不混 TickFlow。
     读-改-写持仓库 _write_lock, 实际写盘走 _write_minute_partition / atomic_write_parquet。
     """
     minute_provider = preferences.get_minute_data_provider()

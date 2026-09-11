@@ -188,6 +188,8 @@ def get_minute_sync_segment_days() -> int:
 
 _ALLOWED_DATA_PROVIDERS = {"tickflow"}
 _ALLOWED_ADJ_FACTOR_PROVIDERS = {"tickflow", "public", "sina", "sina_qfq", "free"}
+_PUBLIC_REALTIME_ALIASES = {"public", "tencent", "sina", "free", "local_public"}
+_PUBLIC_DEPTH_ALIASES = {"public"}
 
 
 def get_minute_batch_compress() -> bool:
@@ -212,9 +214,32 @@ def _allowed_data_providers() -> set[str]:
         return set(_ALLOWED_DATA_PROVIDERS)
 
 
+def _coerce_routed_provider(
+    raw: object,
+    *,
+    default: str,
+    aliases: set[str] | dict[str, str] | None = None,
+) -> str:
+    """Keep a declared custom/plugin name even if the registry is down.
+
+    Empty tokens heal to *default*. Builtin aliases map to their canonical
+    name. Unknown non-empty names are preserved so resolvers can fail-closed
+    or log leftover TickFlow fallback — getters must not silently rewrite
+    them to TickFlow/public.
+    """
+    name = str(raw or "").strip().lower()
+    if not name:
+        return default
+    if isinstance(aliases, dict) and name in aliases:
+        return aliases[name]
+    if isinstance(aliases, set) and name in aliases:
+        return name
+    return name
+
+
 def get_daily_data_provider() -> str:
     provider = str(load_server().get("daily_data_provider", "tickflow") or "tickflow").lower()
-    return provider if provider in _allowed_data_providers() else "tickflow"
+    return _coerce_routed_provider(provider, default="tickflow")
 
 
 def get_adj_factor_provider_stored() -> str:
@@ -226,9 +251,9 @@ def get_adj_factor_provider_stored() -> str:
     provider = str(load_server().get("adj_factor_provider", "same_as_daily") or "same_as_daily").lower()
     if provider == "same_as_daily":
         return provider
-    if provider in _ALLOWED_ADJ_FACTOR_PROVIDERS or provider in _allowed_data_providers():
+    if provider in _ALLOWED_ADJ_FACTOR_PROVIDERS:
         return provider
-    return get_daily_data_provider()
+    return _coerce_routed_provider(provider, default=get_daily_data_provider())
 
 
 def get_adj_factor_provider() -> str:
@@ -257,12 +282,12 @@ _ALLOWED_FINANCIAL_PROVIDERS = {"tickflow", "public", "eastmoney", "em", "free"}
 def get_full_minute_data_provider() -> str:
     """Full-market minute source. Shared market setting — read server prefs."""
     provider = str(load_server().get("full_minute_data_provider", "tickflow") or "tickflow").lower()
-    return provider if provider in _allowed_data_providers() else "tickflow"
+    return _coerce_routed_provider(provider, default="tickflow")
 
 
 def get_depth5_data_provider() -> str:
     provider = str(load_server().get("depth5_data_provider") or "tickflow").strip().lower()
-    return provider if provider in _allowed_data_providers() else "tickflow"
+    return _coerce_routed_provider(provider, default="tickflow", aliases=_PUBLIC_DEPTH_ALIASES)
 
 
 def set_depth5_data_provider(name: str) -> str:
@@ -283,9 +308,9 @@ def get_financial_provider() -> str:
         or data.get("financial_data_provider")
         or "tickflow"
     ).lower()
-    if provider in _ALLOWED_FINANCIAL_PROVIDERS or provider in _allowed_data_providers():
+    if provider in _ALLOWED_FINANCIAL_PROVIDERS:
         return provider
-    return "tickflow"
+    return _coerce_routed_provider(provider, default="tickflow")
 
 
 def is_public_financial_provider(name: str | None = None) -> bool:
@@ -316,7 +341,7 @@ def is_public_pool_provider(name: str | None = None) -> bool:
 
 def get_minute_data_provider() -> str:
     provider = str(load_server().get("minute_data_provider", "tickflow") or "tickflow").lower()
-    return provider if provider in _allowed_data_providers() else "tickflow"
+    return _coerce_routed_provider(provider, default="tickflow")
 
 
 def get_realtime_data_provider() -> str:
@@ -324,13 +349,12 @@ def get_realtime_data_provider() -> str:
 
     Default is public when unset so None/Free tiers can drive full-market live
     without a paid TickFlow key. Explicit "tickflow" keeps the paid path.
+    A stored custom/plugin name is preserved even if the registry is down
+    (resolvers fail-closed). Getters must not silently rewrite it to public.
     """
     raw = str(load_server().get("realtime_data_provider", "public") or "public").strip().lower()
-    if raw in {"public", "tencent", "sina", "free", "local_public"}:
-        return "public"
-    if raw in _allowed_data_providers():
-        return raw
-    return "public"
+    aliases = {name: "public" for name in _PUBLIC_REALTIME_ALIASES}
+    return _coerce_routed_provider(raw, default="public", aliases=aliases)
 
 
 # ===== 盘后管道拉取内容开关 (A股 / ETF / 指数 独立控制) =====

@@ -116,11 +116,46 @@ def minute_availability(
     try:
         from app.services import kline_sync as _kline_sync
         from app.services import preferences as _minute_prefs
-        minute_is_custom = _kline_sync.minute_provider_is_custom()
-        minute_custom_name = _minute_prefs.get_minute_data_provider() if minute_is_custom else None
+        minute_custom_name = _minute_prefs.get_minute_data_provider()
+        _, minute_fallback, minute_resolve_err = _kline_sync._resolve_minute_provider(
+            minute_custom_name,
+        )
+        minute_is_custom = (not minute_fallback) and minute_resolve_err is None
     except Exception:
-        minute_is_custom = False
-        minute_custom_name = None
+        return {
+            "available": False,
+            "view_available": False,
+            "status": "unavailable",
+            "reason": "数据源偏好不可读",
+            "reason_code": "resolve_failed",
+            "capability": {
+                "kline.minute.batch": False,
+                "kline.minute.by_symbol": has_by_symbol,
+            },
+            "user_enabled": user_enabled,
+            "full_market_sync_allowed": False,
+            "single_symbol_fallback": None,
+            "fallback_hint": None,
+            "source": "none",
+        }
+
+    if minute_resolve_err and minute_custom_name and minute_custom_name != "tickflow":
+        return {
+            "available": False,
+            "view_available": False,
+            "status": "unavailable",
+            "reason": "分钟数据源解析失败",
+            "reason_code": "resolve_failed",
+            "capability": {
+                "kline.minute.batch": False,
+                "kline.minute.by_symbol": has_by_symbol,
+            },
+            "user_enabled": user_enabled,
+            "full_market_sync_allowed": False,
+            "single_symbol_fallback": None,
+            "fallback_hint": None,
+            "source": minute_custom_name,
+        }
 
     if minute_is_custom:
         if user_enabled is False:
@@ -214,16 +249,46 @@ def minute_availability(
 
 
 def daily_availability(capset: CapabilitySet) -> dict:
+    caps = {
+        "kline.daily.batch": capset.has(Cap.KLINE_DAILY_BATCH),
+        "kline.daily.by_symbol": capset.has(Cap.KLINE_DAILY_BY_SYMBOL),
+    }
+    try:
+        from app.services import kline_sync as _kline_sync
+        from app.services import preferences as _daily_prefs
+        daily_name = _daily_prefs.get_daily_data_provider()
+        _, fallback, err = _kline_sync._resolve_daily_provider(daily_name)
+    except Exception:
+        daily_name = "tickflow"
+        fallback = True
+        err = None
+
+    if err is not None and daily_name not in {"tickflow", ""}:
+        return {
+            "available": False,
+            "status": "unavailable",
+            "reason": "日K数据源解析失败",
+            "reason_code": "resolve_failed",
+            "source": daily_name,
+            "capability": caps,
+        }
+    if not fallback:
+        return {
+            "available": True,
+            "status": "available",
+            "reason": None,
+            "reason_code": "ok",
+            "source": daily_name,
+            "capability": {**caps, "kline.daily.batch": True},
+        }
     has_any = _has_any(capset, _DAILY_CAPS)
     return {
         "available": has_any,
         "status": "available" if has_any else "unavailable",
         "reason": None if has_any else "当前数据源无日K权限",
         "reason_code": "ok" if has_any else "no_capability",
-        "capability": {
-            "kline.daily.batch": capset.has(Cap.KLINE_DAILY_BATCH),
-            "kline.daily.by_symbol": capset.has(Cap.KLINE_DAILY_BY_SYMBOL),
-        },
+        "source": "tickflow" if has_any else "none",
+        "capability": caps,
     }
 
 
@@ -240,6 +305,7 @@ def feature_availability(
     """
     from pathlib import Path as _Path
 
+    prefs_unreadable = False
     try:
         from app.config import settings as _settings
         from app.services import preferences as _prefs
@@ -254,6 +320,7 @@ def feature_availability(
         pub_adj = _prefs.is_public_adj_factor_provider()
     except Exception:
         local_fin = local_adj = pub_fin = pub_adj = False
+        prefs_unreadable = True
 
     try:
         fin_provider = _prefs.get_financial_provider()
@@ -261,15 +328,18 @@ def feature_availability(
         depth_provider = _prefs.get_depth5_data_provider()
         minute_provider = _prefs.get_minute_data_provider()
     except Exception:
-        fin_provider = "tickflow"
-        adj_provider = "tickflow"
-        depth_provider = "tickflow"
-        minute_provider = "tickflow"
+        fin_provider = adj_provider = depth_provider = minute_provider = None
+        prefs_unreadable = True
 
     fin_ok = bool(capset.has(Cap.FINANCIAL) or pub_fin or local_fin)
     adj_ok = bool(capset.has(Cap.ADJ_FACTOR) or pub_adj or local_adj)
 
-    if pub_fin or (not capset.has(Cap.FINANCIAL) and local_fin and fin_provider == "tickflow"):
+    if prefs_unreadable and fin_provider is None:
+        fin_ok = False
+        fin_reason = "数据源偏好不可读"
+        fin_code = "no_capability"
+        fin_source = "none"
+    elif pub_fin or (not capset.has(Cap.FINANCIAL) and local_fin and fin_provider == "tickflow"):
         fin_reason = None
         fin_code = "ok"
         fin_source = "local_public"
@@ -286,7 +356,13 @@ def feature_availability(
         fin_code = "no_capability"
         fin_source = "none"
 
-    if pub_adj:
+    if prefs_unreadable and adj_provider is None:
+        adj_ok = False
+        adj_reason = "数据源偏好不可读"
+        adj_code = "no_capability"
+        adj_source = "none"
+        adj_status = "unavailable"
+    elif pub_adj:
         adj_reason = None
         adj_code = "ok"
         adj_source = "local_public"
@@ -331,15 +407,29 @@ def feature_availability(
         adj_source = "local_public"
         adj_status = "public_fallback"
 
-    # Depth / sealed: custom source, TickFlow Pro+ batch, else public L1
+    # Depth / sealed: custom source, explicit public, TickFlow Pro+ batch,
+    # leftover TickFlow empty → public L1. Prefs unreadable: do not advertise
+    # TickFlow / public_l1.
     has_depth_batch = capset.has(Cap.DEPTH5_BATCH)
     has_depth_single = capset.has(Cap.DEPTH5)
-    if depth_provider not in {"tickflow", "public"}:
+    if prefs_unreadable and depth_provider is None:
+        depth_ok = False
+        depth_reason = "数据源偏好不可读"
+        depth_code = "no_capability"
+        depth_source = "none"
+        depth_status = "unavailable"
+    elif depth_provider not in {"tickflow", "public", None}:
         depth_ok = True
         depth_reason = None
         depth_code = "ok"
         depth_source = depth_provider
         depth_status = "available"
+    elif depth_provider == "public":
+        depth_ok = True
+        depth_reason = None
+        depth_code = "ok"
+        depth_source = "local_public"
+        depth_status = "public_fallback"
     elif has_depth_batch or has_depth_single:
         depth_ok = True
         depth_reason = None
@@ -347,7 +437,7 @@ def feature_availability(
         depth_source = "tickflow"
         depth_status = "available"
     else:
-        depth_ok = True  # public L1 unlocks sealed judgment
+        depth_ok = True  # leftover TickFlow: public L1 unlocks sealed judgment
         depth_reason = None
         depth_code = "ok"
         depth_source = "local_public"
@@ -363,9 +453,23 @@ def feature_availability(
         from app.services import preferences as _prefs_q
         realtime_provider = _prefs_q.get_realtime_data_provider()
     except Exception:
-        realtime_provider = "tickflow"
+        realtime_provider = None
 
-    if has_quote and realtime_provider not in {"tickflow", "public", ""}:
+    if realtime_provider is None:
+        quote_ok = False
+        quote_reason = "数据源偏好不可读"
+        quote_code = "no_capability"
+        quote_source = "none"
+        quote_status = "unavailable"
+        quote_mode = "none"
+    elif realtime_provider == "public":
+        quote_ok = True
+        quote_reason = None
+        quote_code = "ok"
+        quote_source = "local_public"
+        quote_status = "public_fallback"
+        quote_mode = "full_market_public"
+    elif realtime_provider and realtime_provider not in {"tickflow", ""}:
         quote_ok = True
         quote_reason = None
         quote_code = "ok"
@@ -379,20 +483,6 @@ def feature_availability(
         quote_source = "tickflow"
         quote_status = "available"
         quote_mode = "full_or_watchlist"
-    elif realtime_provider == "public":
-        quote_ok = True
-        quote_reason = None
-        quote_code = "ok"
-        quote_source = "local_public"
-        quote_status = "public_fallback"
-        quote_mode = "full_market_public"
-    elif realtime_provider and realtime_provider != "tickflow":
-        quote_ok = True
-        quote_reason = None
-        quote_code = "ok"
-        quote_source = realtime_provider
-        quote_status = "available"
-        quote_mode = "full_market"
     else:
         quote_ok = False
         quote_reason = "当前档位无实时行情权限，且未选择公开源"
@@ -402,7 +492,11 @@ def feature_availability(
         quote_mode = "none"
 
     minute_info = minute_availability(capset, user_enabled=minute_user_enabled)
-    if minute_provider != "tickflow" and minute_info.get("source") == "tickflow":
+    if (
+        minute_provider
+        and minute_provider != "tickflow"
+        and minute_info.get("source") == "tickflow"
+    ):
         minute_info = {**minute_info, "source": minute_provider}
 
     return {
@@ -434,7 +528,7 @@ def feature_availability(
             },
             "fallback": (
                 None
-                if depth_provider not in {"tickflow", "public"}
+                if depth_provider != "tickflow"
                 or has_depth_batch
                 or has_depth_single
                 else "public_l1"
