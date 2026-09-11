@@ -255,15 +255,23 @@ def prune_enriched_partitions(
         return 0
     import shutil
 
+    from app.services.kline_sync import daily_partition_usable
+
     removed = 0
     for part in base.glob("date=*"):
         try:
             d = date.fromisoformat(part.name[5:])
         except ValueError:
             continue
-        if d >= start:
-            shutil.rmtree(part, ignore_errors=True)
-            removed += 1
+        if d < start:
+            continue
+        parquet = part / "part.parquet"
+        # A custom-route repair must not wipe leftover TickFlow history.
+        # Unreadable leftover still counts as TickFlow/public only.
+        if parquet.exists() and not daily_partition_usable(parquet):
+            continue
+        shutil.rmtree(part, ignore_errors=True)
+        removed += 1
     return removed
 
 

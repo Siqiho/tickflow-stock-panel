@@ -1527,7 +1527,7 @@ async def extend_minute_history(request: Request):
 
                 # 获取当前最早日期 — 只认当前 minute route 的分区,
                 # 自定义分钟不得把 leftover TickFlow 最早日当成已覆盖。
-                usable_dates = kline_sync.usable_minute_partition_dates(repo.store.data_dir)
+                usable_dates = kline_sync.safe_usable_minute_partition_dates(repo.store.data_dir)
                 earliest = usable_dates[0] if usable_dates else None
                 if not earliest:
                     # 本地无当前源分钟K → 以今天为基准往前获取

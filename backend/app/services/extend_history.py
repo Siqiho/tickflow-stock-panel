@@ -116,10 +116,7 @@ def _refresh_single_view(repo: KlineRepository, name: str) -> None:
         )
     except Exception as e:
         logger.warning("refresh view %s failed: %s", name, e)
-    try:
-        repo.store._register_gated_catalog_views()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("re-gate catalog views after %s refresh failed: %s", name, e)
+    repo.store.re_gate_catalog_views()
 
 
 def compute_offset(value: int, unit: str) -> timedelta:

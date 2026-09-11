@@ -25,7 +25,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import re
 from datetime import date as date_cls
 from pathlib import Path
 
@@ -35,29 +34,12 @@ from app.market_time import cn_today
 
 logger = logging.getLogger(__name__)
 
-_DATE_DIR_RE = re.compile(r"^date=(\d{4}-\d{2}-\d{2})$")
-
 
 def _local_trading_days(data_dir: Path) -> list[date_cls]:
     """本地日K分区日期 = 当前 route 可用交易日集合 (升序)。扫描失败返回空。"""
-    try:
-        from app.services.kline_sync import usable_daily_partition_dates
+    from app.services.kline_sync import safe_usable_daily_partition_dates
 
-        return usable_daily_partition_dates(data_dir, table="kline_daily")
-    except Exception:
-        root = data_dir / "kline_daily"
-        out: list[date_cls] = []
-        try:
-            for d in root.iterdir():
-                m = _DATE_DIR_RE.match(d.name)
-                if d.is_dir() and m:
-                    try:
-                        out.append(date_cls.fromisoformat(m.group(1)))
-                    except ValueError:
-                        continue
-        except OSError:
-            return []
-        return sorted(out)
+    return safe_usable_daily_partition_dates(data_dir, table="kline_daily")
 
 
 def resolve_trade_date(data_dir: Path, target: date_cls | None) -> date_cls | None:
@@ -114,31 +96,41 @@ def _raw_items(data: dict) -> list[dict]:
     return [r for r in items if isinstance(r, dict)] if isinstance(items, list) else []
 
 
-def _read_kline_closes(data_dir: Path, d: date_cls) -> dict[str, float]:
-    """某交易日全市场 {symbol: close}; 无分区/读失败返回空。"""
+def _read_usable_kline_ohlc(
+    data_dir: Path, d: date_cls, columns: list[str],
+) -> pl.DataFrame:
+    """One current-route daily partition, or empty. Leftover TickFlow is skipped."""
     root = data_dir / "kline_daily" / f"date={d.isoformat()}"
     try:
         from app.services.kline_sync import daily_partition_usable, filter_daily_cache
 
         files = sorted(root.glob("*.parquet"))
         if not files:
-            return {}
+            return pl.DataFrame()
         if not any(daily_partition_usable(f) for f in files):
-            return {}
-        cols = ["symbol", "close"]
+            return pl.DataFrame()
         frames = []
         for f in files:
             names = pl.read_parquet_schema(f).names()
-            use = [c for c in cols if c in names]
+            use = [c for c in columns if c in names]
             if "route" in names:
                 use.append("route")
+            if "symbol" not in use:
+                continue
             frames.append(pl.read_parquet(f, columns=use))
-        df = filter_daily_cache(pl.concat(frames, how="diagonal_relaxed"))
-        if df.is_empty() or "symbol" not in df.columns or "close" not in df.columns:
-            return {}
-        return dict(zip(df["symbol"].to_list(), df["close"].to_list()))
+        if not frames:
+            return pl.DataFrame()
+        return filter_daily_cache(pl.concat(frames, how="diagonal_relaxed"))
     except (OSError, pl.exceptions.PolarsError):
+        return pl.DataFrame()
+
+
+def _read_kline_closes(data_dir: Path, d: date_cls) -> dict[str, float]:
+    """某交易日全市场 {symbol: close}; 无分区/读失败返回空。"""
+    df = _read_usable_kline_ohlc(data_dir, d, ["symbol", "close"])
+    if df.is_empty() or "symbol" not in df.columns or "close" not in df.columns:
         return {}
+    return dict(zip(df["symbol"].to_list(), df["close"].to_list()))
 
 
 def _enrich(data_dir: Path, trade_date: date_cls, items: list[dict]) -> list[dict]:
@@ -146,15 +138,10 @@ def _enrich(data_dir: Path, trade_date: date_cls, items: list[dict]) -> list[dic
 
     用相邻 kline_daily 分区现算, 不落缓存 — 次日分区晚到时先给 None, 到了自然补上。
     """
-    root = data_dir / "kline_daily" / f"date={trade_date.isoformat()}"
     day0: dict[str, tuple[float, float]] = {}  # symbol -> (open, close)
-    try:
-        files = sorted(root.glob("*.parquet"))
-        if files:
-            df = pl.concat([pl.read_parquet(f, columns=["symbol", "open", "close"]) for f in files])
-            day0 = dict(zip(df["symbol"].to_list(), zip(df["open"].to_list(), df["close"].to_list())))
-    except (OSError, pl.exceptions.PolarsError):
-        day0 = {}
+    df = _read_usable_kline_ohlc(data_dir, trade_date, ["symbol", "open", "close"])
+    if not df.is_empty() and {"symbol", "open", "close"}.issubset(df.columns):
+        day0 = dict(zip(df["symbol"].to_list(), zip(df["open"].to_list(), df["close"].to_list())))
 
     prev = _prev_trading_day(data_dir, trade_date)
     prev_close = _read_kline_closes(data_dir, prev) if prev else {}

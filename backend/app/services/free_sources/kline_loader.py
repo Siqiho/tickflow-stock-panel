@@ -19,11 +19,17 @@ def load_daily_bars_for_symbol(
     Prefer kline_daily_enriched (has turnover_rate); fallback to kline_daily.
     """
     data_dir = Path(data_dir)
-    enriched = data_dir / "kline_daily_enriched"
-    raw = data_dir / "kline_daily"
-    source = enriched if enriched.exists() and any(enriched.rglob("*.parquet")) else raw
-    if not source.exists():
-        raise FileNotFoundError(f"daily kline dir missing: {source}")
+    from app.services.kline_sync import safe_usable_daily_partition_dates
+
+    # Leftover TickFlow enriched must not shadow current-route daily after a
+    # custom switch. Pick the first table that actually has usable dates.
+    source = None
+    for table in ("kline_daily_enriched", "kline_daily"):
+        if safe_usable_daily_partition_dates(data_dir, table=table):
+            source = data_dir / table
+            break
+    if source is None:
+        raise FileNotFoundError(f"no current-route daily bars under {data_dir}")
 
     # Scan all partitions then filter — dataset is ~1 year / manageable for single symbol.
     files = sorted(source.rglob("*.parquet"))

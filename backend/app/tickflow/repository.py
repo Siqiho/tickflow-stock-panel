@@ -265,7 +265,8 @@ class DataStore:
                 self.db.execute(f"CREATE TABLE {name} AS SELECT * FROM {tmp}")
                 self.db.unregister(tmp)
             except Exception as exc:  # noqa: BLE001
-                logger.debug("gated financial view %s skipped: %s", name, exc)
+                logger.debug("gated financial view %s failed, empty: %s", name, exc)
+                self._empty_parquet_view(name, glob)
 
         try:
             from app.services.kline_sync import get_adj_factor_df
@@ -295,13 +296,30 @@ class DataStore:
                     self.db.execute(f"CREATE TABLE {view_name} AS SELECT * FROM {tmp}")
                     self.db.unregister(tmp)
                 except Exception as exc:  # noqa: BLE001
-                    logger.debug("gated adj view %s skipped: %s", view_name, exc)
+                    logger.debug("gated adj view %s failed, empty: %s", view_name, exc)
+                    self._empty_parquet_view(view_name, glob)
 
         try:
             from app.services.kline_sync import daily_route, minute_route
         except Exception:  # noqa: BLE001
             daily_route = None
             minute_route = None
+        if daily_route is None:
+            self._empty_named_views((
+                "kline_daily", "kline_enriched",
+                "kline_index_daily", "kline_index_enriched",
+                "kline_etf_daily", "kline_etf_enriched",
+            ))
+        if minute_route is None:
+            self._empty_named_views(("kline_minute", "kline_etf_minute"))
+        if get_financial_df is None:
+            self._empty_named_views((
+                "financials_metrics", "financials_income",
+                "financials_balance_sheet", "financials_cash_flow",
+                "financials_shares",
+            ))
+        if get_adj_factor_df is None:
+            self._empty_named_views(("adj_factor", "adj_factor_etf"))
         if daily_route is not None:
             daily_token = daily_route()
             if self._has_parquet("kline_daily"):
@@ -358,6 +376,8 @@ class DataStore:
             from app.services.depth_service import depth_route
         except Exception:  # noqa: BLE001
             depth_route = None
+        if depth_route is None:
+            self._empty_named_views(("depth5",))
         if depth_route is not None:
             depth_globs: list[str] = []
             if self._has_parquet("depth5"):
@@ -426,6 +446,61 @@ class DataStore:
 
     def _has_parquet(self, subdir: str) -> bool:
         return any((self.data_dir / subdir).rglob("*.parquet"))
+
+    def _route_sensitive_view_globs(self) -> list[tuple[str, str]]:
+        d = self.data_dir.as_posix()
+        return [
+            ("kline_daily", f"{d}/kline_daily/**/*.parquet"),
+            ("kline_enriched", f"{d}/kline_daily_enriched/**/*.parquet"),
+            ("kline_index_daily", f"{d}/kline_index_daily/**/*.parquet"),
+            ("kline_index_enriched", f"{d}/kline_index_enriched/**/*.parquet"),
+            ("kline_etf_daily", f"{d}/kline_etf_daily/**/*.parquet"),
+            ("kline_etf_enriched", f"{d}/kline_etf_enriched/**/*.parquet"),
+            ("kline_minute", f"{d}/kline_minute/**/*.parquet"),
+            ("kline_etf_minute", f"{d}/kline_etf_minute/**/*.parquet"),
+            ("adj_factor", f"{d}/adj_factor/**/*.parquet"),
+            ("adj_factor_etf", f"{d}/adj_factor_etf/**/*.parquet"),
+            ("depth5", f"{d}/depth5/**/*.parquet"),
+            ("financials_metrics", f"{d}/financials/metrics/*.parquet"),
+            ("financials_income", f"{d}/financials/income/*.parquet"),
+            ("financials_balance_sheet", f"{d}/financials/balance_sheet/*.parquet"),
+            ("financials_cash_flow", f"{d}/financials/cash_flow/*.parquet"),
+            ("financials_shares", f"{d}/financials/shares/*.parquet"),
+        ]
+
+    def _empty_parquet_view(self, name: str, glob: str) -> None:
+        """Hide leftover parquet when a route gate cannot be applied."""
+        try:
+            self.db.execute(f"DROP VIEW IF EXISTS {name}")
+            self.db.execute(f"DROP TABLE IF EXISTS {name}")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.db.execute(
+                f"CREATE OR REPLACE VIEW {name} AS "
+                f"SELECT * FROM read_parquet('{glob}', union_by_name=true) WHERE 1=0"
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("empty view %s skipped: %s", name, exc)
+
+    def _empty_named_views(self, names: tuple[str, ...]) -> None:
+        wanted = set(names)
+        for name, glob in self._route_sensitive_view_globs():
+            if name in wanted:
+                self._empty_parquet_view(name, glob)
+
+    def _fail_closed_route_views(self) -> None:
+        """Empty route-sensitive DuckDB views so leftover SQL cannot leak."""
+        for name, glob in self._route_sensitive_view_globs():
+            self._empty_parquet_view(name, glob)
+
+    def re_gate_catalog_views(self) -> None:
+        """Re-apply route gates; empty leftover-visible views if gating throws."""
+        try:
+            self._register_gated_catalog_views()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("re-gate catalog views failed, fail-closed: %s", exc)
+            self._fail_closed_route_views()
 
     def _register_unified_views(self) -> None:
         """Register optional all-asset views when their backing parquet exists.
@@ -929,12 +1004,12 @@ class KlineRepository:
         try:
             from app.services.kline_sync import (
                 filter_daily_cache,
+                safe_usable_daily_partition_dates,
                 scan_usable_daily,
-                usable_daily_partition_dates,
             )
 
             enriched_dir = self.store.data_dir / "kline_etf_enriched"
-            dates = usable_daily_partition_dates(
+            dates = safe_usable_daily_partition_dates(
                 self.store.data_dir, table="kline_etf_enriched",
             )
             if not dates:
@@ -1603,9 +1678,9 @@ class KlineRepository:
         is the source of truth so a custom minute route cannot treat leftover
         TickFlow/public parquet as current coverage.
         """
-        from app.services.kline_sync import usable_minute_partition_dates
+        from app.services.kline_sync import safe_usable_minute_partition_dates
 
-        dates = usable_minute_partition_dates(self.store.data_dir)
+        dates = safe_usable_minute_partition_dates(self.store.data_dir)
         if not dates:
             return None
         wanted = str(symbol or "").strip()
@@ -1625,30 +1700,30 @@ class KlineRepository:
 
     def earliest_daily_date(self) -> date | None:
         """Earliest route-usable local daily date (pipeline / extend start)."""
-        from app.services.kline_sync import usable_daily_partition_dates
+        from app.services.kline_sync import safe_usable_daily_partition_dates
 
-        dates = usable_daily_partition_dates(self.store.data_dir)
+        dates = safe_usable_daily_partition_dates(self.store.data_dir)
         return dates[0] if dates else None
 
     def earliest_minute_date(self) -> date | None:
         """Earliest route-usable local minute date."""
-        from app.services.kline_sync import usable_minute_partition_dates
+        from app.services.kline_sync import safe_usable_minute_partition_dates
 
-        dates = usable_minute_partition_dates(self.store.data_dir)
+        dates = safe_usable_minute_partition_dates(self.store.data_dir)
         return dates[0] if dates else None
 
     def latest_minute_date_global(self) -> date | None:
         """Newest route-usable local minute date (any symbol)."""
-        from app.services.kline_sync import usable_minute_partition_dates
+        from app.services.kline_sync import safe_usable_minute_partition_dates
 
-        dates = usable_minute_partition_dates(self.store.data_dir)
+        dates = safe_usable_minute_partition_dates(self.store.data_dir)
         return dates[-1] if dates else None
 
     def latest_daily_date(self) -> date | None:
         """Newest route-usable local daily date (pipeline incremental start)."""
-        from app.services.kline_sync import usable_daily_partition_dates
+        from app.services.kline_sync import safe_usable_daily_partition_dates
 
-        dates = usable_daily_partition_dates(self.store.data_dir)
+        dates = safe_usable_daily_partition_dates(self.store.data_dir)
         return dates[-1] if dates else None
 
     def _latest_enriched_date_duckdb(self) -> date | None:
@@ -1666,9 +1741,9 @@ class KlineRepository:
 
     def latest_enriched_date(self, asset_type: str = "stock") -> date | None:
         """Newest route-usable enriched partition date (mining / pipeline)."""
-        from app.services.kline_sync import usable_daily_partition_dates
+        from app.services.kline_sync import safe_usable_daily_partition_dates
 
-        dates = usable_daily_partition_dates(
+        dates = safe_usable_daily_partition_dates(
             self.store.data_dir, table=enriched_dirname(asset_type),
         )
         return dates[-1] if dates else None
@@ -1872,10 +1947,7 @@ class KlineRepository:
             except Exception as e:  # noqa: BLE001
                 logger.debug("index/etf view refresh skipped: %s", e)
         with self._lock:
-            try:
-                self.store._register_gated_catalog_views()
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("re-gate catalog after index view refresh skipped: %s", exc)
+            self.store.re_gate_catalog_views()
             self.store._register_unified_views()
 
     def refresh_minute_views(self) -> None:
@@ -1886,10 +1958,11 @@ class KlineRepository:
         try:
             with self._lock:
                 self.db.execute(sql)
-                self.store._register_gated_catalog_views()
+                self.store.re_gate_catalog_views()
                 self.store._register_unified_views()
         except Exception as exc:  # noqa: BLE001
             logger.warning("minute view refresh failed: %s", exc)
+            self.store._fail_closed_route_views()
 
     def _daily_write_context(self, df: pl.DataFrame):
         """Tag daily/enriched writes and refuse unresolved mix.

@@ -1571,11 +1571,11 @@ def run_pipeline(data_dir: Path | None = None,
     if new_dates_only:
         # ── 向后增量模式 ──
         # 1. 找出当前 route 日K 有但可用 enriched 还没有的日期
-        from app.services.kline_sync import usable_daily_partition_dates
+        from app.services.kline_sync import safe_usable_daily_partition_dates
 
         enriched_dates = {
             day.isoformat()
-            for day in usable_daily_partition_dates(d, table="kline_daily_enriched")
+            for day in safe_usable_daily_partition_dates(d, table="kline_daily_enriched")
         }
         enriched_dates -= unreadable_dates
 
@@ -1825,11 +1825,11 @@ def run_pipeline(data_dir: Path | None = None,
                 on_batch_done(batch_start // SYM_BATCH + 1, total_batches)
 
         if not symbols and staging_files:
-            from app.services.kline_sync import usable_daily_partition_dates
+            from app.services.kline_sync import safe_usable_daily_partition_dates
 
             existing_dates = {
                 day.isoformat()
-                for day in usable_daily_partition_dates(d, table="kline_daily_enriched")
+                for day in safe_usable_daily_partition_dates(d, table="kline_daily_enriched")
             }
             unique_dates = sorted(
                 scan_enriched_parquet(staging_files).select("date").unique()
