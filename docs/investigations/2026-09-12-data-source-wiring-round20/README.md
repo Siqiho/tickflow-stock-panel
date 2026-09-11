@@ -106,4 +106,4 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round20 \
     tests/test_dragon_tiger.py
 ```
 
-云环境结果：见 `evidence/test-results.md`。
+云环境结果：backend 目标 **661 passed**。见 `evidence/test-results.md`。

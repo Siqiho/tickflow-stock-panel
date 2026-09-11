@@ -70,4 +70,4 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round20 \
     tests/test_dragon_tiger.py
 ```
 
-Cloud environment result: pending isolated run.
+Cloud environment result: backend target **661 passed**, 41 warnings (pre-existing Polars `streaming` deprecation / join_asof sortedness). No network. Isolated `DATA_DIR=/tmp/ot-data-source-wiring-round20`.
