@@ -257,29 +257,13 @@ def _index_quotes(request: Request, as_of: date | None = None) -> list[dict]:
     if not rows:
         repo = getattr(request.app.state, "repo", None)
         if repo:
-            placeholders = ", ".join("?" for _ in CORE_INDEX_SYMBOLS)
             try:
-                db_rows = repo.execute_all(
-                    f"""
-                    WITH ranked AS (
-                        SELECT symbol, date, close,
-                               row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
-                        FROM kline_index_daily
-                        WHERE symbol IN ({placeholders})
-                          AND (? IS NULL OR date <= ?)
-                    ), latest AS (
-                        SELECT symbol,
-                               max(CASE WHEN rn = 1 THEN date END) AS date,
-                               max(CASE WHEN rn = 1 THEN close END) AS last_price,
-                               max(CASE WHEN rn = 2 THEN close END) AS prev_close
-                        FROM ranked
-                        WHERE rn <= 2
-                        GROUP BY symbol
-                    )
-                    SELECT symbol, date, last_price, prev_close
-                    FROM latest
-                    """,
-                    [*CORE_INDEX_SYMBOLS, as_of, as_of],
+                from app.services.kline_sync import load_usable_index_latest_quotes
+
+                data_dir = getattr(getattr(repo, "store", None), "data_dir", None)
+                db_rows = (
+                    load_usable_index_latest_quotes(data_dir, list(CORE_INDEX_SYMBOLS), as_of)
+                    if data_dir is not None else []
                 )
             except Exception:  # noqa: BLE001
                 db_rows = []
@@ -380,7 +364,12 @@ def market_overview(request: Request, as_of: date | None = None):
     """总览页单次请求聚合数据，避免前端拉全市场明细后再计算。"""
     global _cache, _cache_key, _cache_ts
     now = time.time()
-    cache_key = as_of.isoformat() if as_of else "latest"
+    try:
+        from app.services.kline_sync import daily_route
+        route_token = daily_route()
+    except Exception:  # noqa: BLE001
+        route_token = "unresolved"
+    cache_key = f"{as_of.isoformat() if as_of else 'latest'}|{route_token}"
     if _cache is not None and _cache_key == cache_key and (now - _cache_ts) < _CACHE_TTL:
         return _cache
     data = _build_overview(request, as_of)

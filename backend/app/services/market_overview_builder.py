@@ -264,29 +264,11 @@ def _index_quotes(repo, quote_service, as_of: date | None = None) -> list[dict]:
             rows = df.to_dicts()
 
     if not rows and repo:
-        placeholders = ", ".join("?" for _ in CORE_INDEX_SYMBOLS)
         try:
-            db_rows = repo.execute_all(
-                f"""
-                WITH ranked AS (
-                    SELECT symbol, date, close,
-                           row_number() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
-                    FROM kline_index_daily
-                    WHERE symbol IN ({placeholders})
-                      AND (? IS NULL OR date <= ?)
-                ), latest AS (
-                    SELECT symbol,
-                           max(CASE WHEN rn = 1 THEN date END) AS date,
-                           max(CASE WHEN rn = 1 THEN close END) AS last_price,
-                           max(CASE WHEN rn = 2 THEN close END) AS prev_close
-                    FROM ranked
-                    WHERE rn <= 2
-                    GROUP BY symbol
-                )
-                SELECT symbol, date, last_price, prev_close
-                FROM latest
-                """,
-                [*CORE_INDEX_SYMBOLS, as_of, as_of],
+            from app.services.kline_sync import load_usable_index_latest_quotes
+
+            db_rows = load_usable_index_latest_quotes(
+                Path(repo.store.data_dir), list(CORE_INDEX_SYMBOLS), as_of,
             )
         except Exception:  # noqa: BLE001
             db_rows = []

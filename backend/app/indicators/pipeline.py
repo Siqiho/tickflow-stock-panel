@@ -29,7 +29,7 @@ import pyarrow.parquet as pq
 
 from app.config import settings
 from app.market_time import cn_today
-from app.parquet import scan_daily_parquet, scan_enriched_parquet
+from app.parquet import scan_enriched_parquet
 from app.services.atomic_io import atomic_write_parquet, write_lineage_record
 from app.share_capital import apply_historical_float_shares, load_share_history
 
@@ -127,14 +127,22 @@ def load_benchmark_momentum(data_dir: Path) -> pl.DataFrame | None:
     进程内按 data_dir 缓存 (TTL 10 分钟)。
     """
     now = time.monotonic()
-    key = str(Path(data_dir).resolve())
+    try:
+        from app.services.kline_sync import daily_route
+        route_token = daily_route()
+    except Exception:  # noqa: BLE001
+        route_token = "unresolved"
+    key = f"{Path(data_dir).resolve()}|{route_token}"
     cached = _benchmark_cache.get(key)
     if cached is not None and now - cached[0] < _BENCHMARK_CACHE_TTL:
         return cached[1]
+    if route_token == "unresolved":
+        _benchmark_cache[key] = (now, None)
+        return None
 
     frame: pl.DataFrame | None = None
     try:
-        index_glob = str(Path(data_dir) / "kline_index_daily" / "**" / "*.parquet")
+        from app.services.kline_sync import filter_daily_cache, scan_usable_daily
         wanted: list[str] = []
         bench_of: dict[str, str] = {}
         for bench_key, candidates in _BENCHMARK_PREFERENCE.items():
@@ -142,13 +150,22 @@ def load_benchmark_momentum(data_dir: Path) -> pl.DataFrame | None:
                 if sym not in bench_of:
                     wanted.append(sym)
                     bench_of[sym] = bench_key
-        lf = scan_daily_parquet(index_glob)
-        df_idx = (
+        lf = scan_usable_daily(data_dir, table="kline_index_daily")
+        if lf is None:
+            _benchmark_cache[key] = (now, None)
+            return None
+        names = set(lf.collect_schema().names())
+        keep = [c for c in ("symbol", "date", "close", "route") if c in names]
+        df_idx = filter_daily_cache(
             lf.filter(pl.col("symbol").is_in(wanted))
-            .select(["symbol", "date", "close"])
+            .select(keep)
             .sort(["symbol", "date"])
             .collect()
         )
+        if df_idx is None:
+            df_idx = pl.DataFrame()
+        if "route" in df_idx.columns:
+            df_idx = df_idx.drop("route")
         if not df_idx.is_empty():
             available = set(df_idx["symbol"].to_list())
             picked = [s for s in wanted if s in available]
@@ -255,8 +272,13 @@ def benchmark_momentum_today(
     bench = load_benchmark_momentum(data_dir)
     if bench is None or bench.is_empty():
         return None
-    today = cn_today()
-    bench = bench.filter(pl.col("date") < today)
+    from datetime import date as date_cls
+
+    # Index-monitor dirty rows are stamped with date.today() (UTC on some
+    # hosts) while the rest of the book uses Asia/Shanghai cn_today().
+    # Exclude either calendar's "today" so realtime change is not stacked.
+    cutoff = min(date_cls.today(), cn_today())
+    bench = bench.filter(pl.col("date") < cutoff)
     if bench.is_empty():
         return None
     rows: list[dict[str, float | str | None]] = []

@@ -1529,20 +1529,67 @@ class KlineRepository:
             return self.get_etf_daily(symbol, start, end, columns)
         return pl.DataFrame()
 
+    def _scan_usable_minute(
+        self,
+        asset_type: str,
+        *,
+        symbol: str | None = None,
+        symbols: list[str] | None = None,
+        trade_date: date | None = None,
+        start: date | None = None,
+        end: date | None = None,
+    ):
+        """Scan current-route minute partitions only — leftover files must not poison collect."""
+        from app.services.kline_sync import scan_usable_minute
+
+        lf = scan_usable_minute(self.store.data_dir, asset_type=asset_type)
+        if lf is None:
+            return None
+        pred = None
+        if symbol is not None:
+            pred = pl.col("symbol") == symbol
+        elif symbols:
+            pred = pl.col("symbol").is_in(symbols)
+        if trade_date is not None:
+            day = pl.col("datetime").dt.date() == trade_date
+            pred = day if pred is None else pred & day
+        elif start is not None or end is not None:
+            day = pl.col("datetime").dt.date()
+            rng = True
+            if start is not None:
+                rng = day >= start
+            if end is not None:
+                rng = rng & (day <= end)
+            pred = rng if pred is None else pred & rng
+        if pred is not None:
+            lf = lf.filter(pred)
+        sort_cols = ["symbol", "datetime"] if symbols or symbol is None else ["datetime"]
+        if symbol is not None:
+            sort_cols = ["datetime"]
+        return lf.sort(sort_cols)
+
     def get_minute(
         self,
         symbol: str,
         trade_date: date,
         asset_type: str = "stock",
     ) -> pl.DataFrame:
-        """分钟K查询 — Polars scan_parquet + predicate pushdown。"""
-        glob = self._etf_minute_glob if asset_type == "etf" else self._minute_glob
+        """分钟K查询 — 只扫当前 minute route 可用分区。"""
+        from app.services.kline_sync import usable_minute_partition_paths
+
+        paths = usable_minute_partition_paths(self.store.data_dir, asset_type=asset_type)
+        if not paths:
+            return pl.DataFrame()
+        lf = self._scan_usable_minute(
+            asset_type, symbol=symbol, trade_date=trade_date,
+        )
+        if lf is None:
+            return pl.DataFrame()
         df = _collect_local_parquet(
-            lambda: pl.scan_parquet(glob).filter(
-                (pl.col("symbol") == symbol)
-                & (pl.col("datetime").dt.date() == trade_date)
-            ).sort("datetime").collect(),
-            glob,
+            lambda: lf.collect(),
+            str(self.store.data_dir / (
+                "kline_etf_minute" if asset_type == "etf" else "kline_minute"
+            ) / "**" / "*.parquet"),
             "分钟K读取失败",
         )
         return self._gate_minute_df(df)
@@ -1553,19 +1600,40 @@ class KlineRepository:
         trade_date: date,
         asset_type: str = "stock",
     ) -> pl.DataFrame:
-        """批量分钟K查询 — 多 symbol 一次 scan_parquet。"""
+        """批量分钟K查询 — 只扫当前 minute route 可用分区。"""
         if not symbols:
             return pl.DataFrame()
-        glob = self._etf_minute_glob if asset_type == "etf" else self._minute_glob
+        lf = self._scan_usable_minute(
+            asset_type, symbols=symbols, trade_date=trade_date,
+        )
+        if lf is None:
+            return pl.DataFrame()
         try:
-            df = guarded_collect(
-                pl.scan_parquet(glob).filter(
-                    pl.col("symbol").is_in(symbols)
-                    & (pl.col("datetime").dt.date() == trade_date)
-                ).sort(["symbol", "datetime"])
-            )
+            df = guarded_collect(lf)
         except Exception as e:  # noqa: BLE001
             logger.warning("批量分钟K查询失败: %s", e)
+            return pl.DataFrame()
+        return self._gate_minute_df(df)
+
+    def get_minute_range(
+        self,
+        symbols: list[str],
+        start: date,
+        end: date,
+        asset_type: str = "stock",
+    ) -> pl.DataFrame:
+        """多日分钟K — 只扫当前 minute route 可用分区。"""
+        if not symbols:
+            return pl.DataFrame()
+        lf = self._scan_usable_minute(
+            asset_type, symbols=symbols, start=start, end=end,
+        )
+        if lf is None:
+            return pl.DataFrame()
+        try:
+            df = guarded_collect(lf)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("分钟K区间查询失败: %s", e)
             return pl.DataFrame()
         return self._gate_minute_df(df)
 
@@ -1847,17 +1915,8 @@ class KlineRepository:
         return dates[-1] if dates else None
 
     def _latest_enriched_date_duckdb(self) -> date | None:
-        try:
-            with self._lock:
-                res = self.db.execute(
-                    "SELECT max(date) FROM kline_enriched",
-                ).fetchone()
-            if res and res[0]:
-                d = res[0]
-                return d if isinstance(d, date) else date.fromisoformat(str(d))
-        except Exception:  # noqa: BLE001
-            return None
-        return None
+        """File provenance only — DuckDB can be temporarily leftover-visible."""
+        return self.latest_enriched_date("stock")
 
     def latest_enriched_date(self, asset_type: str = "stock") -> date | None:
         """Newest route-usable enriched partition date (mining / pipeline)."""
@@ -1994,8 +2053,16 @@ class KlineRepository:
         *,
         merge: bool = False,
     ) -> None:
-        """Publish intraday enriched data to memory without writing canonical Parquet."""
+        """Publish intraday enriched data to memory without writing canonical Parquet.
+
+        Leftover TickFlow daily keeps the live overlay. Custom daily and
+        unreadable prefs must not mix a different realtime source into
+        ``get_enriched_latest`` consumers even when a caller skips the gate.
+        """
         if df.is_empty() or "date" not in df.columns:
+            return
+        if not self._live_enriched_overlay_allowed():
+            logger.info("skip live enriched publish: daily route is custom/unresolved")
             return
         dt = df["date"][0]
         live = df
@@ -2089,15 +2156,21 @@ class KlineRepository:
 
         Returns ``(frame, incoming_route, usable_fn)`` or ``None`` when the
         current daily route is unresolved (do not write leftover TickFlow).
+        Route-resolve throws stay fail-closed so a caller except cannot
+        persist leftover TickFlow onto a custom/unreadable daily.
         """
-        from app.services.kline_sync import (
-            _incoming_daily_route,
-            _tag_daily_route,
-            daily_cache_usable,
-        )
+        try:
+            from app.services.kline_sync import (
+                _incoming_daily_route,
+                _tag_daily_route,
+                daily_cache_usable,
+            )
 
-        tagged = _tag_daily_route(df)
-        incoming = _incoming_daily_route(tagged)
+            tagged = _tag_daily_route(df)
+            incoming = _incoming_daily_route(tagged)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("skip daily/enriched write: route resolve failed: %s", exc)
+            return None
         if incoming == "unresolved":
             logger.warning("skip daily/enriched write for unresolved daily route")
             return None
