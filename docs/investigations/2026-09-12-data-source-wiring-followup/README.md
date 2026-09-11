@@ -54,5 +54,8 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-followup \
 前端：
 
 ```
-cd frontend && npm test -- --run src/lib/dataSources.test.ts
+cd frontend && npx vitest run src/lib/dataSources.test.ts src/lib/dataSourceCatalog.test.ts \
+  src/pages/__tests__/DataUnifiedSources.test.tsx src/pages/__tests__/Data.test.tsx
 ```
+
+云环境结果：backend 目标 63 passed；相邻 25 passed；frontend 42 passed。见 `evidence/`。
