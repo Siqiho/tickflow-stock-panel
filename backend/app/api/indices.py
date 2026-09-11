@@ -100,13 +100,22 @@ def get_index_daily(
         return {"symbol": symbol, "name": info.get("name"), "index_info": info, "rows": df.to_dicts(), "source": "index_enriched"}
 
     capset = request.app.state.capabilities
-    if not capset.has(Cap.KLINE_DAILY_BATCH):
+    if capset is None:
+        capset = CapabilitySet()
+    if not capset.has(Cap.KLINE_DAILY_BATCH) and not kline_sync.daily_provider_is_custom():
         return {"symbol": symbol, "name": info.get("name"), "index_info": info, "rows": [], "source": "none"}
 
     try:
-        raw = kline_sync.sync_daily_batch([symbol], count=days + 150)
+        raw = kline_sync.fetch_routed_daily(
+            [symbol],
+            start_time=datetime.combine(start, datetime.min.time()),
+            end_time=datetime.combine(end, datetime.max.time().replace(microsecond=0)),
+            asset_type="index",
+            capset=capset,
+            count=days + 150,
+        )
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"TickFlow fetch failed: {e}") from e
+        raise HTTPException(status_code=502, detail=f"daily fetch failed: {e}") from e
     if raw.is_empty():
         return {"symbol": symbol, "name": info.get("name"), "index_info": info, "rows": [], "source": "none"}
 
@@ -156,8 +165,10 @@ def sync_index_daily(
     """同步指数日K到独立 parquet。"""
     repo = request.app.state.repo
     capset = request.app.state.capabilities
-    if not capset.has(Cap.KLINE_DAILY_BATCH):
-        raise HTTPException(status_code=403, detail="需要 Pro+ 权限 (batch K-line)")
+    if capset is None:
+        capset = CapabilitySet()
+    if not capset.has(Cap.KLINE_DAILY_BATCH) and not kline_sync.daily_provider_is_custom():
+        raise HTTPException(status_code=403, detail="需要日K批量能力或已配置的自定义日K源")
     end = datetime.now()
     start = end - timedelta(days=days)
     count = index_sync.sync_index_instruments(repo)

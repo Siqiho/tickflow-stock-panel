@@ -3,6 +3,7 @@
 Phase 1 实现:
   - 常用指数成份(沪深 300 / 中证 500 / 上证 50):
       * preferences.pool_provider=public 时走 free_sources.pools_public(中证 XLS/新浪 fallback)
+        失败 fail-closed，不静默改走 TickFlow
       * 否则 TickFlow `quote.pool` / universes
   - 全 A 通过 instruments / TickFlow universe
   - 自选池 = 用户的 watchlist
@@ -94,7 +95,14 @@ def _fetch_pool(pool_id: PoolId) -> list[str]:
                 write_pool_parquet(df, settings.data_dir, pool_id)
                 return df["symbol"].to_list()
         except Exception as e:
-            logger.warning("public pool %s failed, fallback TickFlow: %s", pool_id, e)
+            logger.warning("public pool %s failed, fail-closed (no TickFlow): %s", pool_id, e)
+        return []
+
+    if _use_public_pools():
+        logger.warning(
+            "public pool_provider cannot serve %s via TickFlow universes", pool_id,
+        )
+        return []
 
     tf = get_client()
 

@@ -151,6 +151,12 @@ def _resolve_daily_provider(
         return (None, True, str(e))
 
 
+def daily_provider_is_custom() -> bool:
+    """True when daily_data_provider resolves to a declared custom/plugin source."""
+    _, fallback, _ = _resolve_daily_provider(preferences.get_daily_data_provider())
+    return not fallback
+
+
 def _refresh_daily_view(repo: KlineRepository) -> None:
     try:
         d = repo.store.data_dir.as_posix()
@@ -982,6 +988,12 @@ def _resolve_minute_provider(
         return (provider, False, None)
     except Exception as e:  # noqa: BLE001
         return (None, True, str(e))
+
+
+def minute_provider_is_custom() -> bool:
+    """True when minute_data_provider resolves to a declared custom/plugin source."""
+    _, fallback, err = _resolve_minute_provider(preferences.get_minute_data_provider())
+    return (not fallback) and err is None
 
 
 def _try_custom_minute(
