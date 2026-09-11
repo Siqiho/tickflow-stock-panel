@@ -277,7 +277,17 @@ def resolve_universe(capset: CapabilitySet) -> list[str]:
     if syms:
         return syms
 
-    # Last-resort free fallback
+    from app.tickflow.pools import pool_route
+
+    route = pool_route()
+    if route in {"custom", "unresolved"}:
+        logger.warning(
+            "resolve_universe empty under pool route=%s, fail-closed (no DEMO mix)",
+            route,
+        )
+        return []
+
+    # Last-resort free fallback for leftover public / TickFlow
     base: set[str] = set(DEMO_SYMBOLS)
     try:
         base.update(get_pool("watchlist") or [])

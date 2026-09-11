@@ -78,6 +78,16 @@ def _resolve_universe(capset: CapabilitySet) -> list[str]:
     except Exception as e:
         logger.warning("extend_history resolve_symbols failed: %s", e)
 
+    from app.tickflow.pools import pool_route
+
+    route = pool_route()
+    if route in {"custom", "unresolved"}:
+        logger.warning(
+            "extend_history universe empty under pool route=%s, fail-closed (no DEMO mix)",
+            route,
+        )
+        return []
+
     base: set[str] = set(DEMO_SYMBOLS)
     try:
         base.update(get_pool("watchlist") or [])

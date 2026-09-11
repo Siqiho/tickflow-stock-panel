@@ -37,7 +37,7 @@ English summary: ninth-round leftover mix-source / fail-open paths around daily/
 7. **自定义财务**：跟 `pipeline_universe_scope`，空/失败 fail-closed。TickFlow 财务仍用 instruments 全表。
 8. **成分接线**：`update_data_providers` / 专用 PUT 认自定义名；删除源回退 `public`；能力矩阵 + 套用带 `pool_provider`。
 9. **成分缓存**：`pool_cache_usable` — custom/unresolved 不读旧盘；带 `route` 列必须匹配当前路由；无标签旧文件只给 public。公开写入打 `route=public`。已声明 `pool` 的自定义源走 `get_pool` / `get_constituents`。
-10. **ALL 范围**：instruments 空时只有 leftover TickFlow 才打 `CN_Equity_A`；custom/unresolved 空结果，不混 DEMO。
+10. **ALL 范围**：instruments 空时只有 leftover TickFlow 才打 `CN_Equity_A`；custom/unresolved 空结果，不混 DEMO。管道 / extend-history 最后兜底 DEMO 同样只给 leftover public/TickFlow。
 11. **现场复权**：leftover TickFlow / 未声明 adj 无 `Cap.ADJ_FACTOR` 时走公开新浪 qfq，与 `sync_adj_factor` 对齐。
 12. **分钟落盘 / 监控能力**：读偏好失败 return 0 / `available=False`。
 13. **能力表**：未声明 depth5 / realtime 的自定义名标 unavailable。`minute_refresh.status` 解析失败不把 stored 名标成可用。`watchlist.fetch_quotes` 只服务 leftover TickFlow。
@@ -80,4 +80,4 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round9 \
     tests/test_kline_minute_api.py
 ```
 
-云环境结果见 `evidence/test-results.md`。
+云环境结果：backend 目标 **305 passed**。见 `evidence/test-results.md`。

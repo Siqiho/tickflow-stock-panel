@@ -102,7 +102,9 @@ def test_index_live_prefs_failure_does_not_tickflow(monkeypatch):
         get_index_daily=lambda *a, **k: pl.DataFrame(),
     )
     req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(repo=repo, capabilities=_capset())))
-    out = indices_api.get_index_daily(req, symbol="000001.SH", days=20)
+    out = indices_api.get_index_daily(
+        req, symbol="000001.SH", days=20, start_date=None, end_date=None,
+    )
     assert out["rows"] == []
     assert out["source"] == "none"
 
@@ -410,6 +412,47 @@ def test_custom_pool_uses_declared_provider(monkeypatch):
     assert pools.pool_route() == "custom"
     assert pools._fetch_pool("CSI300") == ["000001.SZ"]
     tf.assert_not_called()
+
+
+def test_pipeline_empty_custom_pool_skips_demo(monkeypatch):
+    from app.tickflow import pools
+
+    monkeypatch.setattr(daily_pipeline._prefs, "get_pipeline_universe_scope", lambda: "ALL")
+    monkeypatch.setattr(pools, "pool_route", lambda: "custom")
+    monkeypatch.setattr(
+        daily_pipeline,
+        "get_pool",
+        lambda pool_id, **kwargs: (_ for _ in ()).throw(
+            AssertionError(f"must not refresh {pool_id}")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.universe_scope.resolve_symbols",
+        lambda *a, **k: [],
+    )
+    assert daily_pipeline.resolve_universe(_capset(Cap.KLINE_DAILY_BATCH)) == []
+
+
+def test_extend_history_empty_custom_pool_skips_demo(monkeypatch):
+    from app.services import extend_history
+    from app.tickflow import pools
+
+    monkeypatch.setattr(
+        "app.services.preferences.get_pipeline_universe_scope",
+        lambda: "ALL",
+    )
+    monkeypatch.setattr(pools, "pool_route", lambda: "custom")
+    monkeypatch.setattr(
+        "app.tickflow.pools.get_pool",
+        lambda pool_id, **kwargs: (_ for _ in ()).throw(
+            AssertionError(f"must not refresh {pool_id}")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.universe_scope.resolve_symbols",
+        lambda *a, **k: [],
+    )
+    assert extend_history._resolve_universe(_capset(Cap.KLINE_DAILY_BATCH)) == []
 
 
 def test_resolve_all_custom_pool_skips_tickflow_cache_and_demo(monkeypatch, tmp_path):
