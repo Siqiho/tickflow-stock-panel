@@ -637,18 +637,46 @@ def merge_write_financial_table(
         pl.col("period_end").cast(pl.Date, strict=False),
     ).drop_nulls(subset=["symbol", "period_end"])
 
-    if out.exists():
-        existing = pl.read_parquet(out)
-        # align schemas via diagonal
-        merged = pl.concat([existing, df], how="diagonal_relaxed")
-        # new wins
-        merged = merged.unique(subset=["symbol", "period_end"], keep="last").sort(
-            ["symbol", "period_end"]
+    try:
+        from app.services.financial_sync import (
+            _tag_financial_route,
+            financial_cache_usable,
+            financial_write_route,
         )
-    else:
-        merged = df.unique(subset=["symbol", "period_end"], keep="last").sort(
-            ["symbol", "period_end"]
-        )
+
+        route = financial_write_route()
+        if route not in {"public", "tickflow"}:
+            logger.info(
+                "financials/%s public merge skipped for route=%s (no custom mix)",
+                table, route,
+            )
+            return pl.read_parquet(out).height if out.exists() else 0
+        df = _tag_financial_route(df)
+        if out.exists():
+            existing = pl.read_parquet(out)
+            if not financial_cache_usable(existing, route):
+                logger.info("financials/%s replace stale file for route=%s", table, route)
+                existing = df.head(0)
+            merged = pl.concat([existing, df], how="diagonal_relaxed")
+            merged = merged.unique(subset=["symbol", "period_end"], keep="last").sort(
+                ["symbol", "period_end"]
+            )
+        else:
+            merged = df.unique(subset=["symbol", "period_end"], keep="last").sort(
+                ["symbol", "period_end"]
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("financial route gate unavailable, leftover merge: %s", exc)
+        if out.exists():
+            existing = pl.read_parquet(out)
+            merged = pl.concat([existing, df], how="diagonal_relaxed")
+            merged = merged.unique(subset=["symbol", "period_end"], keep="last").sort(
+                ["symbol", "period_end"]
+            )
+        else:
+            merged = df.unique(subset=["symbol", "period_end"], keep="last").sort(
+                ["symbol", "period_end"]
+            )
     atomic_write_parquet(merged, out)
     logger.info("financials/%s wrote %d rows -> %s", table, merged.height, out)
     return int(merged.height)
@@ -726,7 +754,9 @@ def _period_stats_by_symbol(data_dir: Path, table: str) -> dict[str, dict[str, A
     if not path.exists():
         return {}
     try:
-        df = pl.read_parquet(path)
+        from app.services.financial_sync import get_financial_df
+
+        df = get_financial_df(Path(data_dir), table)
     except Exception as e:
         logger.debug("read financials/%s stats failed: %s", table, e)
         return {}

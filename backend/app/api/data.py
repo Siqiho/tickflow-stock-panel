@@ -426,53 +426,44 @@ def _safe_aggregate_adj_factor(repo) -> dict | None:
 
 
 def _safe_aggregate_minute(repo) -> dict | None:
-    """kline_minute 统计 — 从分区目录名获取交易日数，跳过全表扫描。
+    """kline_minute 统计 — 只数当前 minute route 可用的分区。
 
-    分钟 K 按 date=YYYY-MM-DD 分区存储，直接数目录即可，
-    无需 count(*) / count(DISTINCT ...) 等昂贵查询。
+    自定义分钟下 leftover TickFlow/public 分区不得算作成交日覆盖。
+    leftover TickFlow 仍可见无标签分区。
     """
-    minute_dir = repo.store.data_dir / "kline_minute"
-    if not minute_dir.exists():
-        return None
+    from app.services.kline_sync import usable_minute_partition_dates
 
-    # 从 date=YYYY-MM-DD 目录名提取交易日
-    dates: list[str] = []
-    for d in minute_dir.iterdir():
-        if d.is_dir() and d.name.startswith("date="):
-            dates.append(d.name[5:])
-
+    dates = usable_minute_partition_dates(repo.store.data_dir)
     if not dates:
         return None
-
-    dates.sort()
     return {
         "rows": 0,  # 不再查询行数
-        "earliest_date": dates[0],
-        "latest_date": dates[-1],
+        "earliest_date": dates[0].isoformat(),
+        "latest_date": dates[-1].isoformat(),
         "symbols_covered": 0,  # 不再查询标的数
         "trading_days": len(dates),
     }
 
 
 def _safe_aggregate_financials(repo) -> dict | None:
-    """财务数据统计 — 检查各表文件是否存在及行数。"""
+    """财务数据统计 — 走 gated reader，不把旧源 parquet 算成当前覆盖。"""
+    from app.services.financial_sync import get_financial_df
+
     data_dir = repo.store.data_dir
     tables_info: dict[str, dict] = {}
     total_rows = 0
 
     for table in ("metrics", "income", "balance_sheet", "cash_flow"):
-        path = data_dir / "financials" / table / "part.parquet"
-        if path.exists():
-            try:
-                import polars as pl
-                df = pl.read_parquet(path, columns=["symbol"])
-                rows = len(df)
-                symbols = df["symbol"].n_unique() if not df.is_empty() else 0
-                tables_info[table] = {"rows": rows, "symbols": symbols}
-                total_rows += rows
-            except Exception:
+        try:
+            df = get_financial_df(data_dir, table)
+            if df is None or df.is_empty() or "symbol" not in df.columns:
                 tables_info[table] = {"rows": 0, "symbols": 0}
-        else:
+                continue
+            rows = len(df)
+            symbols = df["symbol"].n_unique()
+            tables_info[table] = {"rows": rows, "symbols": symbols}
+            total_rows += rows
+        except Exception:
             tables_info[table] = {"rows": 0, "symbols": 0}
 
     if total_rows == 0:
@@ -753,6 +744,10 @@ def clear_data(request: Request):
             )
         except Exception:
             pass
+    try:
+        repo.store._register_gated_catalog_views()
+    except Exception:
+        pass
 
     logger.info("数据已清除: 删除 %d 个 parquet 文件", deleted)
     invalidate_data_cache(None)

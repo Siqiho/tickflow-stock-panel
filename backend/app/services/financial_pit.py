@@ -504,6 +504,21 @@ def append_shares_history(
     data_dir = Path(data_dir)
     path = data_dir / "financials" / "shares" / "part.parquet"
     existing = pl.read_parquet(path) if path.exists() else pl.DataFrame()
+    _tag_financial_route = None
+    try:
+        from app.services.financial_sync import (
+            _tag_financial_route,
+            financial_cache_usable,
+            financial_write_route,
+        )
+
+        route = financial_write_route()
+        if not existing.is_empty() and not financial_cache_usable(existing, route):
+            logger.info("append_shares_history: skip stale shares for route=%s", route)
+            existing = existing.head(0)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("append_shares_history route gate skipped: %s", exc)
+        _tag_financial_route = None
     snap = snapshot
     if snap.is_empty():
         return ensure_pit_columns(existing, table="shares") if not existing.is_empty() else snap
@@ -518,6 +533,8 @@ def append_shares_history(
     )
     snap = ensure_pit_columns(snap, table="shares", default_source="instruments_snapshot")
     merged = merge_financial_pit(existing if not existing.is_empty() else None, snap, table="shares")
+    if _tag_financial_route is not None and merged is not None and not merged.is_empty():
+        merged = _tag_financial_route(merged)
     return merged
 
 
