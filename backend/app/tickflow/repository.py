@@ -608,7 +608,7 @@ class KlineRepository:
         优化: 扩大历史读取范围, 同时缓存完整历史 (含指标), 供 filter_history 策略直接复用。
         """
         try:
-            from app.services.kline_sync import filter_daily_cache
+            from app.services.kline_sync import filter_daily_cache, scan_usable_daily
 
             latest = self.latest_enriched_date("stock")
             if not latest:
@@ -623,10 +623,14 @@ class KlineRepository:
             target_parquet = enriched_dir / f"date={ds}" / "part.parquet"
 
             if not target_parquet.exists():
+                self.clear_cache()
                 return
 
             df_latest = filter_daily_cache(pl.read_parquet(target_parquet))
             if df_latest.is_empty():
+                # Route switch left only leftover TickFlow in the "latest"
+                # file: drop pre-switch in-memory enriched instead of serving it.
+                self.clear_cache()
                 return
 
             # Step 2: 读近 300 天 14 列数据 → compute → filter(latest) → 缓存
@@ -639,11 +643,13 @@ class KlineRepository:
                                          "volume", "amount", "raw_close", "raw_high", "raw_low",
                                          "route"]
                              if c in df_latest.columns]
-                lf = (
-                    pl.scan_parquet(self._enriched_glob)
-                    .filter(pl.col("date") >= start_full)
-                    .sort(["symbol", "date"])
+                lf = scan_usable_daily(
+                    self.store.data_dir, table="kline_daily_enriched",
                 )
+                if lf is None:
+                    self.clear_cache()
+                    return
+                lf = lf.filter(pl.col("date") >= start_full).sort(["symbol", "date"])
                 df_hist = filter_daily_cache(lf.select(read_cols).collect())
                 if not df_hist.is_empty():
                     instruments = self._instruments_cache if self._instruments_cache is not None else pl.DataFrame()
@@ -805,13 +811,20 @@ class KlineRepository:
         ])
         agg_a = agg_a.join(df_vol, on="symbol", how="left")
 
-        # 昨日连板数: 从 enriched parquet 取 (用于增量计算同向 +1)
-        lf = pl.scan_parquet(self._enriched_glob).filter(pl.col("date") == latest)
-        consec_cols = [c for c in ["symbol", "consecutive_limit_ups", "consecutive_limit_downs"]
-                       if c in lf.collect_schema().names()]
-        if len(consec_cols) == 3:
-            consec_df = lf.select(consec_cols).collect()
-            if not consec_df.is_empty():
+        # 昨日连板数: 从当前 route 可用 enriched 取 (用于增量计算同向 +1)
+        from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+
+        consec_part = (
+            self.store.data_dir / "kline_daily_enriched"
+            / f"date={latest.isoformat()}" / "part.parquet"
+        )
+        if consec_part.exists() and daily_partition_usable(consec_part):
+            consec_df = filter_daily_cache(pl.read_parquet(consec_part))
+            consec_cols = [
+                c for c in ["symbol", "consecutive_limit_ups", "consecutive_limit_downs"]
+                if c in consec_df.columns
+            ]
+            if len(consec_cols) == 3 and not consec_df.is_empty():
                 consec = consec_df.select(
                     "symbol",
                     pl.col("consecutive_limit_ups").alias("_prev_consec_up"),
@@ -874,18 +887,23 @@ class KlineRepository:
     def _build_live_agg_from_parquet(self, latest: date, start_60d: date) -> tuple[pl.DataFrame, pl.DataFrame]:
         """降级路径: 从 parquet 读取数据并计算指标 (当 _enriched_history_cache 不可用时)。"""
         from app.indicators.pipeline import compute_indicators
+        from app.services.kline_sync import filter_daily_cache, scan_usable_daily
 
+        lf = scan_usable_daily(self.store.data_dir, table="kline_daily_enriched")
+        if lf is None:
+            return pl.DataFrame(), pl.DataFrame()
         lf = (
-            pl.scan_parquet(self._enriched_glob)
-            .filter(pl.col("date") >= start_60d)
+            lf.filter(pl.col("date") >= start_60d)
             .filter(pl.col("date") <= latest)
             .sort(["symbol", "date"])
         )
 
         read_cols = [c for c in ["symbol", "date", "open", "high", "low", "close", "volume",
-                                 "raw_close", "raw_high", "raw_low"]
+                                 "raw_close", "raw_high", "raw_low", "route"]
                      if c in lf.collect_schema().names()]
-        df_hist = guarded_collect(lf.select(read_cols), priority="background")
+        df_hist = filter_daily_cache(
+            guarded_collect(lf.select(read_cols), priority="background")
+        )
 
         if df_hist.is_empty():
             return df_hist, pl.DataFrame()
@@ -909,34 +927,50 @@ class KlineRepository:
     def _refresh_etf_enriched(self) -> None:
         """从 ETF enriched parquet 加载最新日到内存缓存。"""
         try:
+            from app.services.kline_sync import (
+                filter_daily_cache,
+                scan_usable_daily,
+                usable_daily_partition_dates,
+            )
+
             enriched_dir = self.store.data_dir / "kline_etf_enriched"
-            dates = sorted(
-                p.name[5:] for p in enriched_dir.glob("date=*")
-                if p.is_dir() and p.name.startswith("date=")
-            ) if enriched_dir.exists() else []
+            dates = usable_daily_partition_dates(
+                self.store.data_dir, table="kline_etf_enriched",
+            )
             if not dates:
                 self._etf_enriched_cache = None
                 self._etf_enriched_cache_date = None
                 self._etf_enriched_cache_live = False
                 return
-            latest = date.fromisoformat(dates[-1])
-            target_parquet = enriched_dir / f"date={dates[-1]}" / "part.parquet"
-            df_latest = pl.read_parquet(target_parquet)
+            latest = dates[-1]
+            target_parquet = enriched_dir / f"date={latest.isoformat()}" / "part.parquet"
+            df_latest = filter_daily_cache(pl.read_parquet(target_parquet))
             if df_latest.is_empty():
+                self._etf_enriched_cache = None
+                self._etf_enriched_cache_date = None
+                self._etf_enriched_cache_live = False
                 return
 
             from datetime import timedelta
             from app.indicators.pipeline import compute_indicators, compute_signals
             start_full = latest - timedelta(days=300)
             read_cols = [c for c in ["symbol", "date", "open", "high", "low", "close",
-                                     "volume", "amount", "raw_close", "raw_high", "raw_low"]
+                                     "volume", "amount", "raw_close", "raw_high", "raw_low",
+                                     "route"]
                          if c in df_latest.columns]
-            df_hist = guarded_collect(
-                scan_enriched_parquet(self._etf_enriched_glob)
-                .filter(pl.col("date") >= start_full)
-                .select(read_cols)
-                .sort(["symbol", "date"]),
-                priority="background",
+            lf = scan_usable_daily(self.store.data_dir, table="kline_etf_enriched")
+            if lf is None:
+                self._etf_enriched_cache = None
+                self._etf_enriched_cache_date = None
+                self._etf_enriched_cache_live = False
+                return
+            df_hist = filter_daily_cache(
+                guarded_collect(
+                    lf.filter(pl.col("date") >= start_full)
+                    .select(read_cols)
+                    .sort(["symbol", "date"]),
+                    priority="background",
+                )
             )
             if df_hist.is_empty():
                 self._etf_enriched_cache = df_latest.sort(["symbol"])
@@ -1057,7 +1091,10 @@ class KlineRepository:
             return None
         # 只返回 lookback 范围 (日历天数 ≈ 2/3 交易日, 足够覆盖)
         lookback_start = target_date - timedelta(days=lookback_days)
-        return cache.filter((pl.col("date") >= lookback_start) & (pl.col("date") <= target_date))
+        from app.services.kline_sync import filter_daily_cache
+        return filter_daily_cache(
+            cache.filter((pl.col("date") >= lookback_start) & (pl.col("date") <= target_date))
+        )
 
     def get_enriched_range(
         self,
@@ -1078,7 +1115,11 @@ class KlineRepository:
         if cache_min > start or cache_max < end:
             return None
 
-        df = cache.filter((pl.col("date") >= start) & (pl.col("date") <= end))
+        from app.services.kline_sync import filter_daily_cache
+
+        df = filter_daily_cache(
+            cache.filter((pl.col("date") >= start) & (pl.col("date") <= end))
+        )
         if symbols is not None:
             df = df.filter(pl.col("symbol").is_in(symbols))
         if columns and not df.is_empty():

@@ -398,8 +398,16 @@ def build_limit_up_events(
     height_map: dict[str, int] = {}
     enr_path = partition_path(data_dir, trade_date, table="kline_daily_enriched")
     if enr_path.exists():
-        enr = pl.read_parquet(enr_path)
-        if "consecutive_limit_ups" in enr.columns:
+        try:
+            from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+
+            if daily_partition_usable(enr_path):
+                enr = filter_daily_cache(pl.read_parquet(enr_path))
+            else:
+                enr = pl.DataFrame()
+        except Exception:  # noqa: BLE001
+            enr = pl.DataFrame()
+        if not enr.is_empty() and "consecutive_limit_ups" in enr.columns:
             for row in enr.select(["symbol", "consecutive_limit_ups"]).to_dicts():
                 try:
                     if row["consecutive_limit_ups"] is not None:

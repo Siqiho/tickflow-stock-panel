@@ -316,6 +316,13 @@ class ScreenerService:
         t0 = time.perf_counter()
         cached = self.repo.get_enriched_history(target_date, lookback_days)
         if cached is not None and not cached.is_empty():
+            try:
+                from app.services.kline_sync import filter_daily_cache
+
+                cached = filter_daily_cache(cached)
+            except Exception:  # noqa: BLE001
+                cached = pl.DataFrame()
+        if cached is not None and not cached.is_empty():
             # JOIN instruments (repo 缓存不含 name 等列)
             instruments = self.repo.get_instruments()
             if instruments is not None and not instruments.is_empty() and "name" not in cached.columns:
@@ -328,7 +335,13 @@ class ScreenerService:
             return cached
 
         # 优先级 2: 进程级 history_cache (之前的 TTL 缓存)
-        cache_key = (target_date, lookback_days)
+        # Key includes daily route so a custom switch cannot reuse leftover TickFlow.
+        try:
+            from app.services.kline_sync import daily_route
+            route_token = daily_route()
+        except Exception:  # noqa: BLE001
+            route_token = "unresolved"
+        cache_key = (target_date, lookback_days, route_token)
         now = time.monotonic()
         ttl_cached = _history_cache.get(cache_key)
         if ttl_cached is not None:
@@ -346,17 +359,20 @@ class ScreenerService:
         warmup = 60
         start = target_date - timedelta(days=min((lookback_days + warmup) * 2, 180))
 
-        enriched_dir = self.repo.store.data_dir / "kline_daily_enriched"
         read_cols = ["symbol", "date", "open", "high", "low", "close", "volume",
                      "amount", "raw_close", "raw_high", "raw_low", "turnover_rate",
                      "route"]
 
         try:
-            from app.services.kline_sync import filter_daily_cache
+            from app.services.kline_sync import filter_daily_cache, scan_usable_daily
 
+            lf = scan_usable_daily(
+                self.repo.store.data_dir, table="kline_daily_enriched",
+            )
+            if lf is None:
+                return pl.DataFrame()
             lf = (
-                pl.scan_parquet(str(enriched_dir / "**" / "*.parquet"))
-                .filter((pl.col("date") >= start) & (pl.col("date") <= target_date))
+                lf.filter((pl.col("date") >= start) & (pl.col("date") <= target_date))
                 .sort(["symbol", "date"])
             )
             available = [c for c in read_cols if c in lf.collect_schema().names()]
@@ -591,10 +607,18 @@ class ScreenerService:
         return df
 
     def latest_date(self) -> date | None:
+        # Disk provenance first: in-memory cache can still hold a leftover
+        # TickFlow date after a custom daily switch until refresh.
+        try:
+            disk = self.repo.latest_enriched_date("stock")
+        except Exception:  # noqa: BLE001
+            disk = None
+        if disk:
+            return disk
         d = self.repo.enriched_latest_date()
         if d:
             return d
-        # 回退 DuckDB
+        # 回退 DuckDB (route-gated view)
         try:
             res = self.repo.execute_one(
                 "SELECT max(date) FROM kline_enriched",

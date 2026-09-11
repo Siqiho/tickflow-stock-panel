@@ -230,14 +230,22 @@ def _prune_stale_price_partitions(daily_dir: Path, enriched_dir: Path) -> list[s
     pruned: list[str] = []
     if not enriched_dir.exists():
         return pruned
+    from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+
     for part in sorted(p for p in enriched_dir.glob("date=*") if p.is_dir()):
         day = part.name.removeprefix("date=")
         daily_part = daily_dir / f"date={day}"
         if not daily_part.exists():
             continue
+        daily_file = daily_part / "part.parquet"
+        enriched_file = part / "part.parquet"
+        if daily_file.exists() and not daily_partition_usable(daily_file):
+            continue
+        if enriched_file.exists() and not daily_partition_usable(enriched_file):
+            continue
         try:
-            daily = pl.read_parquet(list(daily_part.glob("*.parquet")))
-            enriched = pl.read_parquet(list(part.glob("*.parquet")))
+            daily = filter_daily_cache(pl.read_parquet(list(daily_part.glob("*.parquet"))))
+            enriched = filter_daily_cache(pl.read_parquet(list(part.glob("*.parquet"))))
         except Exception:  # noqa: BLE001
             continue
         if "raw_close" not in enriched.columns or "symbol" not in enriched.columns:

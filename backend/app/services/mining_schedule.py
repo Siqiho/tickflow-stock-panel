@@ -269,16 +269,21 @@ def _instrument_metadata(repo: Any, asset_type: str) -> dict[str, Any]:
 
 
 def _enriched_metadata(root: Path) -> dict[str, Any]:
+    from app.services.kline_sync import daily_partition_usable
+
     records: list[dict[str, Any]] = []
     for partition in sorted(root.glob("date=*"), key=lambda item: item.name):
         try:
             date.fromisoformat(partition.name.removeprefix("date="))
         except ValueError:
             continue
+        part = partition / "part.parquet"
+        if not daily_partition_usable(part):
+            continue
         records.append(
             {
                 "partition": partition.name,
-                "file": _path_metadata(partition / "part.parquet", root=root),
+                "file": _path_metadata(part, root=root),
             }
         )
     return {
