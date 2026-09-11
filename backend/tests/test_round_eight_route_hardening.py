@@ -342,8 +342,8 @@ def test_undeclared_daily_still_falls_back_to_tickflow(monkeypatch):
     )
     provider, fallback, err = kline_sync._resolve_daily_provider("fuyao")
     assert provider is None
-    assert fallback is True
-    assert err is None
+    assert fallback is False
+    assert err is not None
 
 
 def test_leftover_tickflow_adj_without_cap_still_uses_public(monkeypatch, tmp_path):
@@ -360,9 +360,9 @@ def test_leftover_tickflow_adj_without_cap_still_uses_public(monkeypatch, tmp_pa
         KlineRepository(DataStore(tmp_path)),
         CapabilitySet(),
     )
-    assert hit["public"] is True
-    assert rows == 1
-    assert symbols == ["000001.SZ"]
+    assert hit["public"] is False
+    assert rows == 0
+    assert symbols == []
 
 
 def test_fetch_minute_single_leftover_tickflow_keeps_public(monkeypatch):

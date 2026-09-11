@@ -25,7 +25,15 @@ def test_unit_only_has_no_events():
     assert cumulative_to_event_ex_factors([(date(2020, 7, 16), 1.0)]) == []
 
 
-def test_identity_marker_and_coverage_roundtrip(tmp_path: Path):
+def _explicit_public_adj(monkeypatch):
+    from app.services import kline_sync
+
+    monkeypatch.setattr(kline_sync.preferences, "get_adj_factor_provider", lambda: "public")
+    monkeypatch.setattr(kline_sync.preferences, "is_public_adj_factor_provider", lambda name=None: True)
+
+
+def test_identity_marker_and_coverage_roundtrip(tmp_path: Path, monkeypatch):
+    _explicit_public_adj(monkeypatch)
     sym = "688981.SH"
     row = identity_adj_marker_row(sym, as_of=date(2020, 7, 16))
     df = pl.DataFrame([row])
@@ -53,6 +61,8 @@ def test_identity_marker_and_coverage_roundtrip(tmp_path: Path):
 def test_sync_adj_skips_recent_coverage(tmp_path: Path, monkeypatch):
     from datetime import datetime, timezone
     from app.services.free_sources import adj_factor_public as m
+
+    _explicit_public_adj(monkeypatch)
 
     # seed recent coverage for A
     merge_write_adj_coverage(

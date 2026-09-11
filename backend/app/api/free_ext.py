@@ -51,6 +51,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/free", tags=["free-ext"])
 
 
+def _require_lab_public_surface(route: str, label: str) -> None:
+    """Refuse Lab public fetch/write after a custom or unresolved route switch."""
+    token = (route or "").strip().lower()
+    if token in {"tickflow", "public"}:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "lab_public_refused",
+            "message": f"{label} route {token or 'unresolved'} refuses public Lab",
+            "dataset": label,
+            "route": token or "unresolved",
+        },
+    )
+
+
 def _data_dir(request: Request) -> Path:
     repo = getattr(request.app.state, "repo", None)
     if repo is not None and getattr(repo, "store", None) is not None:
@@ -344,6 +360,13 @@ def quality_run(request: Request, date: str | None = None) -> dict:
 
 @router.get("/quotes")
 def free_quotes(symbols: str = Query(..., description="comma-separated symbols")) -> dict:
+    from app.services import preferences
+
+    try:
+        realtime = (preferences.get_realtime_data_provider() or "").strip().lower()
+    except Exception:  # noqa: BLE001
+        realtime = "unresolved"
+    _require_lab_public_surface(realtime, "realtime")
     syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     try:
         rows = fetch_watchlist_quotes(syms)
@@ -354,6 +377,9 @@ def free_quotes(symbols: str = Query(..., description="comma-separated symbols")
 
 @router.get("/intraday/{symbol}")
 def free_intraday(symbol: str) -> dict:
+    from app.services.kline_sync import minute_route
+
+    _require_lab_public_surface(minute_route(), "minute")
     try:
         data = fetch_public_intraday(symbol.upper())
         return {"ok": True, "data": data}
@@ -402,6 +428,9 @@ async def ths_refresh(request: Request) -> dict:
 @router.get("/adj-factor/{symbol}")
 def free_adj_factor_symbol(symbol: str) -> dict:
     """On-demand public (Sina qfq) event-level adj factors for one symbol. Does not write disk."""
+    from app.services.kline_sync import adj_route
+
+    _require_lab_public_surface(adj_route(), "adj")
     try:
         df = fetch_adj_factors_symbol(symbol.upper())
         items = df.to_dicts() if df is not None and not df.is_empty() else []
@@ -440,6 +469,9 @@ def free_adj_factor_sync(
     if limit and limit > 0:
         sym_list = sym_list[:limit]
     at = "etf" if asset_type.lower() == "etf" else "stock"
+    from app.services.kline_sync import adj_route
+
+    _require_lab_public_surface(adj_route(), "adj")
     try:
         result = sync_adj_factor_public(sym_list, data_dir, asset_type=at)
         if used_scope:
@@ -455,6 +487,9 @@ def free_financials_symbol(
     max_periods: int = Query(0, ge=0, le=40, description="0=use preferences.financial_max_periods"),
 ) -> dict:
     """On-demand public financials (East Money HSF10). Does not write disk."""
+    from app.services.financial_sync import financial_write_route
+
+    _require_lab_public_surface(financial_write_route(), "financial")
     try:
         got = fetch_financials_symbol(symbol.upper(), max_periods=max_periods)
         out = {}
@@ -494,6 +529,9 @@ def free_financials_sync(
             raise HTTPException(status_code=400, detail=f"no symbols for scope={used_scope}")
     if limit and limit > 0:
         sym_list = sym_list[:limit]
+    from app.services.financial_sync import financial_write_route
+
+    _require_lab_public_surface(financial_write_route(), "financial")
     try:
         from app.services import preferences as _prefs
         mp = max_periods if max_periods and max_periods > 0 else _prefs.get_financial_max_periods()
@@ -533,6 +571,9 @@ def free_pool_get(pool_id: str, request: Request, refresh: bool = Query(False)) 
     if pid not in POOL_SPECS:
         raise HTTPException(status_code=400, detail=f"unsupported pool_id: {pool_id}")
     data_dir = _data_dir(request)
+    from app.tickflow.pools import pool_route
+
+    _require_lab_public_surface(pool_route(), "pool")
     try:
         if refresh:
             from app.services.free_sources.pools_public import write_pool_parquet
@@ -569,6 +610,9 @@ def free_pools_sync(
     """Refresh public index constituent caches into data/pools/*.parquet."""
     data_dir = _data_dir(request)
     ids = [p.strip().upper() for p in pools.split(",") if p.strip()]
+    from app.tickflow.pools import pool_route
+
+    _require_lab_public_surface(pool_route(), "pool")
     try:
         return sync_pools_public(data_dir, pool_ids=ids or None)
     except Exception as e:

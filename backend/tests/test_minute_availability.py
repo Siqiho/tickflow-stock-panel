@@ -152,6 +152,6 @@ def test_feature_quote_tickflow_without_cap_is_unavailable(monkeypatch):
     assert feats["quote"]["available"] is False
     assert feats["quote"]["source"] == "none"
     assert feats["quote"]["mode"] == "none"
-    assert feats["adj_factor"]["available"] is True
-    assert feats["adj_factor"]["source"] == "local_public"
-    assert feats["adj_factor"]["reason_code"] == "public_fallback"
+    assert feats["adj_factor"]["available"] is False
+    assert feats["adj_factor"]["source"] == "none"
+    assert feats["adj_factor"]["reason_code"] == "no_capability"

@@ -247,7 +247,7 @@ def test_depth_cache_rejects_stale_tickflow_for_custom(monkeypatch, tmp_path):
     assert depth_cache_usable(_sealed_df(), "fuyao") is False
     assert depth_cache_usable(_sealed_df(route="fuyao"), "fuyao") is True
     assert depth_stored_usable("tickflow", "fuyao") is False
-    assert depth_stored_usable("public", "tickflow") is True
+    assert depth_stored_usable("public", "tickflow") is False
 
     part = tmp_path / "sealed_l1" / "date=2026-07-17"
     part.mkdir(parents=True)
@@ -284,14 +284,14 @@ def test_depth_write_tags_current_route(monkeypatch, tmp_path):
 
 def test_leftover_tickflow_depth_accepts_public_tag(monkeypatch, tmp_path):
     monkeypatch.setattr(preferences, "get_depth5_data_provider", lambda: "tickflow")
-    assert depth_cache_usable(_sealed_df(route="public"), "tickflow") is True
+    assert depth_cache_usable(_sealed_df(route="public"), "tickflow") is False
     part = tmp_path / "sealed_l1" / "date=2026-07-17"
     part.mkdir(parents=True)
     _sealed_df(route="public").write_parquet(part / "part.parquet")
     svc = DepthService()
     svc.set_repo(KlineRepository(DataStore(tmp_path)))
-    assert svc._persisted_for_date(date(2026, 7, 17)) is True
-    assert "000001.SZ" in svc.get_sealed_map(date(2026, 7, 17), is_down=False)
+    assert svc._persisted_for_date(date(2026, 7, 17)) is False
+    assert svc.get_sealed_map(date(2026, 7, 17), is_down=False) == {}
 
 
 def test_depth_memory_skips_after_route_switch(monkeypatch, tmp_path):
@@ -340,9 +340,9 @@ def test_undeclared_daily_still_falls_back_to_tickflow(monkeypatch):
     )
     provider, fallback, err = kline_sync._resolve_daily_provider("fuyao")
     assert provider is None
-    assert fallback is True
-    assert err is None
-    assert kline_sync.daily_route() == "tickflow"
+    assert fallback is False
+    assert err is not None
+    assert kline_sync.daily_route() == "unresolved"
 
 
 def test_daily_prefs_unreadable_stays_fail_closed(monkeypatch):

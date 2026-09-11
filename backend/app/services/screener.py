@@ -234,7 +234,11 @@ class ScreenerService:
             return pl.DataFrame()
 
         try:
-            df = pl.read_parquet(target_parquet)
+            from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+
+            if not daily_partition_usable(target_parquet):
+                return pl.DataFrame()
+            df = filter_daily_cache(pl.read_parquet(target_parquet))
         except Exception as e:  # noqa: BLE001
             logger.warning("load_enriched_for_date failed: %s", e)
             return pl.DataFrame()
@@ -259,9 +263,12 @@ class ScreenerService:
         # turnover_rate 是 enriched 存储列, 必须随行透传: 否则即时计算后该列
         # 丢失, 自定义 SQL 用它做条件会 Binder Error 被吞成空结果 (#187)
         read_cols = ["symbol", "date", "open", "high", "low", "close", "volume",
-                     "amount", "raw_close", "raw_high", "raw_low", "turnover_rate"]
+                     "amount", "raw_close", "raw_high", "raw_low", "turnover_rate",
+                     "route"]
 
         try:
+            from app.services.kline_sync import filter_daily_cache
+
             lf = (
                 pl.scan_parquet(str(enriched_dir / "**" / "*.parquet"))
                 .filter(
@@ -271,7 +278,7 @@ class ScreenerService:
                 .sort(["symbol", "date"])
             )
             available = [c for c in read_cols if c in lf.schema]
-            df_hist = lf.select(available).collect()
+            df_hist = filter_daily_cache(lf.select(available).collect())
         except Exception as e:  # noqa: BLE001
             logger.warning("warmup history load failed: %s", e)
             df_hist = df_target
@@ -341,16 +348,19 @@ class ScreenerService:
 
         enriched_dir = self.repo.store.data_dir / "kline_daily_enriched"
         read_cols = ["symbol", "date", "open", "high", "low", "close", "volume",
-                     "amount", "raw_close", "raw_high", "raw_low", "turnover_rate"]
+                     "amount", "raw_close", "raw_high", "raw_low", "turnover_rate",
+                     "route"]
 
         try:
+            from app.services.kline_sync import filter_daily_cache
+
             lf = (
                 pl.scan_parquet(str(enriched_dir / "**" / "*.parquet"))
                 .filter((pl.col("date") >= start) & (pl.col("date") <= target_date))
                 .sort(["symbol", "date"])
             )
             available = [c for c in read_cols if c in lf.collect_schema().names()]
-            df_hist = lf.select(available).collect()
+            df_hist = filter_daily_cache(lf.select(available).collect())
         except Exception as e:  # noqa: BLE001
             logger.warning("load_enriched_history failed: %s", e)
             return pl.DataFrame()

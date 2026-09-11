@@ -236,8 +236,8 @@ def test_leftover_tickflow_adj_accepts_public_sina_tag(monkeypatch, tmp_path):
     path.mkdir(parents=True)
     _adj_df(route="public").write_parquet(path / "all.parquet")
     monkeypatch.setattr(kline_sync.preferences, "get_adj_factor_provider", lambda: "tickflow")
-    assert kline_sync.adj_cache_usable(_adj_df(route="public"), "tickflow") is True
-    assert kline_sync.get_adj_factor_df(tmp_path)["symbol"].to_list() == ["000001.SZ"]
+    assert kline_sync.adj_cache_usable(_adj_df(route="public"), "tickflow") is False
+    assert kline_sync.get_adj_factor_df(tmp_path).is_empty()
 
 
 def test_watchlist_financial_join_skips_stale_custom(monkeypatch, tmp_path):
@@ -323,10 +323,10 @@ def test_undeclared_daily_still_falls_back_to_tickflow(monkeypatch):
     )
     provider, fallback, err = kline_sync._resolve_daily_provider("fuyao")
     assert provider is None
-    assert fallback is True
-    assert err is None
-    assert kline_sync.daily_route() == "tickflow"
-    assert kline_sync.live_enriched_overlay_allowed() is True
+    assert fallback is False
+    assert err is not None
+    assert kline_sync.daily_route() == "unresolved"
+    assert kline_sync.live_enriched_overlay_allowed() is False
 
 
 def test_daily_prefs_unreadable_blocks_live_overlay(monkeypatch):

@@ -75,10 +75,10 @@ def _empty_adj_coverage() -> pl.DataFrame:
 
 
 def _adj_public_route_ok() -> bool:
-    """Leftover TickFlow / public may read or write sina coverage.
+    """Explicit public adj may read or write sina coverage.
 
-    Custom / unresolved must not treat leftover public coverage as current
-    and must not write sina factors into a custom adj file.
+    Leftover TickFlow / custom / unresolved must not treat leftover public
+    coverage as current and must not write sina factors into another route.
     """
     try:
         from app.services.kline_sync import adj_public_write_allowed

@@ -2,9 +2,8 @@
 
 Keeps prior contracts:
 - leftover TickFlow + free realtime stays mode=none (no silent public)
-- undeclared daily / minute / adj still fall back to TickFlow
-- leftover TickFlow + no ADJ cap still uses the public sina adapter
 - entitled TickFlow minute fallback after a custom call failure
+Round 16 closed undeclared custom → TickFlow and leftover silent sina qfq.
 """
 from __future__ import annotations
 
@@ -80,27 +79,25 @@ def test_custom_adj_failure_is_fail_closed(monkeypatch, tmp_path):
     public.assert_not_called()
 
 
-def test_undeclared_custom_adj_keeps_tickflow_leftover(monkeypatch, tmp_path):
+def test_undeclared_custom_adj_is_fail_closed(monkeypatch, tmp_path):
     provider = MagicMock()
     _route_custom_adj(monkeypatch, provider, declared=False)
-    hit = {"tf": False}
-    mock_tf = MagicMock()
-    mock_tf.klines.ex_factors.return_value = _adj_df()
-    monkeypatch.setattr(
-        kline_sync,
-        "get_client",
-        lambda: (hit.__setitem__("tf", True) or mock_tf),
-    )
+    tf = MagicMock(side_effect=AssertionError("must not call TickFlow"))
+    public = MagicMock(side_effect=AssertionError("must not use public adapter"))
+    monkeypatch.setattr(kline_sync, "get_client", tf)
+    monkeypatch.setattr(kline_sync, "_sync_public_adj_factor", public)
 
     rows, symbols = kline_sync.sync_adj_factor(
         ["000001.SZ"],
         KlineRepository(DataStore(tmp_path)),
         CapabilitySet({Cap.ADJ_FACTOR: CapabilityLimits()}),
     )
-    assert hit["tf"] is True
-    assert rows == 1
-    assert symbols == ["000001.SZ"]
+    assert rows == 0
+    assert symbols == []
     provider.get_adj_factors.assert_not_called()
+    tf.assert_not_called()
+    public.assert_not_called()
+    assert kline_sync.adj_route() == "unresolved"
 
 
 def test_fetch_adj_single_uses_custom_provider(monkeypatch):
@@ -175,8 +172,8 @@ def test_undeclared_daily_still_falls_back_to_tickflow(monkeypatch):
     monkeypatch.setattr(custom, "provider_has_dataset", lambda name, dataset: False)
     provider, fallback, err = kline_sync._resolve_daily_provider("fuyao")
     assert provider is None
-    assert fallback is True
-    assert err is None
+    assert fallback is False
+    assert err is not None
 
 
 def test_intraday_monitor_batch_uses_custom_minute(monkeypatch):
