@@ -63,6 +63,13 @@ def _utc_iso() -> str:
 
 
 def list_partition_dates(data_dir: Path, table: str = "kline_daily") -> list[date]:
+    if table in {"kline_daily", "kline_daily_enriched"}:
+        try:
+            from app.services.kline_sync import usable_daily_partition_dates
+
+            return usable_daily_partition_dates(data_dir, table=table)
+        except Exception:  # noqa: BLE001
+            return []
     root = Path(data_dir) / table
     if not root.exists():
         return []
@@ -81,6 +88,22 @@ def list_partition_dates(data_dir: Path, table: str = "kline_daily") -> list[dat
 
 def partition_path(data_dir: Path, day: date, table: str = "kline_daily") -> Path:
     return Path(data_dir) / table / f"date={day.isoformat()}" / "part.parquet"
+
+
+def _read_usable_daily(data_dir: Path, trade_date: date) -> pl.DataFrame:
+    """Read one kline_daily partition only when it matches the current route."""
+    daily_path = partition_path(data_dir, trade_date, table="kline_daily")
+    if not daily_path.exists():
+        return pl.DataFrame()
+    try:
+        from app.services.kline_sync import daily_cache_usable, daily_route
+
+        daily = pl.read_parquet(daily_path)
+        if not daily_cache_usable(daily, daily_route()):
+            return pl.DataFrame()
+        return daily
+    except Exception:  # noqa: BLE001
+        return pl.DataFrame()
 
 
 def _read_instruments(data_dir: Path) -> pl.DataFrame:
@@ -149,10 +172,9 @@ def build_valuation_daily(
     instruments 快照股本不用于历史估值。
     """
     data_dir = Path(data_dir)
-    daily_path = partition_path(data_dir, trade_date, table="kline_daily")
-    if not daily_path.exists():
+    daily = _read_usable_daily(data_dir, trade_date)
+    if daily.is_empty():
         return pl.DataFrame()
-    daily = pl.read_parquet(daily_path)
     price_col = "raw_close" if "raw_close" in daily.columns else "close"
     if price_col not in daily.columns or "symbol" not in daily.columns:
         return pl.DataFrame()
@@ -295,15 +317,23 @@ def _rule_limit_price(prev_close: float, pct: float, *, up: bool) -> float:
 
 
 def _seal_fund_map(data_dir: Path, trade_date: date) -> dict[str, float]:
-    """封单金额只取与 trade_date 同日的 sealed_l1 分区。"""
+    """封单金额只取与 trade_date 同日且当前 depth route 可用的 sealed_l1。"""
     part = data_dir / "sealed_l1" / f"date={trade_date.isoformat()}"
     out: dict[str, float] = {}
     if not part.exists():
+        return out
+    try:
+        from app.services.depth_service import depth_cache_usable, depth_route
+
+        route = depth_route()
+    except Exception:  # noqa: BLE001
         return out
     for path in sorted(part.glob("*.parquet")):
         try:
             sdf = pl.read_parquet(path)
         except Exception:
+            continue
+        if not depth_cache_usable(sdf, route):
             continue
         if not {"symbol", "sealed_up", "bid1_vol"}.issubset(sdf.columns):
             continue
@@ -328,10 +358,9 @@ def build_limit_up_events(
     只能保证当前名称快照。
     """
     data_dir = Path(data_dir)
-    daily_path = partition_path(data_dir, trade_date, table="kline_daily")
-    if not daily_path.exists():
+    daily = _read_usable_daily(data_dir, trade_date)
+    if daily.is_empty():
         return pl.DataFrame()
-    daily = pl.read_parquet(daily_path)
     close_c = "raw_close" if "raw_close" in daily.columns else "close"
     high_c = "raw_high" if "raw_high" in daily.columns else "high"
     low_c = "raw_low" if "raw_low" in daily.columns else "low"
@@ -358,9 +387,8 @@ def build_limit_up_events(
     prev_day = _prev_trade_date(data_dir, trade_date)
     prev_map: dict[str, float] = {}
     if prev_day is not None:
-        prev_path = partition_path(data_dir, prev_day, table="kline_daily")
-        if prev_path.exists():
-            prev = pl.read_parquet(prev_path)
+        prev = _read_usable_daily(data_dir, prev_day)
+        if not prev.is_empty():
             pc = "raw_close" if "raw_close" in prev.columns else "close"
             if pc in prev.columns:
                 for row in prev.select(["symbol", pc]).to_dicts():
@@ -637,11 +665,10 @@ def rebuild_reference_derived(
             continue
         entries: list[dict[str, Any]] = []
         for day in dates:
-            daily_path = partition_path(data_dir, day, table="kline_daily")
+            src = _read_usable_daily(data_dir, day)
             src_rows = 0
             src_symbols = 0
-            if daily_path.exists():
-                src = pl.read_parquet(daily_path, columns=["symbol"])
+            if not src.is_empty() and "symbol" in src.columns:
                 src_rows = int(src.height)
                 src_symbols = int(src.get_column("symbol").n_unique())
             scope = _coverage_scope(src_symbols)

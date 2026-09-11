@@ -713,9 +713,9 @@ def merge_write_adj_factor(
             return 0, []
         df = _tag_adj_route(df)
         route = adj_route()
-    except Exception:  # noqa: BLE001
-        adj_cache_usable = None
-        route = ""
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("public adj_factor write refused (route gate unavailable): %s", exc)
+        return 0, []
 
     affected = df["symbol"].unique().to_list()
     factor_dir = "adj_factor_etf" if asset_type == "etf" else "adj_factor"
