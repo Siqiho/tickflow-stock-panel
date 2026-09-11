@@ -9,7 +9,7 @@ import { toast } from '@/components/Toast'
 const INPUT_CLS =
   'w-full h-9 px-2.5 rounded-lg bg-base border-0 ring-1 ring-border/40 text-xs text-foreground placeholder:text-muted/30 focus:outline-none focus:ring-2 focus:ring-accent/40 transition-shadow'
 
-const DATASETS = ['daily', 'adj_factor', 'realtime', 'minute', 'full_minute', 'depth5', 'financial'] as const
+const DATASETS = ['daily', 'adj_factor', 'realtime', 'minute', 'full_minute', 'depth5', 'financial', 'pool'] as const
 type DatasetKey = typeof DATASETS[number]
 
 const DATASET_LABEL: Record<DatasetKey, string> = {
@@ -20,6 +20,7 @@ const DATASET_LABEL: Record<DatasetKey, string> = {
   full_minute: '全量分钟',
   depth5: '五档盘口',
   financial: '财务数据',
+  pool: '指数成分',
 }
 
 const TARGET_FIELDS: Record<DatasetKey, string[]> = {
@@ -30,6 +31,7 @@ const TARGET_FIELDS: Record<DatasetKey, string[]> = {
   full_minute: ['symbol', 'datetime', 'open', 'high', 'low', 'close', 'volume', 'amount'],
   depth5: ['symbol', 'ask_volumes', 'bid_volumes', 'timestamp'],
   financial: ['symbol', 'end_date', 'report_type'],
+  pool: ['symbol', 'as_of'],
 }
 
 // 内部字段的中文说明 (下拉选项展示用)
@@ -58,6 +60,7 @@ const FIELD_LABELS: Record<string, string> = {
   bid_volumes: '买盘量数组 (手, bid1 起)',
   end_date: '报告期 (YYYY-MM-DD)',
   report_type: '报表类型 (income / balance_sheet / cash_flow / metrics)',
+  as_of: '成分日期 (YYYY-MM-DD)',
 }
 
 function normalizeConfig(config: CustomSourceConfig): CustomSourceConfig {

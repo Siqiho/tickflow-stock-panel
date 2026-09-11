@@ -21,6 +21,7 @@ DEFAULT_CURRENT = {
     "depth5_data_provider": "tickflow",
     "realtime_data_provider": "tickflow",
     "financial_data_provider": "tickflow",
+    "pool_provider": "tickflow",
 }
 
 
@@ -39,13 +40,17 @@ def test_registry_covers_all_routing_fields():
     assert sorted(routable) == sorted(DEFAULT_CURRENT)
     assert len(set(routable)) == len(routable)
     assert {c["id"] for c in CAPABILITY_REGISTRY} == {
-        "realtime", "daily", "minute", "full_minute", "depth5", "adj_factor", "financial",
+        "realtime", "daily", "minute", "full_minute", "depth5", "adj_factor", "financial", "pool",
     }
     full_minute = next(c for c in CAPABILITY_REGISTRY if c["id"] == "full_minute")
     assert full_minute["field"] == "full_minute_data_provider"
     assert full_minute["tf_tier"] == "expert"
+    pool = next(c for c in CAPABILITY_REGISTRY if c["id"] == "pool")
+    assert pool["field"] == "pool_provider"
+    assert pool["default"] == "public"
+    assert pool["tf_tier"] == "starter"
     for cap in CAPABILITY_REGISTRY:
-        expected_default = "public" if cap["id"] == "realtime" else "tickflow"
+        expected_default = "public" if cap["id"] in {"realtime", "pool"} else "tickflow"
         assert cap["default"] == expected_default
         assert cap["tf_tier"] in ("none", "starter", "pro", "expert")
         assert "follow" not in cap
@@ -56,10 +61,10 @@ def test_matrix_without_third_party_sources(monkeypatch):
     _fake_sources(monkeypatch, [])
     matrix = build_capability_matrix(dict(DEFAULT_CURRENT), tickflow_tier="expert")
     assert matrix["tickflow_tier"] == "expert"
-    assert len(matrix["capabilities"]) == 7
+    assert len(matrix["capabilities"]) == 8
     for cap in matrix["capabilities"]:
         names = [c["name"] for c in cap["candidates"]]
-        if cap["id"] in {"adj_factor", "realtime", "financial"}:
+        if cap["id"] in {"adj_factor", "realtime", "financial", "pool"}:
             assert names == ["tickflow", "public"]
         else:
             assert names == ["tickflow"]
@@ -99,16 +104,17 @@ def test_tickflow_candidates_filtered_by_tier(monkeypatch):
     caps = _by_id(build_capability_matrix(dict(DEFAULT_CURRENT), tickflow_tier="free"))
     assert caps["daily"]["tf_available"] is True
     assert [c["name"] for c in caps["daily"]["candidates"]] == ["tickflow"]
-    for cap_id in ("realtime", "minute", "depth5", "adj_factor", "financial"):
+    for cap_id in ("realtime", "minute", "depth5", "adj_factor", "financial", "pool"):
         assert caps[cap_id]["tf_available"] is False
     assert [c["name"] for c in caps["minute"]["candidates"]] == []
     assert [c["name"] for c in caps["depth5"]["candidates"]] == []
-    for cap_id in ("realtime", "adj_factor", "financial"):
+    for cap_id in ("realtime", "adj_factor", "financial", "pool"):
         assert [c["name"] for c in caps[cap_id]["candidates"]] == ["public"]
-    # starter 解锁实时与除权, 分钟/五档/财务仍锁
+    # starter 解锁实时、除权与成分, 分钟/五档/财务仍锁
     caps = _by_id(build_capability_matrix(dict(DEFAULT_CURRENT), tickflow_tier="starter"))
     assert caps["realtime"]["tf_available"] is True
     assert caps["adj_factor"]["tf_available"] is True
+    assert caps["pool"]["tf_available"] is True
     assert caps["minute"]["tf_available"] is False
     assert caps["depth5"]["tf_available"] is False
     assert caps["financial"]["tf_available"] is False
@@ -278,10 +284,10 @@ def test_full_minute_routes_like_other_capabilities(monkeypatch):
 
 
 def test_public_only_on_implemented_capabilities(monkeypatch):
-    """public 只进入复权/实时/财务候选, 不放行日K/分钟/五档/全量分钟。"""
+    """public 只进入复权/实时/财务/成分候选, 不放行日K/分钟/五档/全量分钟。"""
     _fake_sources(monkeypatch, [])
     caps = _by_id(build_capability_matrix(dict(DEFAULT_CURRENT), tickflow_tier="expert"))
-    for cap_id in ("adj_factor", "realtime", "financial"):
+    for cap_id in ("adj_factor", "realtime", "financial", "pool"):
         assert "public" in [c["name"] for c in caps[cap_id]["candidates"]]
     for cap_id in ("daily", "minute", "depth5", "full_minute"):
         assert "public" not in [c["name"] for c in caps[cap_id]["candidates"]]

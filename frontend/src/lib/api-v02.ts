@@ -55,6 +55,7 @@ export type ProviderField =
   | 'depth5_data_provider'
   | 'realtime_data_provider'
   | 'financial_data_provider'
+  | 'pool_provider'
 export type ResearchCandidateKind = 'factor' | 'strategy'
 export type ResearchCandidateStatus = 'pending' | 'validated' | 'rejected'
 export type ScoringDirection = 'high' | 'low'

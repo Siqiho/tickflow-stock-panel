@@ -160,18 +160,26 @@ def daily_provider_is_custom() -> bool:
     """True when daily_data_provider resolves to a declared custom/plugin source.
 
     Resolve failure of a non-TickFlow selection also returns True so callers
-    refuse TickFlow overwrite / public EOD mix.
+    refuse TickFlow overwrite / public EOD mix. Unreadable prefs are treated
+    the same way — do not fail-open to leftover TickFlow.
     """
-    _, fallback, _ = _resolve_daily_provider(preferences.get_daily_data_provider())
+    try:
+        name = preferences.get_daily_data_provider()
+    except Exception:  # noqa: BLE001
+        return True
+    _, fallback, _ = _resolve_daily_provider(name)
     return not fallback
 
 
 def routed_daily_source_label() -> str:
     """Pipeline ``daily_source`` for the batch path."""
-    if daily_provider_is_custom():
-        name = (preferences.get_daily_data_provider() or "").strip().lower()
-        return name if name and name != "tickflow" else "custom"
-    return "tickflow_batch"
+    try:
+        if daily_provider_is_custom():
+            name = (preferences.get_daily_data_provider() or "").strip().lower()
+            return name if name and name != "tickflow" else "custom"
+        return "tickflow_batch"
+    except Exception:  # noqa: BLE001
+        return "none"
 
 
 def _refresh_daily_view(repo: KlineRepository) -> None:
@@ -238,7 +246,11 @@ def sync_and_persist_daily_batch(
     end_time = end_date or datetime.now()
     start_time = start_date or (end_time - timedelta(days=365))
 
-    provider_name = preferences.get_daily_data_provider()
+    try:
+        provider_name = preferences.get_daily_data_provider()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("daily prefs unreadable, fail-closed (no TickFlow mix): %s", e)
+        return 0
     provider, fallback, err = _resolve_daily_provider(provider_name)
     if err is not None:
         logger.warning(
@@ -300,7 +312,11 @@ def fetch_routed_daily(
     if not symbols:
         return pl.DataFrame()
 
-    provider_name = preferences.get_daily_data_provider()
+    try:
+        provider_name = preferences.get_daily_data_provider()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("daily prefs unreadable, fail-closed (no TickFlow mix): %s", e)
+        return pl.DataFrame()
     provider, fallback, err = _resolve_daily_provider(provider_name)
     if err is not None:
         logger.warning(
@@ -1213,8 +1229,25 @@ def _resolve_minute_provider(
 
 def minute_provider_is_custom() -> bool:
     """True when minute_data_provider resolves to a declared custom/plugin source."""
-    _, fallback, err = _resolve_minute_provider(preferences.get_minute_data_provider())
+    try:
+        name = preferences.get_minute_data_provider()
+    except Exception:  # noqa: BLE001
+        return True
+    _, fallback, err = _resolve_minute_provider(name)
     return (not fallback) and err is None
+
+
+def minute_may_use_leftover_public() -> bool:
+    """Leftover TickFlow / undeclared minute may use public or TDX single-symbol view.
+
+    Declared custom (including resolve failure) and unreadable prefs must not.
+    """
+    try:
+        name = preferences.get_minute_data_provider()
+    except Exception:  # noqa: BLE001
+        return False
+    _, fallback, err = _resolve_minute_provider(name)
+    return bool(fallback) and err is None
 
 
 def minute_sync_allowed(capset: CapabilitySet | None) -> bool:
@@ -1491,7 +1524,11 @@ def _try_custom_minute(
     on_chunk_done: Callable[[int, int, str], None] | None = None,
 ) -> tuple[pl.DataFrame | None, bool]:
     """尝试自定义分钟源。 (None, True) 回退 TickFlow；(df, False) 直接用。"""
-    provider_name = preferences.get_minute_data_provider()
+    try:
+        provider_name = preferences.get_minute_data_provider()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("minute prefs unreadable, fail-closed (no TickFlow mix): %s", e)
+        return (None, False)
     provider, fallback, err = _resolve_minute_provider(provider_name)
     if err is not None:
         logger.warning(
@@ -1603,8 +1640,8 @@ def fetch_minute_single(
             logger.warning("fetch_minute_single(%s, %s) TickFlow failed: %s", symbol, trade_date, e)
 
     # Leftover TickFlow / undeclared: single-symbol public view (does not persist).
-    # Declared custom call failure must not mix public bars.
-    if minute_provider_is_custom():
+    # Declared custom / prefs-unreadable / resolve failure must not mix public bars.
+    if not minute_may_use_leftover_public():
         return pl.DataFrame()
     return _public_minute_fallback(symbol, trade_date)
 

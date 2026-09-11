@@ -122,12 +122,32 @@ def _get_symbols(data_dir: Path) -> list[str]:
     """获取财务同步标的列表。
 
     - public 财务源：使用 preferences.public_data_scope（默认 CSI300）
-    - TickFlow：instruments 全表（Expert 批量）
+    - custom 财务源：使用 pipeline_universe_scope，失败 fail-closed
+    - TickFlow：instruments 全表（Expert 批量 leftover）
     """
     route = _financial_route()
     if route == "unresolved":
         logger.warning("financial symbols skipped: financial provider prefs unreadable")
         return []
+    if route == "custom":
+        try:
+            from app.services import preferences
+            from app.services.universe_scope import resolve_symbols
+            scope = preferences.get_pipeline_universe_scope()
+            syms = resolve_symbols(
+                scope,
+                data_dir=data_dir,
+                default="ALL",
+                refresh_pools_if_missing=True,
+            )
+            if syms:
+                logger.info("financial symbols from pipeline_universe_scope=%s n=%d", scope, len(syms))
+                return syms
+            logger.warning("custom financial scope %s resolved empty, fail-closed", scope)
+            return []
+        except Exception as e:
+            logger.warning("custom financial scope resolve failed, fail-closed: %s", e)
+            return []
     if route == "public":
         try:
             from app.services import preferences

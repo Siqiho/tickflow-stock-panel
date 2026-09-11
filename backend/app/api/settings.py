@@ -27,6 +27,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
+def _accept_routed_provider(raw: object, *, default: str) -> str:
+    """Persist builtin aliases or a declared custom/plugin name.
+
+    Dedicated PUTs used to 400 unknown names, so apply-source / plugins could
+    not write pool / financial / adj through those endpoints. Empty tokens
+    heal to *default*; resolvers stay fail-closed for unknown names.
+    """
+    name = str(raw or default).strip().lower()
+    if not name:
+        raise HTTPException(status_code=400, detail=f"unsupported provider: {raw!r}")
+    return name
+
+
 def _require_self_hosted_ai_settings() -> None:
     """Cloud subscription credentials are deployment-owned, never WebView-owned."""
     from app.services.ai_provider import is_cloud_subscription_mode
@@ -767,10 +780,7 @@ class AdjFactorProviderPrefs(BaseModel):
 def update_adj_factor_provider(req: AdjFactorProviderPrefs) -> dict:
     """设置除权因子数据源。public/sina* 使用免费新浪 qfq，不依赖 TickFlow ADJ_FACTOR。"""
     from app.services import preferences
-    allowed = {"tickflow", "public", "sina", "sina_qfq", "free", "same_as_daily"}
-    val = (req.adj_factor_provider or "same_as_daily").strip().lower()
-    if val not in allowed:
-        raise HTTPException(status_code=400, detail=f"unsupported adj_factor_provider: {val}")
+    val = _accept_routed_provider(req.adj_factor_provider, default="same_as_daily")
     preferences.save_server({"adj_factor_provider": val})
     return {"adj_factor_provider": preferences.get_adj_factor_provider()}
 
@@ -785,10 +795,7 @@ class FinancialProviderPrefs(BaseModel):
 def update_financial_provider(req: FinancialProviderPrefs) -> dict:
     """设置财务四表数据源。public/eastmoney 使用东财 HSF10，不依赖 TickFlow FINANCIAL。"""
     from app.services import preferences
-    allowed = {"tickflow", "public", "eastmoney", "em", "free"}
-    val = (req.financial_provider or "tickflow").strip().lower()
-    if val not in allowed:
-        raise HTTPException(status_code=400, detail=f"unsupported financial_provider: {val}")
+    val = _accept_routed_provider(req.financial_provider, default="tickflow")
     preferences.save_server({"financial_provider": val, "financial_data_provider": val})
     return {"financial_provider": preferences.get_financial_provider()}
 
@@ -803,10 +810,7 @@ class PoolProviderPrefs(BaseModel):
 def update_pool_provider(req: PoolProviderPrefs) -> dict:
     """设置指数成分池数据源。public/csindex 使用中证官方 XLS(+新浪 fallback)。"""
     from app.services import preferences
-    allowed = {"tickflow", "public", "csindex", "sina", "free"}
-    val = (req.pool_provider or "public").strip().lower()
-    if val not in allowed:
-        raise HTTPException(status_code=400, detail=f"unsupported pool_provider: {val}")
+    val = _accept_routed_provider(req.pool_provider, default="public")
     preferences.save_server({"pool_provider": val})
     return {"pool_provider": preferences.get_pool_provider()}
 
@@ -1772,7 +1776,7 @@ def list_data_sources() -> dict:
         "builtin": [{
             "name": "tickflow",
             "display_name": "TickFlow",
-            "datasets": ["daily", "adj_factor", "realtime", "minute", "full_minute", "depth5", "financial"],
+            "datasets": ["daily", "adj_factor", "realtime", "minute", "full_minute", "depth5", "financial", "pool"],
         }],
         "plugins": custom_sources.list_plugins(),
         "custom": custom_sources.list_sources(),
@@ -1796,6 +1800,7 @@ def get_capability_matrix() -> dict:
         "depth5_data_provider": preferences.get_depth5_data_provider(),
         "full_minute_data_provider": preferences.get_full_minute_data_provider(),
         "financial_data_provider": preferences.get_financial_provider(),
+        "pool_provider": preferences.get_pool_provider(),
     }
     return build_capability_matrix(current, tickflow_tier=tier_label())
 
@@ -1888,6 +1893,7 @@ class DataProvidersIn(BaseModel):
     depth5_data_provider: str | None = None
     realtime_data_provider: str | None = None
     financial_data_provider: str | None = None
+    pool_provider: str | None = None
 
 
 class MiningSchedulePrefs(BaseModel):
@@ -1933,6 +1939,7 @@ def update_data_providers(req: DataProvidersIn, request: Request) -> dict:
         "depth5_data_provider": preferences.get_depth5_data_provider(),
         "realtime_data_provider": preferences.get_realtime_data_provider(),
         "financial_data_provider": preferences.get_financial_provider(),
+        "pool_provider": preferences.get_pool_provider(),
     }
 
 
@@ -1993,6 +2000,8 @@ def delete_data_source(name: str, request: Request) -> dict:
         updates["full_minute_data_provider"] = "tickflow"
     if preferences.get_depth5_data_provider() == name:
         updates["depth5_data_provider"] = "tickflow"
+    if preferences.get_pool_provider() == name:
+        updates["pool_provider"] = "public"
     if updates:
         preferences.save_server(updates)
     try:

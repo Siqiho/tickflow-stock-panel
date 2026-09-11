@@ -245,13 +245,19 @@ def resolve_universe(capset: CapabilitySet) -> list[str]:
         tickflow_all_a_expansion_allowed,
     )
 
-    scope = normalize_scope(_prefs.get_pipeline_universe_scope(), default=SCOPE_ALL)
+    try:
+        scope = normalize_scope(_prefs.get_pipeline_universe_scope(), default=SCOPE_ALL)
+        allow_tickflow_all = tickflow_all_a_expansion_allowed(capset, scope=scope)
+    except Exception:
+        # Unreadable universe prefs: do not fail-open to TickFlow CN_Equity_A.
+        scope = SCOPE_ALL
+        allow_tickflow_all = False
     logger.info("resolve_universe scope=%s (%s)", scope, SCOPE_LABELS.get(scope, scope))
 
     # TickFlow universe only when pool_provider is explicitly TickFlow and
     # daily is not a declared custom source. Public / custom pool or custom
     # daily must not silently expand ALL via quote.pool / CN_Equity_A.
-    if tickflow_all_a_expansion_allowed(capset, scope=scope):
+    if allow_tickflow_all:
         try:
             all_a = get_pool("CN_Equity_A", refresh=True)
             if all_a:

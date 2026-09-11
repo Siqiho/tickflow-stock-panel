@@ -512,7 +512,11 @@ class QuoteService:
 
         t0 = time.perf_counter()
         now_ts = time.perf_counter()
-        provider = preferences.get_realtime_data_provider()
+        try:
+            provider = preferences.get_realtime_data_provider()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("realtime prefs unreadable, fail-closed (no TickFlow/public mix): %s", e)
+            return
 
         try:
             all_index_symbols = set(self._repo.get_index_symbol_set()) if self._repo else set()
@@ -981,7 +985,19 @@ class QuoteService:
         now_ts = time.perf_counter()
         resp: list = []
 
-        tf = get_paid_realtime_client()
+        try:
+            realtime_provider = preferences.get_realtime_data_provider()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("watchlist quotes skipped: realtime prefs unreadable: %s", e)
+            return
+        if realtime_provider not in {"public", "tickflow"}:
+            logger.warning(
+                "watchlist quotes skipped: custom realtime=%s is fail-closed on this path",
+                realtime_provider,
+            )
+            return
+
+        tf = get_paid_realtime_client() if realtime_provider == "tickflow" else None
         if tf is not None:
             try:
                 resp = tf.quotes.get(symbols=symbols) or []
@@ -990,10 +1006,6 @@ class QuoteService:
                 resp = []
 
         if not resp:
-            try:
-                realtime_provider = preferences.get_realtime_data_provider()
-            except Exception:  # noqa: BLE001
-                realtime_provider = "tickflow"
             if realtime_provider != "public":
                 logger.warning(
                     "watchlist quotes empty, not falling back to public (realtime=%s)",

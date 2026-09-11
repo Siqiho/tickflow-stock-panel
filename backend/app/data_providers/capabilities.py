@@ -1,7 +1,7 @@
 """能力注册表与能力路由矩阵 — 数据集维度的单一权威定义。
 
 能力 (capability) = 一个标准化数据集 (CONTRIBUTING「数据源插件化要求」):
-daily / adj_factor / realtime / minute / depth5 / financial (注册表顺序即设置页卡片顺序)。注册表集中声明每个
+daily / adj_factor / realtime / minute / depth5 / financial / full_minute / pool (注册表顺序即设置页卡片顺序)。注册表集中声明每个
 能力的展示元数据、路由偏好字段与 TickFlow 档位要求, 前端设置页不再各自硬编码。
 depth5 与其他数据集一样可由插件声明并独立路由; 五档不可用时连板梯队封单/
 看板封单通过 usable 给出缺数据提示。
@@ -21,7 +21,7 @@ usable 契约: 每个能力额外给出 usable = 生效源当前能否真正提�
 路由到 TickFlow 但档位不足时同样不可用。
 
 状态映射 (只影响矩阵展示/usable, 不改偏好默认值、持久化或网络 fallback):
-- public 只进入实际已实现的能力候选 (复权 / 实时 / 财务), 不全面放行日K/分钟/五档。
+- public 只进入实际已实现的能力候选 (复权 / 实时 / 财务 / 成分), 不全面放行日K/分钟/五档。
 - 存量 same_as_daily 按「跟随日K」解析生效源后再判定 usable; current 仍保留原值。
 """
 
@@ -88,6 +88,14 @@ CAPABILITY_REGISTRY: list[dict] = [
         "default": "tickflow",
         "tf_tier": "expert",
     },
+    {
+        "id": "pool",
+        "label": "指数成分",
+        "desc": "沪深300 / 中证成分与全A扩张用的标的池",
+        "field": "pool_provider",
+        "default": "public",
+        "tf_tier": "starter",
+    },
 ]
 
 _TICKFLOW_CANDIDATE = {
@@ -101,11 +109,12 @@ _TICKFLOW_CANDIDATE = {
 
 # PublicProvider 实际已实现的能力, 不是 capabilities 旗标或空 stub。
 # daily.get_daily / minute.get_minute 返回空表; depth5 没有五档实现。
-_PUBLIC_CAPABILITIES = frozenset({"adj_factor", "realtime", "financial"})
+_PUBLIC_CAPABILITIES = frozenset({"adj_factor", "realtime", "financial", "pool"})
 _PUBLIC_ALIASES = {
     "adj_factor": frozenset({"public", "sina", "sina_qfq", "free"}),
     "realtime": frozenset({"public", "tencent", "sina", "free", "local_public"}),
     "financial": frozenset({"public", "eastmoney", "em", "free"}),
+    "pool": frozenset({"public", "csindex", "sina", "free"}),
 }
 _PUBLIC_CANDIDATE = {
     "name": "public",
