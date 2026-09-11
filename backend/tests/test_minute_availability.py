@@ -40,7 +40,11 @@ def test_minute_available_when_cap_and_enabled():
     assert info["full_market_sync_allowed"] is True
 
 
-def test_feature_availability_includes_daily_and_minute():
+def test_feature_availability_includes_daily_and_minute(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.preferences.get_realtime_data_provider",
+        lambda: "public",
+    )
     feats = feature_availability(
         _capset(Cap.KLINE_DAILY_BATCH),
         minute_user_enabled=True,
@@ -50,4 +54,27 @@ def test_feature_availability_includes_daily_and_minute():
     assert feats["minute"].get("view_available") is True
     assert feats["depth"]["available"] is True
     assert feats["quote"]["available"] is True
+    assert feats["quote"]["source"] == "local_public"
     assert feats["websocket"]["available"] is False
+
+
+def test_feature_quote_tickflow_without_cap_is_unavailable(monkeypatch):
+    """TickFlow leftover routing + no quote cap must not claim local_public."""
+    monkeypatch.setattr(
+        "app.services.preferences.get_realtime_data_provider",
+        lambda: "tickflow",
+    )
+    monkeypatch.setattr(
+        "app.services.financial_normalize.local_financials_ready",
+        lambda d: False,
+    )
+    monkeypatch.setattr(
+        "app.services.financial_normalize.local_adj_factor_ready",
+        lambda d: False,
+    )
+    monkeypatch.setattr("app.services.preferences.is_public_financial_provider", lambda: False)
+    monkeypatch.setattr("app.services.preferences.is_public_adj_factor_provider", lambda: False)
+    feats = feature_availability(_capset(Cap.KLINE_DAILY_BATCH))
+    assert feats["quote"]["available"] is False
+    assert feats["quote"]["source"] == "none"
+    assert feats["quote"]["mode"] == "none"

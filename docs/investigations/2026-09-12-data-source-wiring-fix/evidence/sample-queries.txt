@@ -1,0 +1,22 @@
+Sample source-routing decisions (no network, DATA_DIR=/tmp/ot-data-source-wiring-sample)
+
+=== public EOD daily fallback (independent of realtime routing) ===
+  weekday missing, no quote.pool   -> True
+  A-share pull off                 -> False
+  today already present            -> False
+  weekend                          -> False
+  paid quote.pool                  -> False
+
+=== realtime_mode ===
+  provider=public   tier=none  -> full_market  (expect full_market)
+  provider=tickflow tier=free  -> none         (expect none)
+  provider=tickflow tier=pro   -> full_market  (expect full_market)
+  provider=fuyao    tier=free  -> full_market  (expect full_market)
+
+=== feature_availability quote ===
+  provider=public   available=True source=local_public mode=full_market_public
+  provider=tickflow available=False source=none mode=none
+  provider=fuyao    available=True source=fuyao mode=full_market
+
+=== board leader 0.00% ===
+  among down/flat/missing -> FLAT change_pct=0.0

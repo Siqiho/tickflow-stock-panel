@@ -480,6 +480,12 @@ def sync_adj_factor(symbols: list[str], repo: KlineRepository,
     except Exception:  # noqa: BLE001
         use_public = False
 
+    if not use_public and not capset.has(Cap.ADJ_FACTOR):
+        # TickFlow cannot provide adj on none/free. Public sina qfq is the only
+        # implemented free adapter. Leftover tickflow / healed same_as_daily
+        # prefs used to skip this path and leave adj empty.
+        use_public = True
+
     if use_public:
         from app.data_providers.registry import get_provider
 

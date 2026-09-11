@@ -1794,7 +1794,6 @@ def get_capability_matrix() -> dict:
         "realtime_data_provider": preferences.get_realtime_data_provider(),
         "depth5_data_provider": preferences.get_depth5_data_provider(),
         "financial_data_provider": preferences.get_financial_provider(),
-        "depth5_data_provider": preferences.get_depth5_data_provider(),
     }
     return build_capability_matrix(current, tickflow_tier=tier_label())
 

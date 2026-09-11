@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.services.ext_data import ExtConfig, ExtConfigStore
 from app.services.index_const import CORE_INDEX_NAMES, CORE_INDEX_SYMBOLS
+from app.services.market_overview_builder import _leader_sort_key
 
 router = APIRouter(prefix="/api/overview", tags=["overview"])
 
@@ -178,7 +179,7 @@ def _dimension_rank(rows: list[dict], request: Request, kind: str, limit: int = 
         changes = [v for v in changes if v is not None]
         if not changes:
             continue
-        leader = max(stocks, key=lambda s: _finite(s.get("change_pct")) or -999)
+        leader = max(stocks, key=_leader_sort_key)
         items.append({
             "name": name,
             "count": len(stocks),

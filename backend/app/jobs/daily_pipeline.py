@@ -128,6 +128,24 @@ def _partition_row_count(part_dir: Path) -> int | None:
         return None
 
 
+def should_use_public_eod_fallback(
+    *,
+    pull_a_share: bool,
+    today_missing: bool,
+    weekday: int,
+    has_quote_pool: bool,
+) -> bool:
+    """Synthesize today's official daily bars from public quotes when needed.
+
+    Daily completeness is independent of ``realtime_data_provider``. The old
+    ``realtime == public`` gate skipped this path whenever leftover TickFlow
+    routing was stored — none/free installs then finished the pipeline with
+    no today partition even though Tencent/Sina could fill it.
+    Paid ``quote.pool`` already overwrites today, so it stays excluded.
+    """
+    return bool(pull_a_share and today_missing and weekday < 5 and not has_quote_pool)
+
+
 def _prune_partial_enriched_partitions(daily_dir: Path, enriched_dir: Path) -> list[str]:
     """Delete watchlist-only enriched dates so the next increment rebuilds the full day."""
     pruned: list[str] = []
@@ -448,45 +466,35 @@ def run_now(
         )
 
     # None/Free 兜底: free 历史日K若尚未提供 today, 用公开行情合成当日日K。
-    # 仅在工作日尝试; 周末/已有 today / 用户关闭 A 股日K 时跳过。
+    # 仅在工作日尝试; 周末/已有 today / 用户关闭 A 股日K / 付费 quote.pool 时跳过。
+    # 不读取 realtime_data_provider — 日K完整性与实时路由解耦。
     latest_after_batch = repo.latest_daily_date()
     today_missing = (latest_after_batch is None) or (latest_after_batch < today)
-    want_public_eod = (
-        pull_a_share
-        and today_missing
-        and today.weekday() < 5
-        and not capset.has(Cap.QUOTE_POOL)
+    want_public_eod = should_use_public_eod_fallback(
+        pull_a_share=pull_a_share,
+        today_missing=today_missing,
+        weekday=today.weekday(),
+        has_quote_pool=capset.has(Cap.QUOTE_POOL),
     )
     if want_public_eod:
-        try:
-            rt_provider = _prefs.get_realtime_data_provider()
-        except Exception:
-            rt_provider = "public"
-        if rt_provider == "public":
-            emit("sync_daily", 43, f"free 日K未含今日,改用公开行情合成 {today}…")
-            logger.info(
-                "sync_daily: public eod fallback for %s (latest_after_batch=%s)",
-                today, latest_after_batch,
-            )
-            public_eod_result = kline_sync.sync_daily_by_public_quotes(universe, repo, trade_date=today)
-            pub_rows = int((public_eod_result or {}).get("rows") or 0)
-            if pub_rows > 0:
-                daily_source = "public_quote_eod"
-                # 以兜底前最新日为 baseline 重算新增天数
-                new_daily_days = _count_new_daily_days(latest_before)
-                emit("sync_daily", 45, f"公开行情合成完成,{pub_rows} 只 · {today}")
-                logger.info("sync_daily: public eod wrote %d rows for %s", pub_rows, today)
-            else:
-                emit("sync_daily", 45, f"公开行情合成未写入今日分区(latest={latest_after_batch})")
-                logger.warning(
-                    "sync_daily: public eod fallback produced 0 rows (latest_after_batch=%s)",
-                    latest_after_batch,
-                )
+        emit("sync_daily", 43, f"free 日K未含今日,改用公开行情合成 {today}…")
+        logger.info(
+            "sync_daily: public eod fallback for %s (latest_after_batch=%s)",
+            today, latest_after_batch,
+        )
+        public_eod_result = kline_sync.sync_daily_by_public_quotes(universe, repo, trade_date=today)
+        pub_rows = int((public_eod_result or {}).get("rows") or 0)
+        if pub_rows > 0:
+            daily_source = "public_quote_eod"
+            # 以兜底前最新日为 baseline 重算新增天数
+            new_daily_days = _count_new_daily_days(latest_before)
+            emit("sync_daily", 45, f"公开行情合成完成,{pub_rows} 只 · {today}")
+            logger.info("sync_daily: public eod wrote %d rows for %s", pub_rows, today)
         else:
-            emit("sync_daily", 45, f"今日日K仍缺(latest={latest_after_batch}); realtime provider={rt_provider},跳过 public 合成")
-            logger.info(
-                "sync_daily: skip public eod (provider=%s, latest=%s)",
-                rt_provider, latest_after_batch,
+            emit("sync_daily", 45, f"公开行情合成未写入今日分区(latest={latest_after_batch})")
+            logger.warning(
+                "sync_daily: public eod fallback produced 0 rows (latest_after_batch=%s)",
+                latest_after_batch,
             )
     elif pull_a_share:
         # 统一收尾文案

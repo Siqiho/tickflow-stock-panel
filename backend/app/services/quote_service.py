@@ -285,18 +285,22 @@ class QuoteService:
         """当前实时行情模式: none / watchlist / full_market。
 
         - realtime_data_provider=public: 全市场公开源快照（本地标的池分批）
+        - 自定义/插件实时源: 全市场（不跟 TickFlow 档位）
         - TickFlow starter+: 全市场付费 universes
-        - TickFlow free/none 且未选 public: 自选实时
+        - TickFlow none/free: 无实时。不降级为自选、也不静默改走公开源。
         """
         try:
             from app.services import preferences as _prefs
-            if _prefs.get_realtime_data_provider() == "public":
-                return "full_market"
+            provider = _prefs.get_realtime_data_provider()
         except Exception:
-            pass
+            provider = "public"
+        if provider == "public":
+            return "full_market"
+        if provider != "tickflow":
+            return "full_market"
         tier = cls._current_tier()
         if tier in ("none", "free"):
-            return "watchlist"
+            return "none"
         return "full_market"
 
     @classmethod
@@ -390,7 +394,9 @@ class QuoteService:
     def _poll_loop(self) -> None:
         while self._running and self._enabled:
             try:
-                if self._is_trading_hours():
+                if self.realtime_mode() == "none":
+                    logger.debug("实时行情未开启, 跳过轮询")
+                elif self._is_trading_hours():
                     self._fetch_quotes()
                 else:
                     # Off-hours: keep core index snapshots fresh for Indices/overview,
@@ -414,8 +420,11 @@ class QuoteService:
                 waited += 0.5
 
     def _fetch_quotes(self) -> None:
-        """按当前档位拉取行情。"""
-        if self.realtime_mode() == "watchlist":
+        """按当前档位拉取行情。mode=none 不拉、不改走其他源。"""
+        mode = self.realtime_mode()
+        if mode == "none":
+            return
+        if mode == "watchlist":
             self._fetch_watchlist_quotes()
             return
         self._fetch_full_market_quotes()
