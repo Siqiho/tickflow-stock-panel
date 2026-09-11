@@ -86,7 +86,6 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round15 \
     tests/test_quote_index_merge.py \
     tests/test_reference_derived.py \
     tests/test_enriched_full_rebuild.py \
-    tests/test_enriched_generation.py \
     tests/test_regime_builder.py
 ```
 

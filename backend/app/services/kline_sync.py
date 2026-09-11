@@ -274,7 +274,8 @@ def daily_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("daily partition probe failed %s: %s", part, exc)
-        return False
+        # Leftover TickFlow still sees unreadable date markers; custom does not.
+        return expected in {"tickflow", "public"}
     return daily_cache_usable(df, expected)
 
 

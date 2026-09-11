@@ -140,6 +140,20 @@ def test_usable_daily_dates_hide_stale_custom(monkeypatch, tmp_path):
     assert kline_sync.daily_partition_usable(part / "part.parquet") is False
 
 
+def test_unreadable_leftover_tickflow_date_marker_still_counts(monkeypatch, tmp_path):
+    part = tmp_path / "kline_daily_enriched" / "date=2026-07-17"
+    part.mkdir(parents=True)
+    (part / "part.parquet").write_bytes(b"")
+    monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "tickflow")
+    assert kline_sync.usable_daily_partition_dates(
+        tmp_path, table="kline_daily_enriched",
+    ) == [date(2026, 7, 17)]
+    _patch_custom_daily(monkeypatch)
+    assert kline_sync.usable_daily_partition_dates(
+        tmp_path, table="kline_daily_enriched",
+    ) == []
+
+
 def test_usable_daily_dates_keep_untagged_leftover_tickflow(monkeypatch, tmp_path):
     part = tmp_path / "kline_daily" / "date=2026-07-17"
     part.mkdir(parents=True)
