@@ -728,8 +728,26 @@ class DepthService:
     # ================================================================
 
     def _has_capability(self) -> bool:
-        """TickFlow depth5.batch or public L1 sealed fallback."""
-        return True
+        """Whether sealed-depth polling / boot may run for the current route.
+
+        Leftover TickFlow keeps the public L1 sealed fallback. Explicit public
+        is available. Declared custom needs a depth5 dataset. Unreadable prefs
+        and undeclared custom names are fail-closed (no silent public/TickFlow).
+        """
+        from app.services import preferences
+
+        try:
+            name = preferences.get_depth5_data_provider()
+        except Exception:  # noqa: BLE001
+            return False
+        if name in {"public", "tickflow"}:
+            return True
+        from app.data_providers import custom as custom_sources
+
+        try:
+            return bool(custom_sources.provider_has_dataset(name, "depth5"))
+        except Exception:  # noqa: BLE001
+            return False
 
     def _has_tickflow_depth(self) -> bool:
         capset = self._get_capset()

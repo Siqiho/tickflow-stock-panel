@@ -80,12 +80,55 @@ def _resolve_custom_financial_provider():
         return None
 
 
+def financial_write_route() -> str:
+    """Effective financial parquet route: public | tickflow | <custom name> | unresolved."""
+    route = _financial_route()
+    if route != "custom":
+        return route
+    try:
+        from app.services import preferences
+        name = (preferences.get_financial_provider() or "").strip().lower()
+        return name or "custom"
+    except Exception:  # noqa: BLE001
+        return "unresolved"
+
+
+def financial_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
+    """Whether on-disk financials may be served for the current route.
+
+    Custom / unresolved never reuse untagged TickFlow or public files.
+    Tagged files must match. Untagged legacy files stay valid for leftover
+    TickFlow / public only.
+    """
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return False
+    expected = (route or "").strip().lower()
+    if not expected or expected == "unresolved":
+        return False
+    if "route" not in df.columns:
+        return expected in {"tickflow", "public"}
+    stored = [str(v or "").strip().lower() for v in df["route"].to_list()]
+    nonempty = [s for s in stored if s]
+    if not nonempty:
+        return expected in {"tickflow", "public"}
+    if any(s != expected for s in nonempty):
+        return False
+    return True
+
+
+def _tag_financial_route(df: pl.DataFrame) -> pl.DataFrame:
+    route = financial_write_route()
+    if not route or route == "unresolved" or "route" in df.columns:
+        return df
+    return df.with_columns(pl.lit(route).alias("route"))
+
+
 def _write_financial_df(df: pl.DataFrame, data_dir: Path, table: str) -> int:
     if df is None or df.is_empty() or "symbol" not in df.columns:
         return 0
     out_dir = data_dir / "financials" / table
     out_dir.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(out_dir / "part.parquet")
+    _tag_financial_route(df).write_parquet(out_dir / "part.parquet")
     logger.info("sync_%s done: %d records written", table, len(df))
     return len(df)
 
@@ -270,7 +313,7 @@ def _sync_table(
     out_dir = data_dir / "financials" / table
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / "part.parquet"
-    df.write_parquet(out_file)
+    _tag_financial_route(df).write_parquet(out_file)
 
     logger.info("sync_%s done: %d records written", table, len(df))
     return len(df)
@@ -368,10 +411,17 @@ def get_financial_df(data_dir: Path, table: str) -> pl.DataFrame:
     if not path.exists():
         return pl.DataFrame()
     try:
-        return pl.read_parquet(path)
+        df = pl.read_parquet(path)
     except Exception as e:
         logger.warning("读取 financials/%s 失败: %s", table, e)
         return pl.DataFrame()
+    route = financial_write_route()
+    if not financial_cache_usable(df, route):
+        logger.info("skip stale financials/%s for route=%s", table, route)
+        return pl.DataFrame()
+    if "route" in df.columns:
+        return df.drop("route")
+    return df
 
 
 # ================================================================

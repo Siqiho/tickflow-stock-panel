@@ -23,6 +23,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/kline", tags=["kline"])
 
 
+def _minute_rows_without_route(df) -> list[dict]:
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return []
+    if "route" in df.columns:
+        df = df.drop("route")
+    return df.to_dicts()
+
+
+def _dicts_without_route(rows: list[dict]) -> list[dict]:
+    return [{k: v for k, v in row.items() if k != "route"} for row in rows]
+
+
 def _accepts_gzip(accept_encoding: str | None) -> bool:
     """RFC 9110 Accept-Encoding: gzip;q=0 表示明确拒绝, 不得压缩。"""
     if not accept_encoding:
@@ -833,15 +845,18 @@ def get_minute_batch(request: Request, body: dict):
     full_pull: list[str] = []
     stale_last: dict[str, datetime] = {}
     local_parts: dict[str, pl.DataFrame] = {}
+    minute_route = kline_sync.minute_route()
     if not df_local.is_empty() and "symbol" in df_local.columns:
         for part in df_local.partition_by("symbol", maintain_order=True):
-            local_parts[part["symbol"][0]] = part.sort("datetime")
+            part = part.sort("datetime")
+            if kline_sync.minute_cache_usable(part, minute_route):
+                local_parts[part["symbol"][0]] = part
     fresh_floor = max(0, expected - 2)
     for sym in symbols:
         sub = local_parts.get(sym, pl.DataFrame())
         if expected == 0 or sub.height >= fresh_floor:
             if not sub.is_empty():
-                result[sym] = sub.to_dicts()
+                result[sym] = _minute_rows_without_route(sub)
             continue
         if sub.is_empty() or _has_holes(sub):
             full_pull.append(sym)
@@ -853,7 +868,7 @@ def get_minute_batch(request: Request, body: dict):
             if sym not in result:
                 sub = local_parts.get(sym)
                 if sub is not None and not sub.is_empty():
-                    result[sym] = sub.to_dicts()
+                    result[sym] = _minute_rows_without_route(sub)
         full_pull = []
         stale_last = {}
 
@@ -866,7 +881,7 @@ def get_minute_batch(request: Request, body: dict):
             if sym not in etf_set:
                 sub = local_parts.get(sym)
                 if sub is not None and not sub.is_empty():
-                    result[sym] = sub.to_dicts()
+                    result[sym] = _minute_rows_without_route(sub)
         full_pull = [s for s in full_pull if s in etf_set]
         stale_last = {s: t for s, t in stale_last.items() if s in etf_set}
 
@@ -900,7 +915,9 @@ def get_minute_batch(request: Request, body: dict):
             write_lock = getattr(repo, "_write_lock", None)
             if isinstance(minute_dir, Path) and write_lock is not None:
                 with write_lock:
-                    kline_sync._write_minute_partition(df_live, minute_dir)
+                    kline_sync._write_minute_partition(
+                        df_live, minute_dir, route=kline_sync.minute_route(),
+                    )
         except Exception as e:  # noqa: BLE001
             logger.warning("minute-batch 补拉落盘失败 (降级为仅返回): %s", e)
         for part in df_live.partition_by("symbol", maintain_order=True):
@@ -922,10 +939,10 @@ def get_minute_batch(request: Request, body: dict):
                 .unique(subset=["symbol", "datetime"], keep="last")
                 .sort("datetime")
             )
-            result[sym] = merged.to_dicts()
+            result[sym] = _minute_rows_without_route(merged)
     for sym, live in live_map.items():
         if sym not in result:
-            result[sym] = live.to_dicts()
+            result[sym] = _minute_rows_without_route(live)
 
     if since_dt is not None:
         result = {
@@ -972,7 +989,8 @@ def get_minute(
     def _minute_payload(rows, source: str, extra: dict | None = None):
         body = {
             "symbol": symbol, "name": stock_name, "stock_info": stock_info,
-            "date": str(trade_date), "rows": rows, "source": source,
+            "date": str(trade_date), "rows": _dicts_without_route(rows or []),
+            "source": source,
         }
         if extra:
             body.update(extra)
@@ -1009,6 +1027,9 @@ def get_minute(
             status_code=503,
             detail={"code": "kline_minute_read_failed", "message": str(e)},
         ) from e
+    import polars as pl
+    if not kline_sync.minute_cache_usable(df, kline_sync.minute_route()):
+        df = pl.DataFrame()
 
     # 完整交易日应有 240 条分钟K；如果是今天(盘中)，期望条数按已交易分钟估算
     expected = 240

@@ -154,6 +154,36 @@ def should_use_public_eod_fallback(
     )
 
 
+def resolve_adj_sync_universe(
+    pipeline_universe: list[str],
+    capset: CapabilitySet,
+) -> list[str] | None:
+    """Symbols for adj sync, or None to skip (public-adapter fail-closed).
+
+    TickFlow / declared custom adj keep the pipeline universe. The public sina
+    adapter must stay inside ``public_data_scope``; empty or failed resolve
+    does not widen back to ALL / CN_Equity_A.
+    """
+    if not adj_sync_uses_public_adapter(capset):
+        return list(pipeline_universe)
+    from app.services.universe_scope import resolve_symbols
+
+    pub_scope = _prefs.get_public_data_scope()
+    scoped = resolve_symbols(
+        pub_scope,
+        data_dir=Path(settings.data_dir),
+        default="CSI300",
+        refresh_pools_if_missing=True,
+    )
+    if not scoped:
+        logger.warning(
+            "public adj universe empty for scope=%s, fail-closed (no pipeline-universe widen)",
+            pub_scope,
+        )
+        return None
+    return scoped
+
+
 def adj_sync_uses_public_adapter(capset: CapabilitySet) -> bool:
     """Whether adj sync will write via the public sina adapter.
 
@@ -586,24 +616,27 @@ def run_now(
              f"除权因子批次 {cur}/{tot}", stage_pct=int(100 * cur / tot), skip_log=True)
     adj_universe = list(universe)
     try:
-        if adj_sync_uses_public_adapter(capset):
-            from app.services.universe_scope import resolve_symbols
-            # public adj 默认跟 public_data_scope（CSI300），避免 ALL 时盘后被拖死
-            pub_scope = _prefs.get_public_data_scope()
-            adj_universe = resolve_symbols(
-                pub_scope,
-                data_dir=Path(settings.data_dir),
-                default="CSI300",
-                refresh_pools_if_missing=True,
-            ) or adj_universe
-            emit("sync_adj", 50, f"获取除权因子(public/{pub_scope}) {len(adj_universe)} 只…")
+        resolved = resolve_adj_sync_universe(universe, capset)
     except Exception as e:
         logger.warning("public adj universe resolve failed: %s", e)
-    written_adj, affected_symbols = kline_sync.sync_adj_factor(
-        adj_universe, repo, capset,
-        start_time=adj_start, end_time=adj_end,
-        on_chunk_done=_adj_chunk_progress,
-    )
+        try:
+            resolved = None if adj_sync_uses_public_adapter(capset) else list(universe)
+        except Exception:  # noqa: BLE001
+            resolved = None
+    if resolved is None:
+        written_adj, affected_symbols = 0, []
+    else:
+        adj_universe = resolved
+        if adj_sync_uses_public_adapter(capset):
+            emit(
+                "sync_adj", 50,
+                f"获取除权因子(public/{_prefs.get_public_data_scope()}) {len(adj_universe)} 只…",
+            )
+        written_adj, affected_symbols = kline_sync.sync_adj_factor(
+            adj_universe, repo, capset,
+            start_time=adj_start, end_time=adj_end,
+            on_chunk_done=_adj_chunk_progress,
+        )
     if affected_symbols:
         _refresh_single_view(repo, "adj_factor")
         emit("sync_adj", 60, f"除权因子完成,新增 {len(affected_symbols)} 只个股")

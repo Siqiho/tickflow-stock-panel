@@ -710,6 +710,8 @@ class QuoteService:
         self._update_volume_delta(records, fetched_at)
 
         is_public_snapshot = self._records_are_public(records)
+        from app.services import kline_sync
+        allow_canonical = (not is_public_snapshot) and kline_sync.live_daily_persist_allowed()
         daily_df = self._build_daily(stock_records)
         etf_daily_df = self._build_daily(etf_records)
         index_daily_df = self._build_daily(index_records)
@@ -719,7 +721,7 @@ class QuoteService:
         if persist:
             if not daily_df.is_empty() and self._repo:
                 try:
-                    if is_public_snapshot:
+                    if not allow_canonical:
                         self._repo.write_quote_snapshot_asset(
                             "stock",
                             self._build_quote_snapshot(stock_records),
@@ -732,7 +734,7 @@ class QuoteService:
 
             if not etf_daily_df.is_empty() and self._repo:
                 try:
-                    if is_public_snapshot:
+                    if not allow_canonical:
                         self._repo.write_quote_snapshot_asset(
                             "etf",
                             self._build_quote_snapshot(etf_records),
@@ -745,7 +747,7 @@ class QuoteService:
 
             if not index_daily_df.is_empty() and self._repo:
                 try:
-                    if is_public_snapshot:
+                    if not allow_canonical:
                         self._repo.write_quote_snapshot_asset(
                             "index",
                             self._build_quote_snapshot(index_records),
@@ -761,16 +763,16 @@ class QuoteService:
                     daily_df,
                     quote_extra,
                     asset_type="stock",
-                    persist=not is_public_snapshot,
+                    persist=allow_canonical,
                 )
             if not etf_daily_df.is_empty() and self._repo:
                 self._flush_live_enriched(
                     etf_daily_df,
                     etf_quote_extra,
                     asset_type="etf",
-                    persist=not is_public_snapshot,
+                    persist=allow_canonical,
                 )
-            if not index_daily_df.is_empty() and self._repo and not is_public_snapshot:
+            if not index_daily_df.is_empty() and self._repo and allow_canonical:
                 index_quote_extra = self._build_quote_extra(index_records)
                 self._flush_live_enriched(index_daily_df, index_quote_extra, asset_type="index")
 
@@ -1066,8 +1068,12 @@ class QuoteService:
         quote_extra = self._build_quote_extra(records)
         if not daily_df.is_empty() and self._repo:
             is_public_snapshot = self._records_are_public(records)
+            from app.services import kline_sync
+            allow_canonical = (
+                (not is_public_snapshot) and kline_sync.live_daily_persist_allowed()
+            )
             try:
-                if is_public_snapshot:
+                if not allow_canonical:
                     self._repo.write_quote_snapshot_asset(
                         "stock",
                         self._build_quote_snapshot(records),
@@ -1082,7 +1088,7 @@ class QuoteService:
                 quote_extra,
                 asset_type="stock",
                 merge=True,
-                persist=not is_public_snapshot,
+                persist=allow_canonical,
             )
 
         self._update_event.set()
@@ -1383,22 +1389,30 @@ class QuoteService:
         )
         if asset_type == "stock" and healthy and self._repo is not None:
             from app.market_time import cn_today
+            from app.services import kline_sync
             local_get = getattr(self._repo, "get_minute_batch", None)
             if callable(local_get):
                 try:
                     minute_df = local_get(list(symbols), cn_today())
+                    if not kline_sync.minute_cache_usable(
+                        minute_df, kline_sync.full_minute_route(),
+                    ):
+                        minute_df = pl.DataFrame()
                 except Exception as e:  # noqa: BLE001
                     logger.debug("local minute batch for intraday signals failed: %s", e)
                     minute_df = pl.DataFrame()
 
         if minute_df is None or getattr(minute_df, "is_empty", lambda: True)():
-            from app.services.kline_sync import fetch_intraday_monitor_batch
-            capset = getattr(self._app_state, "capabilities", None) if self._app_state else None
-            try:
-                minute_df = fetch_intraday_monitor_batch(sorted(symbols), capset)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("intraday monitor batch failed: %s", e)
+            from app.services import kline_sync
+            if not kline_sync.full_minute_may_use_minute_fallback():
                 minute_df = pl.DataFrame()
+            else:
+                capset = getattr(self._app_state, "capabilities", None) if self._app_state else None
+                try:
+                    minute_df = kline_sync.fetch_intraday_monitor_batch(sorted(symbols), capset)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("intraday monitor batch failed: %s", e)
+                    minute_df = pl.DataFrame()
 
         prev_close: dict[str, float] = {}
         if "prev_close" in enriched.columns:
