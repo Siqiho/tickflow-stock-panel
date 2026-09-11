@@ -162,6 +162,11 @@ def instruments_names(request: Request, symbols: list[str]):
     return {"names": names}
 
 
+def _usable_instrument_row(row) -> bool:
+    """Accept real SQL rows only. MagicMock / leftover objects are not names."""
+    return isinstance(row, (tuple, list)) and len(row) >= 1
+
+
 def _get_stock_info(repo, symbol: str) -> dict:
     """从 instruments 视图查标的名称 + 股本。"""
     try:
@@ -171,7 +176,7 @@ def _get_stock_info(repo, symbol: str) -> dict:
         )
     except Exception:  # noqa: BLE001
         row = None
-    if row:
+    if _usable_instrument_row(row):
         return {
             "name": row[0],
             "total_shares": row[1],
@@ -689,6 +694,63 @@ def get_daily_batch(request: Request, body: dict):
     return _gzip_payload(request, {"data": result}, pref_key="daily_batch_compress")
 
 
+def _coerce_session_date(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _minute_range_prev_closes(repo, symbol: str, trade_dates: list) -> dict:
+    """Previous official daily close per session from the current daily route.
+
+    HTTP used to leave prev_close null and let leftover DuckDB daily fill
+    names elsewhere. Gated get_daily_asset keeps leftover TickFlow out after
+    a custom switch. Untagged leftover TickFlow daily still serves.
+    """
+    days = [_coerce_session_date(d) for d in trade_dates]
+    days = [d for d in days if d is not None]
+    getter = getattr(repo, "get_daily_asset", None)
+    if not callable(getter) or not days:
+        return {}
+    start = days[0] - timedelta(days=20)
+    end = days[-1]
+    try:
+        daily = getter("stock", symbol, start, end)
+    except TypeError:
+        try:
+            daily = getter(symbol, start, end)
+        except Exception:  # noqa: BLE001
+            return {}
+    except Exception:  # noqa: BLE001
+        return {}
+    if daily is None or not hasattr(daily, "is_empty") or daily.is_empty():
+        return {}
+    try:
+        daily = kline_sync.filter_daily_cache(daily)
+    except Exception:  # noqa: BLE001
+        return {}
+    if daily.is_empty() or "date" not in daily.columns or "close" not in daily.columns:
+        return {}
+    close_by_date: dict[date, float] = {}
+    for rec in daily.select(["date", "close"]).to_dicts():
+        day = _coerce_session_date(rec.get("date"))
+        if day is None:
+            continue
+        close_by_date[day] = rec.get("close")
+    ordered = sorted(close_by_date)
+    out: dict = {}
+    for raw, day in zip(trade_dates, days):
+        prior = [d for d in ordered if d < day]
+        out[raw] = close_by_date[prior[-1]] if prior else None
+        out[day] = out[raw]
+    return out
+
+
 @router.get("/minute-range")
 def get_minute_range(
     request: Request,
@@ -699,26 +761,40 @@ def get_minute_range(
     import polars as pl
 
     repo = request.app.state.repo
+    resolver = getattr(repo, "resolve_asset_type", None)
+    asset_type = resolver(symbol) if callable(resolver) else "stock"
     stock_info = _get_stock_info(repo, symbol)
     base_response = {
         "symbol": symbol,
         "name": stock_info.get("name"),
-        "asset_type": "stock",
+        "asset_type": asset_type,
         "requested_days": days,
     }
+    if asset_type == "index":
+        return _gzip_payload(
+            request,
+            {**base_response, "sessions": [], "source": "none"},
+            pref_key="minute_batch_compress",
+        )
     end = cn_today()
     start = end - timedelta(days=days * 3 + 20)
     minute = pl.DataFrame()
     getter = getattr(repo, "get_minute_range", None)
     if callable(getter):
         try:
-            minute = getter([symbol], start, end)
+            candidate = getter([symbol], start, end)
         except Exception as exc:  # noqa: BLE001
             logger.warning("minute-range getter failed: %s", exc)
-            minute = pl.DataFrame()
+            candidate = None
+        if isinstance(candidate, pl.DataFrame):
+            try:
+                minute = kline_sync.filter_minute_cache(candidate)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("minute-range getter leftover filter failed: %s", exc)
+                minute = pl.DataFrame()
     if minute is None or minute.is_empty():
         data_dir = getattr(getattr(repo, "store", None), "data_dir", None)
-        if data_dir is None:
+        if not isinstance(data_dir, (str, Path)):
             return _gzip_payload(
                 request,
                 {**base_response, "sessions": [], "source": "none"},
@@ -753,6 +829,7 @@ def get_minute_range(
 
     minute = minute.with_columns(pl.col("datetime").dt.date().alias("_trade_date"))
     trade_dates = sorted(minute["_trade_date"].unique().to_list())[-days:]
+    prev_closes = _minute_range_prev_closes(repo, symbol, trade_dates)
     row_columns = [
         column
         for column in ("datetime", "open", "high", "low", "close", "volume", "amount")
@@ -767,7 +844,11 @@ def get_minute_range(
             .to_dicts()
         )
         if rows:
-            sessions.append({"date": trade_date.isoformat(), "prev_close": None, "rows": rows})
+            sessions.append({
+                "date": trade_date.isoformat(),
+                "prev_close": prev_closes.get(trade_date),
+                "rows": rows,
+            })
     return _gzip_payload(
         request,
         {
@@ -1200,6 +1281,12 @@ async def sync_minute_single(request: Request, body: dict):
             [symbol], repo, capset, days=days, force_full_days=True,
         ),
     )
+    try:
+        from app.jobs.daily_pipeline import _refresh_single_view
+
+        _refresh_single_view(repo, "kline_minute")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("minute view refresh after single sync failed: %s", exc)
     return {"status": "ok", "symbol": symbol, "rows": written}
 
 

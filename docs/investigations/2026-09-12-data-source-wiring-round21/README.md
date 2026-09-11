@@ -27,6 +27,10 @@ English summary: twenty-first-round leftover mix-source / fail-open paths that r
 3. **指数读面**：`load_usable_index_latest_quotes` 替代 DuckDB。看板 / SSE / `load_benchmark_momentum` 走可用分区；基准缓存按 daily route 分键。
 4. **清理 / 写入**：分钟 null-datetime 只删当前 route 分区。`publish_live_enriched_asset` 与 `_daily_write_context` fail-closed。
 5. **状态 / 缓存**：复权状态用 gated reader，不再数 leftover SQL。异动快照 / RPS / 总览缓存键带 daily route。
+6. **HTTP 分时区间**：指数代码不再扫个股分钟；getter 结果走 `filter_minute_cache`；`prev_close` 只读当前 daily route；`execute_one` MagicMock/非 SQL 行不再挡住 instruments 缓存。
+7. **单票分钟落库**：`sync_minute_single` 写完刷新 `kline_minute` 视图，避免 leftover DuckDB 继续对外。
+8. **今日脏指数行**：`benchmark_momentum_today` 同时排除 `date.today()` 与 `cn_today()`，UTC 主机不再把监控今日行当昨收。
+9. **实时指数缓存**：`QuoteService.get_index_quotes` 按 realtime provider 分键，切源后不再复用 leftover TickFlow 报价。
 
 未改：盘后默认时刻、已声明分钟源调用失败且具备 TickFlow minute cap 时的回退、leftover TickFlow 单票公开分时 / 自选历史 TDX、实时 leftover TickFlow + free 仍是 `mode=none`、个股/指数/ETF 维表仍固定 TickFlow（无 `instrument_provider`）、quote_snapshot 响应覆盖（带 `is_quote_snapshot`）、显式 `adj=public` / `depth5=public`、`.env`、鉴权。
 

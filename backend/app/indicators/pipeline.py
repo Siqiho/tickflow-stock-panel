@@ -272,8 +272,13 @@ def benchmark_momentum_today(
     bench = load_benchmark_momentum(data_dir)
     if bench is None or bench.is_empty():
         return None
-    today = cn_today()
-    bench = bench.filter(pl.col("date") < today)
+    from datetime import date as date_cls
+
+    # Index-monitor dirty rows are stamped with date.today() (UTC on some
+    # hosts) while the rest of the book uses Asia/Shanghai cn_today().
+    # Exclude either calendar's "today" so realtime change is not stacked.
+    cutoff = min(date_cls.today(), cn_today())
+    bench = bench.filter(pl.col("date") < cutoff)
     if bench.is_empty():
         return None
     rows: list[dict[str, float | str | None]] = []

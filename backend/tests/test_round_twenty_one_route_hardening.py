@@ -10,6 +10,8 @@ reads that round 20 left on the minute / live-rebuild / index / persist side:
 - minute null-datetime cleanup does not wipe leftover TickFlow
 - live publish / daily write refuse custom or unreadable prefs
 - adj status does not count leftover DuckDB rows
+- HTTP minute-range filters leftover getter frames and skips index stock scans
+- live index-quote cache drops leftover TickFlow after a realtime switch
 
 Keeps remaining TickFlow leftover contracts:
 - leftover TickFlow + free realtime stays mode=none
@@ -332,11 +334,6 @@ def test_latest_enriched_duckdb_uses_provenance(monkeypatch, tmp_path):
     _write_part(tmp_path, "kline_daily_enriched", "2026-07-17", _daily_df(route="tickflow"))
     _patch_custom_daily(monkeypatch)
     repo = KlineRepository(DataStore(tmp_path))
-    monkeypatch.setattr(
-        repo.db,
-        "execute",
-        lambda *_a, **_k: SimpleNamespace(fetchone=lambda: (date(2026, 7, 17),)),
-    )
     assert repo._latest_enriched_date_duckdb() == date(2026, 7, 16)
 
 
@@ -365,13 +362,12 @@ def test_hist_snapshot_cache_keys_by_route(monkeypatch, tmp_path):
     _hist_cache.clear()
     leftover = _daily_df(route="tickflow").with_columns(pl.lit(0.99).alias("change_pct"))
     custom = _daily_df(route="fuyao", day=date(2026, 7, 16)).with_columns(pl.lit(0.02).alias("change_pct"))
-    repo = SimpleNamespace(
-        get_enriched_latest=lambda: (leftover, date(2026, 7, 17)),
-    )
+    repo = SimpleNamespace(get_enriched_latest=lambda: (leftover, date(2026, 7, 17)))
+    monkeypatch.setattr(kline_sync, "daily_route", lambda: "tickflow")
     first = _hist_snapshot(repo)
-    assert "000001.SZ" in first["rows"]
-    _patch_custom_daily(monkeypatch)
+    assert first["rows"]["000001.SZ"]["rt_pct"] == pytest.approx(0.99)
     repo.get_enriched_latest = lambda: (custom, date(2026, 7, 16))
+    monkeypatch.setattr(kline_sync, "daily_route", lambda: "fuyao")
     second = _hist_snapshot(repo)
     assert second["rows"]["000001.SZ"]["rt_pct"] == pytest.approx(0.02)
 
@@ -393,12 +389,42 @@ def test_untagged_leftover_still_serves_minute(monkeypatch, tmp_path):
 
 
 def test_get_minute_still_raises_on_corrupt_leftover_tickflow(tmp_path):
+    repo = KlineRepository(DataStore(tmp_path))
     dest = tmp_path / "kline_minute" / "date=2026-06-29" / "part.parquet"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(b"not a parquet")
-    repo = KlineRepository(DataStore(tmp_path))
     with pytest.raises(KlineReadError):
         repo.get_minute("000001.SZ", date(2026, 6, 29))
+
+
+def test_minute_range_http_filters_getter_leftover(monkeypatch):
+    _patch_custom_minute(monkeypatch)
+    leftover = _minute_df(route="tickflow")
+    repo = SimpleNamespace(
+        resolve_asset_type=lambda *_a, **_k: "stock",
+        get_minute_range=lambda *_a, **_k: leftover,
+        get_instruments=lambda: pl.DataFrame(),
+        execute_one=lambda *_a, **_k: None,
+        store=None,
+        get_daily_asset=None,
+    )
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(repo=repo)))
+    payload = kline_api.get_minute_range(request, "000001.SZ", 2)
+    assert payload["sessions"] == []
+    assert payload["source"] == "none"
+
+
+def test_index_quotes_cache_drops_leftover_after_realtime_switch(monkeypatch):
+    service = QuoteService()
+    service._index_quotes_cache = pl.DataFrame({
+        "symbol": ["000001.SH"],
+        "last_price": [999.0],
+    })
+    service._index_quotes_cache_token = "tickflow"
+    monkeypatch.setattr(QuoteService, "_realtime_cache_token", staticmethod(lambda: "tickflow"))
+    assert not service.get_index_quotes(["000001.SH"]).is_empty()
+    monkeypatch.setattr(QuoteService, "_realtime_cache_token", staticmethod(lambda: "fuyao"))
+    assert service.get_index_quotes(["000001.SH"]).is_empty()
 
 
 def test_daily_prefs_unreadable_stays_fail_closed(monkeypatch, tmp_path):

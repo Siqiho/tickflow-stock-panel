@@ -120,6 +120,7 @@ class QuoteService:
         self._index_symbol_count: int = 0
         self._etf_symbol_count: int = 0
         self._index_quotes_cache: pl.DataFrame | None = None
+        self._index_quotes_cache_token: str | None = None
         self._abnormal_last_eval: float = 0.0
 
     # ================================================================
@@ -358,9 +359,26 @@ class QuoteService:
             df = df.with_columns(pl.col("close").alias("last_price"))
         return df
 
+    @staticmethod
+    def _realtime_cache_token() -> str:
+        """Current realtime provider token. Unreadable prefs stay unresolved."""
+        try:
+            from app.services import preferences as _prefs
+
+            return (_prefs.get_realtime_data_provider() or "").strip().lower() or "unresolved"
+        except Exception:  # noqa: BLE001
+            return "unresolved"
+
     def get_index_quotes(self, symbols: list[str] | None = None) -> pl.DataFrame:
-        """返回实时指数行情缓存。不会触发 TickFlow 请求。"""
+        """返回实时指数行情缓存。不会触发 TickFlow 请求。
+
+        Cache is keyed by the current realtime provider so leftover TickFlow
+        quotes cannot serve after a custom / public switch.
+        """
+        token = self._realtime_cache_token()
         with self._lock:
+            if self._index_quotes_cache_token != token:
+                return pl.DataFrame()
             df = self._index_quotes_cache.clone() if self._index_quotes_cache is not None else pl.DataFrame()
         if df.is_empty():
             return df
@@ -480,6 +498,7 @@ class QuoteService:
         df = self._build_index_quotes(records)
         with self._lock:
             self._index_quotes_cache = df
+            self._index_quotes_cache_token = self._realtime_cache_token()
             self._index_symbol_count = int(df.height) if df is not None else 0
             # mark freshness so /status and SSE consumers see a live pulse
             self._fetch_time = time.perf_counter()
@@ -695,6 +714,7 @@ class QuoteService:
                 self._index_quotes_cache = (
                     self._build_index_quotes(index_records) if index_records else pl.DataFrame()
                 )
+                self._index_quotes_cache_token = self._realtime_cache_token()
                 self._index_symbol_count = len(index_records)
             else:
                 self._index_symbol_count = (
@@ -1061,6 +1081,7 @@ class QuoteService:
             self._index_symbol_count = 0
             self._etf_symbol_count = 0
             self._index_quotes_cache = None
+            self._index_quotes_cache_token = None
 
         logger.info("自选实时刷新: %d 只股票, 耗时 %.0fms", len(records), fetch_ms)
 
