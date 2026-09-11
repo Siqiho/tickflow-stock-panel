@@ -164,7 +164,7 @@ class QuoteService:
     def enable(self) -> bool:
         """开启自动行情 (不立即启动线程，等下一个交易时段)。
 
-        none/free 档开启自选股实时（公开源可兜底）; starter+ 开启全市场实时。返回值表示是否真正开启。
+        leftover TickFlow none/free 仍是 mode=none（不静默改走公开源）; starter+ 或公开/自定义源开启全市场实时。返回值表示是否真正开启。
         """
         if not self.is_realtime_allowed():
             logger.warning("实时行情开启被拒:当前模式不允许实时行情")
@@ -299,7 +299,8 @@ class QuoteService:
             from app.services import preferences as _prefs
             provider = _prefs.get_realtime_data_provider()
         except Exception:
-            provider = "public"
+            # Prefer fail-closed none over a silent public mix when prefs are unreadable.
+            return "none"
         if provider == "public":
             return "full_market"
         if provider != "tickflow":
@@ -990,6 +991,16 @@ class QuoteService:
 
         if not resp:
             try:
+                realtime_provider = preferences.get_realtime_data_provider()
+            except Exception:  # noqa: BLE001
+                realtime_provider = "tickflow"
+            if realtime_provider != "public":
+                logger.warning(
+                    "watchlist quotes empty, not falling back to public (realtime=%s)",
+                    realtime_provider,
+                )
+                return
+            try:
                 free_rows = self._fetch_public_quote_rows(list(symbols), batch_size=80, pause_s=0.0)
             except Exception as e:  # noqa: BLE001
                 logger.warning("free quote fallback failed: %s", e)
@@ -1327,6 +1338,86 @@ class QuoteService:
     # 策略监控
     # ================================================================
 
+    def _inject_intraday_signals(self, enriched: pl.DataFrame, engine, asset_type: str = "stock"):
+        """Inject monitor-only intraday signals from local minute partitions or API.
+
+        Stock + healthy full-minute service reads local partitions. ETF and
+        unhealthy stock fall back to ``fetch_intraday_monitor_batch`` (routed).
+        """
+        if enriched is None or getattr(enriched, "is_empty", lambda: True)():
+            return enriched
+        symbols = set()
+        getter = getattr(engine, "intraday_signal_symbols", None)
+        if callable(getter):
+            try:
+                symbols = set(getter(asset_type) or [])
+            except Exception as e:  # noqa: BLE001
+                logger.debug("intraday_signal_symbols failed: %s", e)
+        if not symbols:
+            return enriched
+
+        evaluator = getattr(self, "_intraday_signal_evaluator", None)
+        if evaluator is None:
+            from app.strategy.intraday_signals import IntradaySignalEvaluator
+            evaluator = IntradaySignalEvaluator()
+            self._intraday_signal_evaluator = evaluator
+
+        minute_df = pl.DataFrame()
+        minute_svc = getattr(self._app_state, "minute_refresh", None) if self._app_state else None
+        healthy = bool(
+            minute_svc is not None
+            and callable(getattr(minute_svc, "is_healthy", None))
+            and minute_svc.is_healthy()
+        )
+        if asset_type == "stock" and healthy and self._repo is not None:
+            from app.market_time import cn_today
+            local_get = getattr(self._repo, "get_minute_batch", None)
+            if callable(local_get):
+                try:
+                    minute_df = local_get(list(symbols), cn_today())
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("local minute batch for intraday signals failed: %s", e)
+                    minute_df = pl.DataFrame()
+
+        if minute_df is None or getattr(minute_df, "is_empty", lambda: True)():
+            from app.services.kline_sync import fetch_intraday_monitor_batch
+            capset = getattr(self._app_state, "capabilities", None) if self._app_state else None
+            try:
+                minute_df = fetch_intraday_monitor_batch(sorted(symbols), capset)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("intraday monitor batch failed: %s", e)
+                minute_df = pl.DataFrame()
+
+        prev_close: dict[str, float] = {}
+        if "prev_close" in enriched.columns:
+            for row in enriched.select(["symbol", "prev_close"]).iter_rows(named=True):
+                try:
+                    prev_close[str(row["symbol"])] = float(row["prev_close"])
+                except (TypeError, ValueError):
+                    continue
+        elif "close" in enriched.columns:
+            for row in enriched.select(["symbol", "close"]).iter_rows(named=True):
+                try:
+                    prev_close[str(row["symbol"])] = float(row["close"])
+                except (TypeError, ValueError):
+                    continue
+
+        from app.market_time import cn_now
+        try:
+            signals = evaluator.evaluate(
+                minute_df,
+                symbols=symbols,
+                prev_close=prev_close,
+                asset_type=asset_type,
+                now=cn_now(),
+            )
+        except TypeError:
+            signals = evaluator.evaluate(minute_df)
+        inject = getattr(evaluator, "inject", None)
+        if callable(inject):
+            return inject(enriched, signals or [])
+        return enriched
+
     def _evaluate_monitors(self, daily_df: pl.DataFrame, quote_extra: pl.DataFrame | None) -> None:
         """行情更新后评估统一监控规则引擎,并刷新策略结果缓存。"""
         try:
@@ -1354,6 +1445,9 @@ class QuoteService:
                             })
                     except Exception as e:  # noqa: BLE001
                         logger.debug("name_map 构建失败 (不影响监控): %s", e)
+                    enriched_today = self._inject_intraday_signals(
+                        enriched_today, engine, asset_type="stock",
+                    )
                     rule_events = engine.evaluate(enriched_today, asset_type="stock")
                     if engine.has_rule_type("abnormal") and self._repo is not None:
                         now_ts = time.time()
@@ -1380,6 +1474,9 @@ class QuoteService:
                                 refresh=False,
                             )
                             if not etf_enriched.is_empty():
+                                etf_enriched = self._inject_intraday_signals(
+                                    etf_enriched, engine, asset_type="etf",
+                                )
                                 rule_events = [
                                     *rule_events,
                                     *engine.evaluate(

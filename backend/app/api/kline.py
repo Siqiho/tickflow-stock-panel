@@ -259,12 +259,12 @@ def get_daily(
                 {"symbol": symbol, "name": stock_name, "stock_info": stock_info, "rows": []},
                 pref_key="daily_batch_compress",
             )
-        # 拉除权因子做前复权 (Starter+ 有权限), 否则空 df → compute_enriched 退回未复权
+        # 拉除权因子做前复权: 公开/已声明自定义源不看 TickFlow cap;
+        # leftover TickFlow 仍要 Cap.ADJ_FACTOR。否则空 df → compute_enriched 退回未复权
         factors = pl.DataFrame()
         capset = getattr(request.app.state, "capabilities", None)
         try:
-            from app.tickflow.capabilities import Cap
-            if capset and capset.has(Cap.ADJ_FACTOR):
+            if kline_sync.adj_live_fetch_allowed(capset):
                 factors = kline_sync.fetch_adj_factor_single(symbol)
         except Exception as e:  # noqa: BLE001
             logger.debug("单股除权因子拉取失败 %s: %s", symbol, e)

@@ -728,6 +728,23 @@ class MonitorRuleEngine:
             for r in list(self._rules.values())
         )
 
+    def intraday_signal_symbols(self, asset_type: str) -> set[str]:
+        """Enabled symbol-scope rules that need intraday minute bars for *asset_type*."""
+        from app.strategy.intraday_signals import uses_intraday_signals
+
+        out: set[str] = set()
+        for rule in list(self._rules.values()):
+            if rule.get("enabled", True) is False:
+                continue
+            if rule.get("asset_type", "stock") != asset_type:
+                continue
+            if rule.get("scope", "symbols") != "symbols":
+                continue
+            if not uses_intraday_signals(rule):
+                continue
+            out.update(str(s).strip() for s in (rule.get("symbols") or []) if s)
+        return out
+
     @property
     def rules(self) -> dict[str, dict]:
         return dict(self._rules)
