@@ -1041,10 +1041,10 @@ def _try_custom_minute(
                 df = provider.get_minute(symbols, **kwargs)
     except Exception as e:  # noqa: BLE001
         logger.warning(
-            "custom minute provider %s call failed, fail-closed (no TickFlow): %s",
+            "custom minute provider %s call failed, falling back to TickFlow: %s",
             provider_name, e,
         )
-        return (pl.DataFrame(), False)
+        return (None, True)
     return (df, False)
 
 

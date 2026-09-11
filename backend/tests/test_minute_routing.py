@@ -127,24 +127,29 @@ def test_stocksdk_get_minute_receives_freq_1m(monkeypatch):
 # ---------- 测试 3: 自定义源异常 + TickFlow 也失败 → 返回空 (非 500) ----------
 
 def test_custom_provider_exception_no_500(monkeypatch):
-    """§4 测试 3: 已声明的自定义分钟源抛异常 → fail-closed 空 df, 不混 TickFlow。"""
+    """§4 测试 3: 自定义源抛异常 + TickFlow 也失败,
+    fetch_minute_single / sync_minute_batch 返回空 df。
+    """
+    # 自定义源抛异常
     mock_provider = MagicMock()
     mock_provider.get_minute.side_effect = httpx.TimeoutException("timeout")
     _setup_custom_provider(monkeypatch, mock_provider, has_dataset=True)
 
+    # mock get_client 返回 mock client, 其 klines.batch raise (TickFlow 也失败)
     mock_tf = MagicMock()
-    mock_tf.klines.batch.side_effect = Exception("tickflow must not run")
+    mock_tf.klines.batch.side_effect = Exception("tickflow fail")
     monkeypatch.setattr(kline_sync, "get_client", lambda: mock_tf)
     monkeypatch.setattr(kline_sync, "_public_minute_fallback", lambda *_a, **_k: pl.DataFrame())
 
+    # fetch_minute_single: 自定义源异常 → fall through → TickFlow 异常 → 返回空
     df_single = kline_sync.fetch_minute_single(
         "600519.SH", date(2026, 1, 15), asset_type="stock",
         capset=_tickflow_minute_capset(),
     )
     assert isinstance(df_single, pl.DataFrame)
     assert df_single.is_empty()
-    mock_tf.klines.batch.assert_not_called()
 
+    # sync_minute_batch: 同一路径, 返回空
     df_batch = kline_sync.sync_minute_batch(
         ["600519.SH"],
         start_time=datetime(2026, 1, 15, 9, 25, 0),
@@ -153,7 +158,6 @@ def test_custom_provider_exception_no_500(monkeypatch):
     )
     assert isinstance(df_batch, pl.DataFrame)
     assert df_batch.is_empty()
-    mock_tf.klines.batch.assert_not_called()
 
 
 # ---------- 测试 4: 未配 minute dataset → 回退 TickFlow ----------
