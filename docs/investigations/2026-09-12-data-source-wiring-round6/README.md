@@ -51,4 +51,4 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round6 \
     tests/test_kline_detail_transport.py
 ```
 
-云环境结果见 `evidence/test-results.md`。
+云环境结果：backend 目标 **195 passed**（含恢复的 `test_intraday_burst_fault_isolation` 与全量分钟自定义路由）。见 `evidence/test-results.md`。

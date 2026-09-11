@@ -25,6 +25,7 @@ from app.services.minute_refresh import MinuteRefreshService, _in_continuous_ses
 def _isolated_prefs(tmp_path, monkeypatch):
     path = tmp_path / "preferences.json"
     monkeypatch.setattr(preferences, "_path", lambda: path)
+    monkeypatch.setattr(preferences, "_server_path", lambda: path)
     preferences._invalidate_cache()
     return path
 
@@ -77,7 +78,7 @@ def _svc(tmp_path, monkeypatch, *, enabled=True, capability=True, in_hours=True,
     """custom 非 None 时模拟「full_minute 路由到声明该数据集的自定义源」:
     resolver 直接返回 fake provider (注册表在测试环境未加载)。"""
     _isolated_prefs(tmp_path, monkeypatch)
-    preferences.save({"minute_refresh_enabled": enabled})
+    preferences.save_server({"minute_refresh_enabled": enabled})
     monkeypatch.setattr(
         preferences, "get_full_minute_data_provider", lambda: full_minute_provider,
     )
@@ -410,25 +411,22 @@ def test_refresh_preferences_defaults_and_clamp(tmp_path, monkeypatch):
     _isolated_prefs(tmp_path, monkeypatch)
     assert preferences.get_minute_refresh_enabled() is False
     assert preferences.get_minute_refresh_interval() == 6
-    preferences.save({"minute_refresh_interval": 1})
+    preferences.save_server({"minute_refresh_interval": 1})
     assert preferences.get_minute_refresh_interval() == 3  # 下限
-    preferences.save({"minute_refresh_interval": 999})
+    preferences.save_server({"minute_refresh_interval": 999})
     assert preferences.get_minute_refresh_interval() == 120  # 上限
-    preferences.save({"minute_refresh_interval": 15})
+    preferences.save_server({"minute_refresh_interval": 15})
     assert preferences.get_minute_refresh_interval() == 15
 
 def test_realtime_monitor_config_owns_refresh_keys(tmp_path, monkeypatch):
-    """盘中增量配置归属实时监控端点 (set_realtime_monitor_config), 并 clamp 到 [3,120]。"""
+    """盘中增量配置走 set_minute_refresh, 并 clamp 到 [3,120]。"""
     _isolated_prefs(tmp_path, monkeypatch)
-    saved = preferences.set_realtime_monitor_config({
-        "minute_refresh_enabled": True,
-        "minute_refresh_interval": 1,   # 越界 → clamp 到下限
-    })
+    saved = preferences.set_minute_refresh(enabled=True, interval=1)
     assert saved["minute_refresh_enabled"] is True
     assert saved["minute_refresh_interval"] == 3
-    saved = preferences.set_realtime_monitor_config({"minute_refresh_interval": 400})
+    saved = preferences.set_minute_refresh(interval=400)
     assert saved["minute_refresh_interval"] == 120
-    saved = preferences.set_realtime_monitor_config({"minute_refresh_interval": 6})
+    saved = preferences.set_minute_refresh(interval=6)
     assert saved["minute_refresh_interval"] == 6
 
 
@@ -443,4 +441,4 @@ def test_status_endpoint_without_service():
     client = TestClient(app)
     resp = client.get("/api/settings/minute-refresh/status")
     assert resp.status_code == 200
-    assert resp.json() == {"available": False}
+    assert resp.json() == {"available": False, "enabled": False, "running": False}
