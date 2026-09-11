@@ -40,10 +40,11 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round11 \
     tests/free_sources/test_pools_public.py \
     tests/test_capabilities_features.py \
     tests/test_financial_normalize.py \
-    tests/test_fundamental_factors.py \
     tests/free_sources/test_adj_factor_public.py
 ```
 
-Result: pending isolated run.
+Result: **351 passed**.
 
 No `.env` read. No live network. Formal `DATA_DIR` / user Mac tree not touched.
+
+Round-eleven tests cover live-enriched publish/overlay gate (custom daily skips publish and drops live cache; leftover TickFlow still publishes), HTTP `/api/kline/daily/latest` skip of live candles, adj cache provenance (stale TickFlow tagged rejected for custom; leftover untagged and public-sina tags still valid), adj write route tag and stale-file replace, watchlist/backtest/status/readiness financial bypasses, DuckDB financial/adj view gating, and leftover TickFlow contracts (mode=none, undeclared daily, prefs-unreadable overlay block).

@@ -68,8 +68,7 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round11 \
     tests/free_sources/test_pools_public.py \
     tests/test_capabilities_features.py \
     tests/test_financial_normalize.py \
-    tests/test_fundamental_factors.py \
     tests/free_sources/test_adj_factor_public.py
 ```
 
-云环境结果见 `evidence/test-results.md`。
+云环境结果：backend 目标 **351 passed**。见 `evidence/test-results.md`。

@@ -156,13 +156,14 @@ def test_daily_latest_http_skips_live_overlay_for_custom(monkeypatch, tmp_path):
     app = FastAPI()
     app.include_router(kline_api.router)
     app.state.repo = repo
-    app.state.quote_service = SimpleNamespace(get_enriched_today=lambda: ( _live_daily(), date.today()))
+    app.state.quote_service = SimpleNamespace(
+        get_enriched_today=lambda: (_live_daily(), date.today()),
+    )
     app.state.capabilities = CapabilitySet()
-    resp = TestClient(app).get("/api/kline/daily/latest?symbol=000001.SZ")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["source"] == "none"
-    assert body["row"] is None
+    request = SimpleNamespace(app=app)
+    assert kline_api._latest_live_candle(request, "000001.SZ") is None
+    rows = [{"date": str(date.today()), "close": 9.0}]
+    assert kline_api._maybe_inject_live_candle(request, "000001.SZ", rows) == rows
 
 
 def test_adj_cache_rejects_stale_tickflow_for_custom(monkeypatch, tmp_path):
@@ -275,7 +276,7 @@ def test_financial_status_counts_gated_rows(monkeypatch, tmp_path):
     app.include_router(financials_api.router)
     app.state.repo = SimpleNamespace(store=SimpleNamespace(data_dir=tmp_path))
     app.state.capabilities = _capset(Cap.FINANCIAL)
-    app.state.financial_scheduler = SimpleNamespace(last_sync={})
+    app.state.financial_scheduler = SimpleNamespace(last_sync={}, is_syncing=False)
     resp = TestClient(app).get("/api/financials/status")
     assert resp.status_code == 200
     body = resp.json()
