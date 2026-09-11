@@ -95,16 +95,49 @@ def _load_instruments(data_dir: Path) -> list[str]:
         return []
 
 
+def tickflow_all_a_expansion_allowed(capset, *, scope: str | None = None) -> bool:
+    """True only for leftover TickFlow ALL expansion.
+
+    Public / custom pool, custom daily, or unreadable prefs must not expand
+    via TickFlow ``CN_Equity_A``.
+    """
+    from app.tickflow.capabilities import Cap
+    from app.tickflow.pools import pool_route
+
+    if scope is None:
+        from app.services import preferences as _prefs
+        scope = normalize_scope(_prefs.get_pipeline_universe_scope(), default=SCOPE_ALL)
+    else:
+        scope = normalize_scope(scope, default=SCOPE_ALL)
+    if scope != SCOPE_ALL:
+        return False
+    if capset is None or not capset.has(Cap.KLINE_DAILY_BATCH):
+        return False
+    if pool_route() != "tickflow":
+        return False
+    try:
+        from app.services import kline_sync
+        if kline_sync.daily_provider_is_custom():
+            return False
+    except Exception:
+        return False
+    return True
+
+
 def _ensure_csi_pool(pool_id: str, data_dir: Path, *, refresh_if_missing: bool = True) -> list[str]:
     from app.data_providers.registry import get_provider
     from app.services.free_sources.pools_public import load_pool_symbols
-    from app.tickflow.pools import get_pool
+    from app.tickflow.pools import get_pool, pool_route
 
-    # Prefer on-disk public cache
+    # Prefer on-disk cache (already written; not a live mix).
     syms = load_pool_symbols(data_dir, pool_id)
     if syms:
         return [str(s).strip().upper() for s in syms if s]
-    if refresh_if_missing:
+    if not refresh_if_missing:
+        return []
+
+    route = pool_route()
+    if route == "public":
         try:
             get_provider("public").sync_pools(data_dir, pool_ids=[pool_id])
             syms = load_pool_symbols(data_dir, pool_id)
@@ -112,12 +145,15 @@ def _ensure_csi_pool(pool_id: str, data_dir: Path, *, refresh_if_missing: bool =
                 return [str(s).strip().upper() for s in syms if s]
         except Exception as e:
             logger.warning("sync pool %s failed: %s", pool_id, e)
-    # last resort via get_pool (public or tickflow)
-    try:
-        return [str(s).strip().upper() for s in (get_pool(pool_id, refresh=True) or []) if s]
-    except Exception as e:
-        logger.warning("get_pool %s failed: %s", pool_id, e)
         return []
+    if route == "tickflow":
+        try:
+            return [str(s).strip().upper() for s in (get_pool(pool_id, refresh=True) or []) if s]
+        except Exception as e:
+            logger.warning("get_pool %s failed: %s", pool_id, e)
+            return []
+    logger.warning("pool_provider route=%s cannot refresh CSI pool %s", route, pool_id)
+    return []
 
 
 def resolve_symbols(

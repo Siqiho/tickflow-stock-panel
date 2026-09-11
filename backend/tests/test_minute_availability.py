@@ -107,6 +107,11 @@ def test_feature_availability_reports_custom_sources(monkeypatch):
     monkeypatch.setattr("app.services.preferences.is_public_adj_factor_provider", lambda: False)
     monkeypatch.setattr("app.services.financial_normalize.local_financials_ready", lambda d: False)
     monkeypatch.setattr("app.services.financial_normalize.local_adj_factor_ready", lambda d: False)
+    monkeypatch.setattr(
+        "app.data_providers.custom.provider_has_dataset",
+        lambda name, dataset: name == "sdk" and dataset == "minute",
+    )
+    monkeypatch.setattr("app.data_providers.custom.get_provider", lambda name: object())
 
     feats = feature_availability(
         _capset(Cap.FINANCIAL, Cap.ADJ_FACTOR, Cap.DEPTH5_BATCH, Cap.KLINE_MINUTE_BATCH, Cap.QUOTE_BATCH),

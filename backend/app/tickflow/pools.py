@@ -55,13 +55,26 @@ def _pool_cache_path(pool_id: str) -> Path:
     return settings.data_dir / "pools" / f"{pool_id}.parquet"
 
 
-def _use_public_pools() -> bool:
+def pool_route() -> str:
+    """Return public | tickflow | custom | unresolved.
+
+    TickFlow universes are used only for an explicit tickflow selection.
+    Custom / unreadable prefs fail-closed (empty), never mix TickFlow.
+    """
     try:
         from app.services import preferences
-        return preferences.is_public_pool_provider()
+        name = preferences.get_pool_provider()
+        if preferences.is_public_pool_provider(name):
+            return "public"
+        if name == "tickflow":
+            return "tickflow"
+        return "custom"
     except Exception:
-        # Prefs unreadable: do not fail-open to TickFlow universes.
-        return True
+        return "unresolved"
+
+
+def _use_public_pools() -> bool:
+    return pool_route() == "public"
 
 
 def get_pool(pool_id: PoolId, refresh: bool = False) -> list[str]:
@@ -83,8 +96,9 @@ def get_pool(pool_id: PoolId, refresh: bool = False) -> list[str]:
 
 def _fetch_pool(pool_id: PoolId) -> list[str]:
     """拉取池成份: public(中证/新浪) 或 TickFlow universes。"""
+    route = pool_route()
     # Public index constituents for CSI300/CSI500/SSE50
-    if pool_id in _POOL_NAME_HINTS and _use_public_pools():
+    if pool_id in _POOL_NAME_HINTS and route == "public":
         try:
             from app.services.free_sources.pools_public import (
                 fetch_pool_constituents,
@@ -99,9 +113,10 @@ def _fetch_pool(pool_id: PoolId) -> list[str]:
             logger.warning("public pool %s failed, fail-closed (no TickFlow): %s", pool_id, e)
         return []
 
-    if _use_public_pools():
+    if route != "tickflow":
         logger.warning(
-            "public pool_provider cannot serve %s via TickFlow universes", pool_id,
+            "pool_provider route=%s cannot serve %s via TickFlow universes",
+            route, pool_id,
         )
         return []
 

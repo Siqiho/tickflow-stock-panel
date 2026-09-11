@@ -259,9 +259,14 @@ def daily_availability(capset: CapabilitySet) -> dict:
         daily_name = _daily_prefs.get_daily_data_provider()
         _, fallback, err = _kline_sync._resolve_daily_provider(daily_name)
     except Exception:
-        daily_name = "tickflow"
-        fallback = True
-        err = None
+        return {
+            "available": False,
+            "status": "unavailable",
+            "reason": "数据源偏好不可读",
+            "reason_code": "resolve_failed",
+            "source": "none",
+            "capability": caps,
+        }
 
     if err is not None and daily_name not in {"tickflow", ""}:
         return {
@@ -492,12 +497,8 @@ def feature_availability(
         quote_mode = "none"
 
     minute_info = minute_availability(capset, user_enabled=minute_user_enabled)
-    if (
-        minute_provider
-        and minute_provider != "tickflow"
-        and minute_info.get("source") == "tickflow"
-    ):
-        minute_info = {**minute_info, "source": minute_provider}
+    # Do not rewrite leftover TickFlow / public_fallback labels to a stored
+    # custom name. minute_availability already sets source when resolve succeeded.
 
     return {
         "daily": daily_availability(capset),

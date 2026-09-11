@@ -233,27 +233,25 @@ def resolve_universe(capset: CapabilitySet) -> list[str]:
 
     优先使用 preferences.pipeline_universe_scope：
       ALL / CSI300 / CSI500 / SSE50 / WATCHLIST
-    - ALL + TickFlow pool + batch → TickFlow CN_Equity_A（若可用）
-    - ALL + public pool / free → instruments + watchlist + demo
-    - CSI* → data/pools 缓存(缺则 public 刷新) + 用户自选
+    - ALL + leftover TickFlow pool + TickFlow daily + batch → CN_Equity_A
+    - ALL + public / custom pool or custom daily → instruments + watchlist + demo
+    - CSI* → data/pools 缓存(缺则按 pool_route 刷新) + 用户自选
     """
     from app.services.universe_scope import (
         SCOPE_ALL,
         SCOPE_LABELS,
         normalize_scope,
         resolve_symbols,
+        tickflow_all_a_expansion_allowed,
     )
 
     scope = normalize_scope(_prefs.get_pipeline_universe_scope(), default=SCOPE_ALL)
     logger.info("resolve_universe scope=%s (%s)", scope, SCOPE_LABELS.get(scope, scope))
 
-    # TickFlow universe only when pool_provider is TickFlow. Public pool
-    # must not silently expand ALL via quote.pool / CN_Equity_A.
-    if (
-        scope == SCOPE_ALL
-        and capset.has(Cap.KLINE_DAILY_BATCH)
-        and not _prefs.is_public_pool_provider()
-    ):
+    # TickFlow universe only when pool_provider is explicitly TickFlow and
+    # daily is not a declared custom source. Public / custom pool or custom
+    # daily must not silently expand ALL via quote.pool / CN_Equity_A.
+    if tickflow_all_a_expansion_allowed(capset, scope=scope):
         try:
             all_a = get_pool("CN_Equity_A", refresh=True)
             if all_a:

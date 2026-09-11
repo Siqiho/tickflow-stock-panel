@@ -1196,9 +1196,6 @@ async def sync_minute(request: Request):
     from app.services.pipeline_jobs import is_cancelled, job_store, release_run_slot, try_acquire_run_slot
     from app.api.data import invalidate_storage_cache
     from app.services.preferences import get_minute_sync_days
-    from app.tickflow.capabilities import Cap
-    from app.tickflow.pools import get_pool
-
     repo = request.app.state.repo
     capset = _http_capset(request)
 
@@ -1225,15 +1222,7 @@ async def sync_minute(request: Request):
 
             try:
                 progress("sync_minute", 5, "解析标的池…")
-                universe = sorted(set(get_pool("watchlist")) | set(get_pool("CN_Equity_A")))
-                inst_path = repo.store.data_dir / "instruments" / "instruments.parquet"
-                if inst_path.exists():
-                    try:
-                        import polars as pl
-                        inst = pl.read_parquet(inst_path, columns=["symbol"])
-                        universe = sorted(set(universe) | set(inst["symbol"].to_list()))
-                    except Exception:  # noqa: BLE001
-                        pass
+                universe = _resolve_minute_universe(capset, repo)
                 progress("sync_minute", 10, f"标的池 {len(universe)} 只")
 
                 days = get_minute_sync_days()
