@@ -244,9 +244,14 @@ def _tag_daily_route(df: pl.DataFrame) -> pl.DataFrame:
     route = daily_route()
     if df is None or getattr(df, "is_empty", lambda: True)():
         return df
-    if not route or route == "unresolved" or "route" in df.columns:
+    if not route or route == "unresolved":
         return df
-    return df.with_columns(pl.lit(route).alias("route"))
+    if "route" not in df.columns:
+        return df.with_columns(pl.lit(route).alias("route"))
+    tokens = pl.col("route").cast(pl.Utf8).fill_null("").str.strip_chars()
+    return df.with_columns(
+        pl.when(tokens == "").then(pl.lit(route)).otherwise(pl.col("route")).alias("route")
+    )
 
 
 def _incoming_daily_route(df: pl.DataFrame) -> str:

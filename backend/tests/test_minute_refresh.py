@@ -371,8 +371,7 @@ def test_custom_provider_latest_missing_forces_full_with_minute_fallback(tmp_pat
 
 
 def test_custom_provider_unresolved_degrades_to_tickflow(tmp_path, monkeypatch):
-    """路由指向未声明 full_minute 数据集的源 (真实 resolver 判定) → 降级
-    TickFlow 路径, 门控口径不变。"""
+    """未声明 full_minute 数据集 fail-closed，不再降级 TickFlow。"""
     svc = _svc(tmp_path, monkeypatch, full_minute_provider="not-registered")
     monkeypatch.setattr(
         minute_refresh.MinuteRefreshService, "_today_coverage_lag_minutes",
@@ -389,10 +388,9 @@ def test_custom_provider_unresolved_degrades_to_tickflow(tmp_path, monkeypatch):
         lambda symbols, capset, *, count=300: (modes.append("tf-full"), (_full_df(), 28))[1],
     )
     svc._run_round()
-    assert modes == ["tf-inc"]
+    assert modes == []
     st = svc.status()
-    assert st["provider_effective"] == "tickflow"
-    assert st["last_mode"] == "increment"
+    assert st["provider_effective"] != "tickflow"
 
 
 def test_status_reports_gate_reason_when_stopped(tmp_path, monkeypatch):

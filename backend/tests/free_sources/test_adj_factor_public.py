@@ -66,6 +66,10 @@ def test_fetch_symbol_with_mock_client(monkeypatch):
 
 
 def test_merge_write(tmp_path: Path, monkeypatch):
+    from app.services import kline_sync
+
+    monkeypatch.setattr(kline_sync.preferences, "get_adj_factor_provider", lambda: "public")
+    monkeypatch.setattr(kline_sync.preferences, "is_public_adj_factor_provider", lambda name=None: True)
     df1 = pl.DataFrame(
         {
             "symbol": ["000001.SZ", "000001.SZ"],

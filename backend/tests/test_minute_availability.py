@@ -52,7 +52,8 @@ def test_feature_availability_includes_daily_and_minute(monkeypatch):
     assert feats["daily"]["available"] is True
     assert feats["minute"]["available"] is False
     assert feats["minute"].get("view_available") is True
-    assert feats["depth"]["available"] is True
+    assert feats["depth"]["available"] is False
+    assert feats["depth"]["source"] == "none"
     assert feats["quote"]["available"] is True
     assert feats["quote"]["source"] == "local_public"
     assert feats["websocket"]["available"] is False

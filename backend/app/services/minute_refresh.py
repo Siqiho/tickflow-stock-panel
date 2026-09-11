@@ -159,9 +159,9 @@ class MinuteRefreshService:
     def _resolve_custom(self) -> tuple[object | None, str]:
         """解析自定义源。返回 (provider_or_None, effective_name):
 
-        - 偏好 tickflow / 源未声明 full_minute 数据集 → (None, "tickflow")
-          (旧契约: 未声明仍回退 TickFlow, 能力门控决定能否真正运行)
-        - 偏好不可读 / 解析异常 → (None, name) fail-closed, 本轮不混 TickFlow
+        - 偏好 tickflow → (None, "tickflow")
+        - 未声明 full_minute / 偏好不可读 / 解析异常 → (None, name|unresolved)
+          fail-closed, 本轮不混 TickFlow
         - 成功 → (provider, name)
         """
         from app.services import kline_sync

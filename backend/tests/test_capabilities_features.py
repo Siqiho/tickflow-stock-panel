@@ -29,7 +29,8 @@ def test_capabilities_includes_features(monkeypatch):
     assert body["minute"]["view_available"] is True
     assert body["minute"]["reason_code"] == "public_fallback"
     assert body["daily"]["available"] is True
-    assert body["depth"]["available"] is True
+    assert body["depth"]["available"] is False
+    assert body["depth"]["source"] == "none"
     assert body["depth"]["operation"] == "sealed_l1"
     assert body["depth"]["depth5_available"] is False
     assert "depth5.batch" not in body["capabilities"]

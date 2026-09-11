@@ -23,7 +23,7 @@ English summary: sixteenth-round leftover mix-source / fail-open paths that roun
 1. **未声明自定义源**：`_resolve_daily_provider` / `_resolve_minute_provider` / `_resolve_full_minute_provider` / `_try_custom_adj_provider` 未声明数据集改为 fail-closed（`unresolved` / `skip`），不再回退 TickFlow。
 2. **leftover sina qfq**：`sync_adj_factor` / `fetch_adj_factor_single` / `adj_live_fetch_allowed` leftover 无 cap 不再走公开新浪。`adj_public_write_allowed` 只给显式 public。`adj_cache_usable` leftover TickFlow 不再认 public 标签。能力表不再广告 public_fallback。
 3. **公开 L1**：`DepthService._call_depth_batch` leftover TickFlow 空结果保持空。`depth_cache_usable` / `depth_stored_usable` leftover 不再认 public 标签。能力表不再广告公开 L1。
-4. **历史读 provenance**：`filter_daily_cache` 用于 HTTP `get_daily` / 批量扫描、enriched 内存缓存、screener、chips loader。DuckDB `kline_daily` / `kline_enriched` 等日 K 视图按 daily route 过滤。看板 `latest_official_enriched_date` 走可用分区。
+4. **历史读 provenance**：`filter_daily_cache` 用于 HTTP `get_daily` / 批量扫描、enriched 内存缓存、screener、chips loader。DuckDB `kline_daily` / `kline_enriched` 等日 K 视图按 daily route 过滤。看板 `latest_official_enriched_date` 走可用分区。扫描 schema 补上 `route`（否则 `extra_columns=ignore` 会丢掉 provenance，自定义分区会被当成未打标而拒读）；`_tag_daily_route` 会填空/null `route`，避免 schema 插入空列后 leftover 写盘不再打标。
 5. **Lab**：`/api/free/adj-factor*`、`/financials*`、`/pools*` 写/拉、以及 quotes / intraday 在对应 route 为 custom / unresolved 时 409。leftover TickFlow / 显式 public 仍可作显式 Lab 公开面。
 
 未改：盘后默认时刻、已声明分钟源调用失败且具备 TickFlow minute cap 时的回退、leftover TickFlow 单票公开分时 / 自选历史 TDX、实时 leftover TickFlow + free 仍是 `mode=none`、个股/指数/ETF 维表仍固定 TickFlow（无 `instrument_provider`）、quote_snapshot 响应覆盖（带 `is_quote_snapshot`）、`.env`、鉴权。显式 `adj=public` / `depth5=public` 仍走公开适配器。

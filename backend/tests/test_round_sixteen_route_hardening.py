@@ -241,15 +241,16 @@ def test_http_daily_scan_keeps_custom_and_leftover_untagged(monkeypatch, tmp_pat
     _write_enriched(tmp_path, _daily_df(route="fuyao"))
     _patch_custom_daily(monkeypatch)
     repo = KlineRepository(DataStore(tmp_path))
-    out = repo.get_daily("000001.SZ", date(2026, 7, 1), date(2026, 7, 20))
-    assert "000001.SZ" in out["symbol"].to_list()
+    out = repo._scan_daily_symbol("000001.SZ", date(2026, 7, 1), date(2026, 7, 20), None)
+    assert out["symbol"].to_list() == ["000001.SZ"]
 
     monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "tickflow")
     leftover_dir = tmp_path / "kline_daily_enriched" / "date=2026-07-16"
     leftover_dir.mkdir(parents=True)
-    _daily_df(route=None).write_parquet(leftover_dir / "part.parquet")
-    repo2 = KlineRepository(DataStore(tmp_path))
-    leftover = repo2.get_daily("000001.SZ", date(2026, 7, 16), date(2026, 7, 16))
+    _daily_df(route=None).with_columns(pl.lit(date(2026, 7, 16)).alias("date")).write_parquet(
+        leftover_dir / "part.parquet"
+    )
+    leftover = repo._scan_daily_symbol("000001.SZ", date(2026, 7, 16), date(2026, 7, 16), None)
     assert leftover["symbol"].to_list() == ["000001.SZ"]
 
 

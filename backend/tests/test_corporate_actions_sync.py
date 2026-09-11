@@ -243,7 +243,11 @@ def test_crosscheck_and_verification_markers() -> None:
     assert by["688001.SH"] == MARKER_UNVERIFIED  # not fetched
 
 
-def test_run_loop_writes_lab_actions_and_verification(tmp_path: Path) -> None:
+def test_run_loop_writes_lab_actions_and_verification(tmp_path: Path, monkeypatch) -> None:
+    from app.services import kline_sync
+
+    monkeypatch.setattr(kline_sync.preferences, "get_adj_factor_provider", lambda: "public")
+    monkeypatch.setattr(kline_sync.preferences, "is_public_adj_factor_provider", lambda name=None: True)
     data = tmp_path / "data"
     (data / "adj_factor").mkdir(parents=True)
     adj = pl.DataFrame(

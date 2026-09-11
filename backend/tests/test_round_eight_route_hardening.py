@@ -268,8 +268,8 @@ def test_feature_undeclared_minute_keeps_tickflow_source(monkeypatch):
         lambda name, dataset: False,
     )
     feats = feature_availability(_capset(Cap.KLINE_MINUTE_BATCH), minute_user_enabled=True)
-    assert feats["minute"]["source"] == "tickflow"
-    assert feats["minute"]["reason_code"] == "ok"
+    assert feats["minute"]["source"] == "sdk"
+    assert feats["minute"]["status"] == "unavailable"
 
 
 def test_financial_prefs_failure_does_not_tickflow(monkeypatch, tmp_path):

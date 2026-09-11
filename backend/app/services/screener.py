@@ -277,7 +277,7 @@ class ScreenerService:
                 )
                 .sort(["symbol", "date"])
             )
-            available = [c for c in read_cols if c in lf.schema]
+            available = [c for c in read_cols if c in lf.collect_schema().names()]
             df_hist = filter_daily_cache(lf.select(available).collect())
         except Exception as e:  # noqa: BLE001
             logger.warning("warmup history load failed: %s", e)
