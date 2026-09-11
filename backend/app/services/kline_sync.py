@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import shutil
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 
@@ -133,6 +135,62 @@ def sync_daily_batch(symbols: list[str],
     return pl.concat(out, how="diagonal_relaxed")
 
 
+def _resolve_daily_provider(
+    provider_name: str,
+) -> tuple[object | None, bool, str | None]:
+    """解析自定义日K源。返回 (provider, should_fallback_to_tickflow, error_msg)。"""
+    if provider_name == "tickflow":
+        return (None, True, None)
+    from app.data_providers import custom as custom_sources
+    try:
+        if not custom_sources.provider_has_dataset(provider_name, "daily"):
+            return (None, True, None)
+        provider = custom_sources.get_provider(provider_name)
+        return (provider, False, None)
+    except Exception as e:  # noqa: BLE001
+        return (None, True, str(e))
+
+
+def _refresh_daily_view(repo: KlineRepository) -> None:
+    try:
+        d = repo.store.data_dir.as_posix()
+        repo.db.execute(
+            f"""CREATE OR REPLACE VIEW kline_daily AS
+                SELECT * FROM read_parquet('{d}/kline_daily/**/*.parquet', union_by_name=true)"""
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("refresh view failed: %s", e)
+
+
+def _iter_custom_daily_chunks(
+    provider: object,
+    symbols: list[str],
+    start_time: datetime,
+    end_time: datetime,
+    on_chunk_done: Callable[[int, int], None] | None,
+):
+    """Yield normalized daily frames from a custom/plugin provider."""
+    kwargs: dict = {
+        "symbols": symbols,
+        "start_time": start_time,
+        "end_time": end_time,
+        "asset_type": "stock",
+    }
+    if on_chunk_done is not None:
+        kwargs["on_chunk_done"] = on_chunk_done
+    if hasattr(provider, "iter_daily"):
+        chunks = provider.iter_daily(**kwargs)
+    else:
+        df = provider.get_daily(**kwargs)
+        chunks = [df] if df is not None else []
+    for raw in chunks:
+        if raw is None or getattr(raw, "is_empty", lambda: False)():
+            continue
+        normalized = _normalize_daily(raw)
+        if not normalized.is_empty():
+            yield normalized
+
+
 def sync_and_persist_daily_batch(
     symbols: list[str],
     repo: KlineRepository,
@@ -146,16 +204,40 @@ def sync_and_persist_daily_batch(
 
     start_date/end_date: 外部传入的时间范围(由 pipeline 根据已有数据计算)。
     未传入时默认拉最近 1 年。
+
+    自定义/插件日K源（``daily_data_provider``）优先于 TickFlow。流式
+    ``iter_daily`` 经 staging 落盘，避免全市场结果堆在内存。
     """
-    if not symbols or not capset.has(Cap.KLINE_DAILY_BATCH):
+    if not symbols:
+        return 0
+
+    end_time = end_date or datetime.now()
+    start_time = start_date or (end_time - timedelta(days=365))
+
+    provider_name = preferences.get_daily_data_provider()
+    provider, fallback, err = _resolve_daily_provider(provider_name)
+    if err is not None:
+        logger.warning(
+            "custom daily provider %s resolution failed, falling back to TickFlow: %s",
+            provider_name, err,
+        )
+    if not fallback and provider is not None:
+        written = _persist_daily_chunks(
+            _iter_custom_daily_chunks(
+                provider, symbols, start_time, end_time, on_chunk_done,
+            ),
+            repo,
+        )
+        if written:
+            _refresh_daily_view(repo)
+        return written
+
+    if not capset.has(Cap.KLINE_DAILY_BATCH):
         return 0
 
     lim = capset.limits(Cap.KLINE_DAILY_BATCH)
     batch_size = lim.batch if lim and lim.batch else 100
     rpm = lim.rpm if lim else None
-
-    end_time = end_date or datetime.now()
-    start_time = start_date or (end_time - timedelta(days=365))
 
     df = sync_daily_batch(
         symbols, count=count, batch_size=batch_size, rpm=rpm,
@@ -167,16 +249,7 @@ def sync_and_persist_daily_batch(
         return 0
 
     repo.append_daily(df)
-
-    try:
-        d = repo.store.data_dir.as_posix()
-        repo.db.execute(
-            f"""CREATE OR REPLACE VIEW kline_daily AS
-                SELECT * FROM read_parquet('{d}/kline_daily/**/*.parquet', union_by_name=true)"""
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.warning("refresh view failed: %s", e)
-
+    _refresh_daily_view(repo)
     return df.height
 
 

@@ -9,6 +9,8 @@ import {
   displaySourceName,
   findDataSource,
   formatMissingValue,
+  isPublicAdjFactorProvider,
+  isPublicFinancialProvider,
   marginQueryErrorLabel,
 } from './dataSources'
 import type { CapabilityMatrix, CatalogResponse, DataControlSummary, DataSourcesResponse } from './api'
@@ -129,6 +131,23 @@ describe('capabilityStatusRows', () => {
     expect(rows[0].localDataLabel).toBe('目录无记录')
     expect(rows[1].readyLabel).toBe('配置未就绪')
     expect(rows[1].configuredSource).toBe('TickFlow')
+  })
+})
+
+describe('public provider aliases', () => {
+  it('treats eastmoney/em/free as public financial', () => {
+    expect(isPublicFinancialProvider('public')).toBe(true)
+    expect(isPublicFinancialProvider('eastmoney')).toBe(true)
+    expect(isPublicFinancialProvider('EM')).toBe(true)
+    expect(isPublicFinancialProvider('free')).toBe(true)
+    expect(isPublicFinancialProvider('tickflow')).toBe(false)
+    expect(isPublicFinancialProvider(undefined)).toBe(false)
+  })
+
+  it('treats sina/sina_qfq/free as public adj', () => {
+    expect(isPublicAdjFactorProvider('sina')).toBe(true)
+    expect(isPublicAdjFactorProvider('sina_qfq')).toBe(true)
+    expect(isPublicAdjFactorProvider('tickflow')).toBe(false)
   })
 })
 

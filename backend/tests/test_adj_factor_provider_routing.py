@@ -21,6 +21,7 @@ def test_same_as_daily_heals_to_daily_provider(tmp_path, monkeypatch):
         monkeypatch,
         {"daily_data_provider": "tickflow", "adj_factor_provider": "same_as_daily"},
     )
+    assert preferences.get_adj_factor_provider_stored() == "same_as_daily"
     assert preferences.get_adj_factor_provider() == "tickflow"
     assert preferences.is_public_adj_factor_provider() is False
 
@@ -34,6 +35,32 @@ def test_explicit_public_adj_is_kept(tmp_path, monkeypatch):
     _server_prefs(tmp_path, monkeypatch, {"adj_factor_provider": "sina"})
     assert preferences.get_adj_factor_provider() == "sina"
     assert preferences.is_public_adj_factor_provider() is True
+
+
+def test_pipeline_public_adj_gate_matches_sync_fallback(monkeypatch):
+    from app.jobs.daily_pipeline import adj_sync_uses_public_adapter
+    from app.tickflow.capabilities import Cap, CapabilityLimits, CapabilitySet
+
+    monkeypatch.setattr(
+        "app.jobs.daily_pipeline._prefs.is_public_adj_factor_provider",
+        lambda: False,
+    )
+    empty = CapabilitySet()
+    assert adj_sync_uses_public_adapter(empty) is True
+    paid = CapabilitySet({Cap.ADJ_FACTOR: CapabilityLimits()})
+    assert adj_sync_uses_public_adapter(paid) is False
+
+
+def test_pipeline_public_adj_pref_uses_public_even_with_tickflow_cap(monkeypatch):
+    from app.jobs.daily_pipeline import adj_sync_uses_public_adapter
+    from app.tickflow.capabilities import Cap, CapabilityLimits, CapabilitySet
+
+    monkeypatch.setattr(
+        "app.jobs.daily_pipeline._prefs.is_public_adj_factor_provider",
+        lambda: True,
+    )
+    paid = CapabilitySet({Cap.ADJ_FACTOR: CapabilityLimits()})
+    assert adj_sync_uses_public_adapter(paid) is True
 
 
 def test_sync_adj_uses_public_when_tickflow_has_no_cap(monkeypatch):

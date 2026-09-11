@@ -142,7 +142,7 @@ def test_update_data_providers_refreshes_capability_snapshot(monkeypatch):
     """切换数据源后 app.state.capabilities 快照应刷新 (读缓存+增广, 无网络)。"""
     from app.api import settings as settings_api
 
-    monkeypatch.setattr("app.services.preferences.save", lambda upd: None)
+    monkeypatch.setattr("app.services.preferences.save_server", lambda upd: None)
     sentinel = CapabilitySet()
     monkeypatch.setattr(settings_api, "detect_capabilities", lambda: sentinel)
 

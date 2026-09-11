@@ -232,14 +232,20 @@ def feature_availability(
         adj_reason = None
         adj_code = "ok"
         adj_source = "tickflow"
+        adj_status = "available"
     elif pub_adj or local_adj:
         adj_reason = None
         adj_code = "ok"
         adj_source = "local_public"
+        adj_status = "available"
     else:
-        adj_reason = "当前档位无复权因子权限,且本地尚未同步复权因子"
-        adj_code = "no_capability"
-        adj_source = "none"
+        # TickFlow none/free cannot serve factors. sync_adj_factor already
+        # uses the public sina qfq adapter — labels must not say "none".
+        adj_ok = True
+        adj_reason = "当前档位无复权因子权限，同步时走公开源（新浪 qfq）"
+        adj_code = "public_fallback"
+        adj_source = "local_public"
+        adj_status = "public_fallback"
 
     # Depth / sealed: TickFlow Pro+ batch depth, else public L1 (bid1/ask1 vol)
     has_depth_batch = capset.has(Cap.DEPTH5_BATCH)
@@ -305,7 +311,7 @@ def feature_availability(
         "minute": minute_info,
         "adj_factor": {
             "available": adj_ok,
-            "status": "available" if adj_ok else "unavailable",
+            "status": adj_status,
             "reason": adj_reason,
             "reason_code": adj_code,
             "source": adj_source,

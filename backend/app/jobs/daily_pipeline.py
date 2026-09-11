@@ -146,6 +146,21 @@ def should_use_public_eod_fallback(
     return bool(pull_a_share and today_missing and weekday < 5 and not has_quote_pool)
 
 
+def adj_sync_uses_public_adapter(capset: CapabilitySet) -> bool:
+    """Whether adj sync will write via the public sina adapter.
+
+    Explicit public/sina* prefs use it. Leftover tickflow / healed
+    same_as_daily also use it when TickFlow has no Cap.ADJ_FACTOR —
+    matching ``kline_sync.sync_adj_factor``.
+    """
+    try:
+        if _prefs.is_public_adj_factor_provider():
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return not capset.has(Cap.ADJ_FACTOR)
+
+
 def _prune_partial_enriched_partitions(daily_dir: Path, enriched_dir: Path) -> list[str]:
     """Delete watchlist-only enriched dates so the next increment rebuilds the full day."""
     pruned: list[str] = []
@@ -510,60 +525,54 @@ def run_now(
     #     (这两类分支不拉历史日K, 除权不能用日K范围, 只能兜底最近几日)
     written_adj = 0
     affected_symbols: list[str] = []
-    from app.services import preferences as _pref_adj
-    _public_adj = False
-    try:
-        _public_adj = _pref_adj.is_public_adj_factor_provider()
-    except Exception:
-        _public_adj = False
-    if capset.has(Cap.ADJ_FACTOR) or _public_adj:
-        from datetime import datetime, timedelta
-        adj_end = datetime.now()
-        if daily_range_start is not None:
-            adj_start = datetime.combine(daily_range_start, datetime.min.time())
-        else:
-            # 日K实时增量/跳过时, 除权兜底拉最近 N 天, 覆盖周末/长假/停机期间的新除权事件。
-            # 15 天: 覆盖春节/国庆最长约10天长假 + 故障恢复缓冲; sync_adj_factor 内部 merge+unique 幂等, 多拉无副作用。
-            adj_start = adj_end - timedelta(days=15)
-        adj_start_str = adj_start.strftime("%Y-%m-%d")
-        adj_end_str = adj_end.strftime("%Y-%m-%d")
-        emit("sync_adj", 50, f"获取除权因子 [{adj_start_str} ~ {adj_end_str}]…")
-        logger.info("sync_adj: [%s ~ %s] start", adj_start_str, adj_end_str)
-
-        def _adj_chunk_progress(cur: int, tot: int) -> None:
-            emit("sync_adj", 50 + int(10 * cur / tot),
-                 f"除权因子批次 {cur}/{tot}", stage_pct=int(100 * cur / tot), skip_log=True)
-        adj_universe = list(universe)
-        try:
-            if _prefs.is_public_adj_factor_provider():
-                from app.services.universe_scope import resolve_symbols
-                # public adj 默认跟 public_data_scope（CSI300），避免 ALL 时盘后被拖死
-                pub_scope = _prefs.get_public_data_scope()
-                adj_universe = resolve_symbols(
-                    pub_scope,
-                    data_dir=Path(settings.data_dir),
-                    default="CSI300",
-                    refresh_pools_if_missing=True,
-                ) or adj_universe
-                emit("sync_adj", 50, f"获取除权因子(public/{pub_scope}) {len(adj_universe)} 只…")
-        except Exception as e:
-            logger.warning("public adj universe resolve failed: %s", e)
-        written_adj, affected_symbols = kline_sync.sync_adj_factor(
-            adj_universe, repo, capset,
-            start_time=adj_start, end_time=adj_end,
-            on_chunk_done=_adj_chunk_progress,
-        )
-        if affected_symbols:
-            _refresh_single_view(repo, "adj_factor")
-            emit("sync_adj", 60, f"除权因子完成,新增 {len(affected_symbols)} 只个股")
-            logger.info("sync_adj: [%s ~ %s] done, %d symbols", adj_start_str, adj_end_str, len(affected_symbols))
-        else:
-            emit("sync_adj", 60, "除权因子完成,无新增")
-            logger.info("sync_adj: [%s ~ %s] no new factors", adj_start_str, adj_end_str)
-        _invalidate("adj_factor")
+    # Always attempt adj. TickFlow Starter+ uses Cap.ADJ_FACTOR; leftover
+    # tickflow / healed same_as_daily on none/free is handled inside
+    # sync_adj_factor via the public sina adapter. The old
+    # `has(ADJ_FACTOR) or is_public` gate left that fallback dead.
+    from datetime import datetime, timedelta
+    adj_end = datetime.now()
+    if daily_range_start is not None:
+        adj_start = datetime.combine(daily_range_start, datetime.min.time())
     else:
-        skipped.append("sync_adj")
-        logger.info("sync_adj skipped: no ADJ_FACTOR capability and adj_factor_provider is not public")
+        # 日K实时增量/跳过时, 除权兜底拉最近 N 天, 覆盖周末/长假/停机期间的新除权事件。
+        # 15 天: 覆盖春节/国庆最长约10天长假 + 故障恢复缓冲; sync_adj_factor 内部 merge+unique 幂等, 多拉无副作用。
+        adj_start = adj_end - timedelta(days=15)
+    adj_start_str = adj_start.strftime("%Y-%m-%d")
+    adj_end_str = adj_end.strftime("%Y-%m-%d")
+    emit("sync_adj", 50, f"获取除权因子 [{adj_start_str} ~ {adj_end_str}]…")
+    logger.info("sync_adj: [%s ~ %s] start", adj_start_str, adj_end_str)
+
+    def _adj_chunk_progress(cur: int, tot: int) -> None:
+        emit("sync_adj", 50 + int(10 * cur / tot),
+             f"除权因子批次 {cur}/{tot}", stage_pct=int(100 * cur / tot), skip_log=True)
+    adj_universe = list(universe)
+    try:
+        if adj_sync_uses_public_adapter(capset):
+            from app.services.universe_scope import resolve_symbols
+            # public adj 默认跟 public_data_scope（CSI300），避免 ALL 时盘后被拖死
+            pub_scope = _prefs.get_public_data_scope()
+            adj_universe = resolve_symbols(
+                pub_scope,
+                data_dir=Path(settings.data_dir),
+                default="CSI300",
+                refresh_pools_if_missing=True,
+            ) or adj_universe
+            emit("sync_adj", 50, f"获取除权因子(public/{pub_scope}) {len(adj_universe)} 只…")
+    except Exception as e:
+        logger.warning("public adj universe resolve failed: %s", e)
+    written_adj, affected_symbols = kline_sync.sync_adj_factor(
+        adj_universe, repo, capset,
+        start_time=adj_start, end_time=adj_end,
+        on_chunk_done=_adj_chunk_progress,
+    )
+    if affected_symbols:
+        _refresh_single_view(repo, "adj_factor")
+        emit("sync_adj", 60, f"除权因子完成,新增 {len(affected_symbols)} 只个股")
+        logger.info("sync_adj: [%s ~ %s] done, %d symbols", adj_start_str, adj_end_str, len(affected_symbols))
+    else:
+        emit("sync_adj", 60, "除权因子完成,无新增")
+        logger.info("sync_adj: [%s ~ %s] no new factors", adj_start_str, adj_end_str)
+    _invalidate("adj_factor")
 
     # Step 1.5: public 财务刷新（不阻断日K/复权主路径）
     financial_result: dict | None = None

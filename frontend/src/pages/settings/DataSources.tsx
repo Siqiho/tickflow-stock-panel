@@ -158,14 +158,21 @@ function patchMatrix(
   return { ...matrix, capabilities: caps }
 }
 
+/** Product defaults — must match backend getters (unset realtime → public). */
 const DEFAULT_ROUTING: Record<ProviderField, string> = {
   daily_data_provider: 'tickflow',
   adj_factor_provider: 'tickflow',
   minute_data_provider: 'tickflow',
   full_minute_data_provider: 'tickflow',
   depth5_data_provider: 'tickflow',
-  realtime_data_provider: 'tickflow',
+  realtime_data_provider: 'public',
   financial_data_provider: 'tickflow',
+}
+
+/** Explicit “let TickFlow take over” — paid path, including realtime. */
+const TICKFLOW_ROUTING: Record<ProviderField, string> = {
+  ...DEFAULT_ROUTING,
+  realtime_data_provider: 'tickflow',
 }
 
 /** 单个能力卡: 当前生效提供方 + 配置/本地状态; 管理员可点候选切换。
@@ -718,7 +725,7 @@ export function SettingsDataSourcesPanel({
     mutationFn: async (name: string) => {
       // 一键套用: 该源适配了哪些数据集就接管哪些, 其余回默认
       if (name === 'tickflow') {
-        return api.updateDataProviders(DEFAULT_ROUTING)
+        return api.updateDataProviders(TICKFLOW_ROUTING)
       }
       const supported = new Set(
         allItems.find(s => s.name === name)?.datasets ?? []
