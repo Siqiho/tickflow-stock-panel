@@ -348,7 +348,7 @@ def feature_availability(
         from app.services import preferences as _prefs_q
         realtime_provider = _prefs_q.get_realtime_data_provider()
     except Exception:
-        realtime_provider = "public"
+        realtime_provider = "tickflow"
 
     if has_quote and realtime_provider not in {"tickflow", "public", ""}:
         quote_ok = True

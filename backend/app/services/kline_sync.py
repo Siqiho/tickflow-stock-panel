@@ -144,6 +144,10 @@ def _resolve_daily_provider(
     from app.data_providers import custom as custom_sources
     try:
         if not custom_sources.provider_has_dataset(provider_name, "daily"):
+            logger.info(
+                "daily provider %s 未声明 daily, 按旧契约回退 TickFlow",
+                provider_name,
+            )
             return (None, True, None)
         provider = custom_sources.get_provider(provider_name)
         return (provider, False, None)
@@ -585,6 +589,108 @@ def _normalize_adj_factor(raw) -> pl.DataFrame:
     return df.select(cols).drop_nulls()
 
 
+_BUILTIN_ADJ_PROVIDERS = {"tickflow", "public", "sina", "sina_qfq", "free", ""}
+
+
+def _try_custom_adj_provider(provider_name: str) -> tuple[object | None, str]:
+    """Resolve a plugin/custom adj source.
+
+    Returns (provider, fate):
+      - custom: declared adj_factor, use get_adj_factors (fail-closed)
+      - undeclared: leftover TickFlow / public-adapter contract
+      - skip: selected custom source failed to resolve — do not mix
+      - builtin: tickflow / public aliases
+    """
+    name = (provider_name or "").strip().lower()
+    if name in _BUILTIN_ADJ_PROVIDERS:
+        return None, "builtin"
+    from app.data_providers import custom as custom_sources
+    try:
+        if not custom_sources.provider_has_dataset(name, "adj_factor"):
+            return None, "undeclared"
+        return custom_sources.get_provider(name), "custom"
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "adj provider %s 解析失败, 跳过 (不回退混源): %s", name, e,
+        )
+        return None, "skip"
+
+
+def adj_live_fetch_allowed(capset: CapabilitySet | None) -> bool:
+    """Whether live HTTP daily may fetch adj factors for the configured source."""
+    try:
+        provider_name = preferences.get_adj_factor_provider()
+        if preferences.is_public_adj_factor_provider(provider_name):
+            return True
+        custom, fate = _try_custom_adj_provider(provider_name)
+        if fate == "custom" and custom is not None:
+            return True
+        if fate == "skip":
+            return False
+    except Exception:  # noqa: BLE001
+        return bool(capset and capset.has(Cap.ADJ_FACTOR))
+    return bool(capset and capset.has(Cap.ADJ_FACTOR))
+
+
+def _persist_adj_factor_df(
+    new_data: pl.DataFrame,
+    repo: KlineRepository,
+    asset_type: str,
+) -> tuple[int, list[str]]:
+    if new_data.is_empty():
+        return 0, []
+    affected = new_data["symbol"].unique().to_list()
+    factor_dir = "adj_factor_etf" if asset_type == "etf" else "adj_factor"
+    out = repo.store.data_dir / factor_dir / "all.parquet"
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    if out.exists():
+        existing = pl.read_parquet(out)
+        before = existing.height
+        merged = pl.concat([existing, new_data]).unique(
+            subset=["symbol", "trade_date"], keep="last",
+        ).sort(["symbol", "trade_date"])
+        atomic_write_parquet(merged, out)
+        added = merged.height - before
+        logger.info(
+            "adj_factor merged: %d total (+%d new), %d/%d symbols",
+            merged.height, added, new_data.height, len(affected),
+        )
+        return added, affected
+    atomic_write_parquet(new_data.sort(["symbol", "trade_date"]), out)
+    logger.info("adj_factor synced: %d rows (%d symbols)", new_data.height, len(affected))
+    return new_data.height, affected
+
+
+def _sync_public_adj_factor(
+    symbols: list[str],
+    repo: KlineRepository,
+    start_time: datetime | None,
+    end_time: datetime | None,
+    on_chunk_done: Callable[[int, int], None] | None,
+    asset_type: str,
+) -> tuple[int, list[str]]:
+    from app.data_providers.registry import get_provider
+
+    def _prog(cur: int, tot: int, _sym: str = "") -> None:
+        if on_chunk_done:
+            on_chunk_done(cur, tot)
+
+    result = get_provider("public").sync_adj_factors(
+        symbols,
+        repo.store.data_dir,
+        asset_type=asset_type,
+        start=start_time,
+        end=end_time,
+        on_progress=_prog,
+        workers=4,
+        flush_every=25,
+        skip_checked_within_hours=18.0,
+        pause_s=0.0,
+    )
+    return int(result.get("rows_delta") or 0), list(result.get("symbols_affected") or [])
+
+
 def sync_adj_factor(symbols: list[str], repo: KlineRepository,
                     capset: CapabilitySet,
                     start_time: datetime | None = None,
@@ -593,9 +699,11 @@ def sync_adj_factor(symbols: list[str], repo: KlineRepository,
                     asset_type: str = "stock") -> tuple[int, list[str]]:
     """同步除权因子。
 
+    - 声明了 adj_factor 的自定义/插件源：``get_adj_factors``，fail-closed
     - 默认 TickFlow Starter+：`tf.klines.ex_factors`（需 Cap.ADJ_FACTOR）
     - 当 preferences.adj_factor_provider ∈ {public,sina,sina_qfq,free} 时：
       走 free_sources.adj_factor_public（新浪 qfq.js），**不依赖** Cap.ADJ_FACTOR
+    - leftover TickFlow / 未声明 adj 且无 Cap.ADJ_FACTOR：公开新浪 qfq（旧契约）
 
     支持增量: 传 start_time/end_time 只保留该时间范围内的新除权事件。
     返回 (写入行数, 受影响的 symbol 列表) — 供 enriched 局部重算使用。
@@ -603,42 +711,49 @@ def sync_adj_factor(symbols: list[str], repo: KlineRepository,
     if not symbols:
         return 0, []
 
-    # Public free path (no TickFlow subscription)
     try:
-        from app.services import preferences as _prefs
-        use_public = _prefs.is_public_adj_factor_provider()
+        provider_name = preferences.get_adj_factor_provider()
+        use_public = preferences.is_public_adj_factor_provider()
     except Exception:  # noqa: BLE001
+        provider_name = "tickflow"
         use_public = False
 
-    if not use_public and not capset.has(Cap.ADJ_FACTOR):
+    if use_public:
+        return _sync_public_adj_factor(
+            symbols, repo, start_time, end_time, on_chunk_done, asset_type,
+        )
+
+    custom, fate = _try_custom_adj_provider(provider_name)
+    if fate == "skip":
+        return 0, []
+    if fate == "custom" and custom is not None:
+        try:
+            try:
+                raw = custom.get_adj_factors(
+                    symbols, start_time, end_time, asset_type,
+                    on_chunk_done=on_chunk_done,
+                )
+            except TypeError:
+                raw = custom.get_adj_factors(symbols, start_time, end_time, asset_type)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "custom adj provider %s 调用失败, fail-closed: %s", provider_name, e,
+            )
+            return 0, []
+        return _persist_adj_factor_df(_normalize_adj_factor(raw), repo, asset_type)
+    if fate == "undeclared":
+        logger.info(
+            "adj provider %s 未声明 adj_factor, 按旧契约回退 TickFlow/公开适配器",
+            provider_name,
+        )
+
+    if not capset.has(Cap.ADJ_FACTOR):
         # TickFlow cannot provide adj on none/free. Public sina qfq is the only
         # implemented free adapter. Leftover tickflow / healed same_as_daily
         # prefs used to skip this path and leave adj empty.
-        use_public = True
-
-    if use_public:
-        from app.data_providers.registry import get_provider
-
-        def _prog(cur: int, tot: int, _sym: str = "") -> None:
-            if on_chunk_done:
-                on_chunk_done(cur, tot)
-
-        result = get_provider("public").sync_adj_factors(
-            symbols,
-            repo.store.data_dir,
-            asset_type=asset_type,
-            start=start_time,
-            end=end_time,
-            on_progress=_prog,
-            workers=4,
-            flush_every=25,
-            skip_checked_within_hours=18.0,
-            pause_s=0.0,
+        return _sync_public_adj_factor(
+            symbols, repo, start_time, end_time, on_chunk_done, asset_type,
         )
-        return int(result.get("rows_delta") or 0), list(result.get("symbols_affected") or [])
-
-    if not capset.has(Cap.ADJ_FACTOR):
-        return 0, []
 
     tf = get_client()
     lim = capset.limits(Cap.ADJ_FACTOR)
@@ -675,29 +790,7 @@ def sync_adj_factor(symbols: list[str], repo: KlineRepository,
         return 0, []
 
     new_data = pl.concat(all_dfs, how="diagonal_relaxed") if len(all_dfs) > 1 else all_dfs[0]
-
-    # 提取受影响的 symbol 列表(合并前)
-    affected = new_data["symbol"].unique().to_list()
-
-    factor_dir = "adj_factor_etf" if asset_type == "etf" else "adj_factor"
-    out = repo.store.data_dir / factor_dir / "all.parquet"
-    out.parent.mkdir(parents=True, exist_ok=True)
-
-    if out.exists():
-        existing = pl.read_parquet(out)
-        before = existing.height
-        merged = pl.concat([existing, new_data]).unique(
-            subset=["symbol", "trade_date"], keep="last",
-        ).sort(["symbol", "trade_date"])
-        atomic_write_parquet(merged, out)
-        added = merged.height - before
-        logger.info("adj_factor merged: %d total (+%d new), %d/%d symbols",
-                     merged.height, added, new_data.height, len(symbols))
-        return added, affected
-    else:
-        atomic_write_parquet(new_data.sort(["symbol", "trade_date"]), out)
-        logger.info("adj_factor synced: %d rows (%d symbols)", new_data.height, len(symbols))
-        return new_data.height, affected
+    return _persist_adj_factor_df(new_data, repo, asset_type)
 
 
 # ===== 分钟 K 同步 =====
@@ -947,6 +1040,106 @@ def intraday_monitor_support(capset: CapabilitySet | None) -> dict[str, object]:
     }
 
 
+def _normalize_intraday_monitor_payload(raw, default_symbol: str | None = None) -> pl.DataFrame:
+    """Normalize TickFlow CompactKlineData / DataFrame into canonical minute cols."""
+    if raw is None:
+        return pl.DataFrame()
+    if isinstance(raw, dict) and "timestamp" in raw:
+        raw = pl.DataFrame(raw)
+    return _normalize_minute(raw, default_symbol=default_symbol)
+
+
+def fetch_intraday_monitor_batch(
+    symbols: list[str],
+    capset: CapabilitySet | None,
+    *,
+    now: datetime | None = None,
+) -> pl.DataFrame:
+    """Fetch today's minute bars for monitor-signal symbols.
+
+    Custom minute (declared) is first. Call failure still falls back to TickFlow
+    when the capset entitles INTRADAY_BATCH / minute batch — existing contract.
+    Leftover TickFlow + free (no cap) returns empty; no public mix.
+    """
+    if not symbols:
+        return pl.DataFrame()
+
+    clock = now or datetime.now(tz=CN_TZ)
+    if clock.tzinfo is None:
+        clock = clock.replace(tzinfo=CN_TZ)
+    trade_date = clock.astimezone(CN_TZ).date()
+    start_time = datetime(
+        trade_date.year, trade_date.month, trade_date.day, 9, 25, 0, tzinfo=CN_TZ,
+    )
+    end_time = datetime(
+        trade_date.year, trade_date.month, trade_date.day, 15, 5, 0, tzinfo=CN_TZ,
+    )
+
+    df, fallback = _try_custom_minute(
+        list(symbols),
+        start_time=start_time,
+        end_time=end_time,
+        asset_type="stock",
+        freq="1m",
+    )
+    if not fallback:
+        out = df if df is not None else pl.DataFrame()
+        return filter_minute_trade_date(out, trade_date) if not out.is_empty() else out
+
+    allow_intraday = capset is not None and capset.has(Cap.INTRADAY_BATCH)
+    allow_minute = capset is None or capset.has(Cap.KLINE_MINUTE_BATCH)
+    if not allow_intraday and not allow_minute:
+        return pl.DataFrame()
+
+    tf = get_client()
+    frames: list[pl.DataFrame] = []
+    if allow_intraday:
+        limits = capset.limits(Cap.INTRADAY_BATCH) if capset is not None else None
+        batch_size = max(1, int(limits.batch or 100)) if limits else 100
+        raw = tf.klines.intraday_batch(
+            list(symbols),
+            count=300,
+            as_dataframe=False,
+            show_progress=False,
+            batch_size=batch_size,
+        )
+        if isinstance(raw, dict):
+            for sym, payload in raw.items():
+                normalized = _normalize_intraday_monitor_payload(payload, default_symbol=sym)
+                if not normalized.is_empty():
+                    frames.append(normalized)
+        elif raw is not None:
+            normalized = _normalize_intraday_monitor_payload(raw)
+            if not normalized.is_empty():
+                frames.append(normalized)
+    else:
+        raw = tf.klines.batch(
+            list(symbols),
+            period="1m",
+            start_time=_datetime_to_ms(start_time),
+            end_time=_datetime_to_ms(end_time),
+            count=10000,
+            as_dataframe=True,
+            show_progress=False,
+        )
+        if isinstance(raw, dict):
+            for sym, payload in raw.items():
+                normalized = _normalize_minute(payload, default_symbol=sym)
+                if not normalized.is_empty():
+                    frames.append(normalized)
+        elif raw is not None:
+            normalized = _normalize_minute(raw)
+            if not normalized.is_empty():
+                frames.append(normalized)
+
+    if not frames:
+        return pl.DataFrame()
+    out = pl.concat(frames, how="diagonal_relaxed")
+    keep = [c for c in CANONICAL_MINUTE_COLS if c in out.columns]
+    out = out.select(keep)
+    return filter_minute_trade_date(out, trade_date) if "datetime" in out.columns else out
+
+
 def filter_minute_trade_date(df: pl.DataFrame, trade_date: date) -> pl.DataFrame:
     """Keep only rows that can be proven to belong to ``trade_date``."""
     if df.is_empty():
@@ -983,6 +1176,10 @@ def _resolve_minute_provider(
     from app.data_providers import custom as custom_sources
     try:
         if not custom_sources.provider_has_dataset(provider_name, "minute"):
+            logger.info(
+                "minute provider %s 未声明 minute, 按旧契约回退 TickFlow",
+                provider_name,
+            )
             return (None, True, None)
         provider = custom_sources.get_provider(provider_name)
         return (provider, False, None)
@@ -994,6 +1191,29 @@ def minute_provider_is_custom() -> bool:
     """True when minute_data_provider resolves to a declared custom/plugin source."""
     _, fallback, err = _resolve_minute_provider(preferences.get_minute_data_provider())
     return (not fallback) and err is None
+
+
+def _resolve_full_minute_provider(
+    provider_name: str,
+) -> tuple[object | None, bool, str | None]:
+    """解析全量分钟源。返回 (provider, should_fallback_to_tickflow, error_msg)。
+
+    未声明 full_minute 仍按旧契约回退 TickFlow（与 minute 数据集同纪律）。
+    """
+    if provider_name == "tickflow":
+        return (None, True, None)
+    from app.data_providers import custom as custom_sources
+    try:
+        if not custom_sources.provider_has_dataset(provider_name, "full_minute"):
+            logger.info(
+                "full_minute provider %s 未声明 full_minute, 按旧契约回退 TickFlow",
+                provider_name,
+            )
+            return (None, True, None)
+        provider = custom_sources.get_provider(provider_name)
+        return (provider, False, None)
+    except Exception as e:  # noqa: BLE001
+        return (None, True, str(e))
 
 
 def _try_custom_minute(
@@ -1270,11 +1490,44 @@ def persist_historical_minute(
 
 
 def fetch_adj_factor_single(symbol: str) -> pl.DataFrame:
-    """从 TickFlow 实时拉取单股除权因子(不写入本地), 用于单股 K 线即时前复权。
+    """按 adj_factor_provider 拉单股除权因子(不写入本地), 用于单股 K 线即时前复权。
 
     返回结构: symbol, trade_date, ex_factor (空 DataFrame 表示无除权事件或拉取失败)。
     与 _apply_adj_factor / compute_enriched 的 factors 参数格式一致。
+    声明了 adj_factor 的自定义源 fail-closed；未声明仍回退 TickFlow（旧契约）。
     """
+    try:
+        provider_name = preferences.get_adj_factor_provider()
+    except Exception:  # noqa: BLE001
+        provider_name = "tickflow"
+
+    if preferences.is_public_adj_factor_provider(provider_name):
+        try:
+            from app.services.free_sources.adj_factor_public import fetch_adj_factors_symbol
+            return fetch_adj_factors_symbol(symbol)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("fetch_adj_factor_single(%s) public failed: %s", symbol, e)
+            return pl.DataFrame()
+
+    custom, fate = _try_custom_adj_provider(provider_name)
+    if fate == "skip":
+        return pl.DataFrame()
+    if fate == "custom" and custom is not None:
+        try:
+            raw = custom.get_adj_factors([symbol], None, None, "stock")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "fetch_adj_factor_single(%s) custom %s failed, fail-closed: %s",
+                symbol, provider_name, e,
+            )
+            return pl.DataFrame()
+        return _normalize_adj_factor(raw)
+    if fate == "undeclared":
+        logger.info(
+            "adj provider %s 未声明 adj_factor, 单股除权按旧契约回退 TickFlow",
+            provider_name,
+        )
+
     tf = get_client()
     try:
         raw = tf.klines.ex_factors([symbol], as_dataframe=True, show_progress=False)
