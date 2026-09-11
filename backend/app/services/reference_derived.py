@@ -64,12 +64,9 @@ def _utc_iso() -> str:
 
 def list_partition_dates(data_dir: Path, table: str = "kline_daily") -> list[date]:
     if table in {"kline_daily", "kline_daily_enriched"}:
-        try:
-            from app.services.kline_sync import usable_daily_partition_dates
+        from app.services.kline_sync import safe_usable_daily_partition_dates
 
-            return usable_daily_partition_dates(data_dir, table=table)
-        except Exception:  # noqa: BLE001
-            return []
+        return safe_usable_daily_partition_dates(data_dir, table=table)
     root = Path(data_dir) / table
     if not root.exists():
         return []

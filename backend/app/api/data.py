@@ -215,18 +215,21 @@ def _safe_aggregate_instruments(repo) -> dict | None:
 
 
 def _safe_aggregate_routed_table(repo, view: str, table: str) -> dict | None:
-    """Status calendar for index/ETF tables — current daily route only."""
+    """Status calendar for index/ETF tables — current daily route only.
+
+    Dates come from file provenance. Do not count leftover TickFlow rows
+    through a temporarily ungated DuckDB view after a custom switch.
+    """
     from app.services.kline_sync import safe_usable_daily_partition_dates
 
     dates = safe_usable_daily_partition_dates(repo.store.data_dir, table=table)
     if not dates:
         return None
-    stats = _safe_aggregate(repo, view) or {}
     return {
-        "rows": int(stats.get("rows") or 0),
+        "rows": 0,
         "earliest_date": dates[0].isoformat(),
         "latest_date": dates[-1].isoformat(),
-        "symbols_covered": int(stats.get("symbols_covered") or 0),
+        "symbols_covered": 0,
         "trading_days": len(dates),
     }
 
@@ -326,34 +329,11 @@ def _safe_aggregate_etf_daily(repo) -> dict | None:
     dates = safe_usable_daily_partition_dates(repo.store.data_dir, table="kline_etf_daily")
     if not dates:
         return None
-    queries = [
-        """SELECT count(*) AS rows,
-                  count(DISTINCT symbol) AS symbols
-           FROM kline_etf_daily""",
-        """SELECT count(*) AS rows,
-                  count(DISTINCT symbol) AS symbols
-           FROM kline_index_daily
-           WHERE symbol IN (
-               SELECT DISTINCT symbol FROM instruments_index WHERE asset_type = 'etf'
-           )""",
-    ]
-    rows = 0
-    symbols = 0
-    for sql in queries:
-        try:
-            row = repo.execute_one(sql)
-        except Exception as e:  # noqa: BLE001
-            logger.debug("aggregate etf daily fallback failed: %s", e)
-            continue
-        if row and row[0]:
-            rows = int(row[0])
-            symbols = int(row[1] or 0)
-            break
     return {
-        "rows": rows,
+        "rows": 0,
         "earliest_date": dates[0].isoformat(),
         "latest_date": dates[-1].isoformat(),
-        "symbols_covered": symbols,
+        "symbols_covered": 0,
         "trading_days": len(dates),
     }
 

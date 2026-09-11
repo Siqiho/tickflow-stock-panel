@@ -24,7 +24,6 @@ import duckdb
 import polars as pl
 
 from app.config import settings
-from app.parquet import scan_enriched_parquet
 from app.polars_guard import guarded_collect
 from app.services.atomic_io import atomic_write_parquet, optimistic_upsert_parquet, write_lineage_record
 
@@ -793,8 +792,8 @@ class KlineRepository:
         start_60d = latest - timedelta(days=90)  # 日历90天 ≈ 60个交易日
 
         # 优先使用已有的历史缓存 (避免重复 scan_parquet + compute_indicators)
-        if self._enriched_history_cache is not None and not self._enriched_history_cache.is_empty():
-            hist_all = self._enriched_history_cache
+        hist_all = self._usable_history_cache()
+        if hist_all is not None and not hist_all.is_empty():
             if "date" in hist_all.columns and hist_all["date"].min() <= start_60d:
                 # 从历史缓存中提取所需列 (历史缓存已有指标列)
                 base_cols = ["symbol", "date", "open", "high", "low", "close", "volume",
@@ -947,14 +946,17 @@ class KlineRepository:
         """盘中递推基准日期。当天实时分区存在时使用上一可用交易日。"""
         if latest != date.today():
             return latest
+        # File provenance, not DuckDB: a temporarily ungated view can
+        # still expose leftover TickFlow as the previous official day.
         try:
-            row = self.execute_one(
-                "SELECT max(date) FROM kline_enriched WHERE date < ?",
-                [latest],
+            from app.services.kline_sync import safe_usable_daily_partition_dates
+
+            dates = safe_usable_daily_partition_dates(
+                self.store.data_dir, table="kline_daily_enriched",
             )
-            if row and row[0]:
-                d = row[0]
-                return d if isinstance(d, date) else date.fromisoformat(str(d))
+            prior = [day for day in dates if day < latest]
+            if prior:
+                return prior[-1]
         except Exception:  # noqa: BLE001
             pass
         return latest
@@ -1114,11 +1116,13 @@ class KlineRepository:
             self._enriched_cache_date = None
             self._enriched_cache_live = False
             self._refresh_enriched()
-        if self._enriched_cache is None:
+        if self._enriched_cache is None or not self._latest_cache_usable(self._enriched_cache):
+            if self._enriched_cache is not None:
+                self._enriched_cache = None
+                self._enriched_cache_date = None
+                self._enriched_cache_live = False
             self._refresh_enriched()
-        if self._enriched_cache is None:
-            return pl.DataFrame(), self._enriched_cache_date
-        return self._enriched_cache, self._enriched_cache_date
+        return self._gate_cached_frame(self._enriched_cache, self._enriched_cache_date)
 
     def get_enriched_latest_asset(
         self,
@@ -1139,12 +1143,47 @@ class KlineRepository:
                 self._etf_enriched_cache_live = False
                 if refresh:
                     self._refresh_etf_enriched()
-            if self._etf_enriched_cache is None and refresh:
-                self._refresh_etf_enriched()
-            if self._etf_enriched_cache is None:
-                return pl.DataFrame(), self._etf_enriched_cache_date
-            return self._etf_enriched_cache, self._etf_enriched_cache_date
+            if self._etf_enriched_cache is None or not self._latest_cache_usable(
+                self._etf_enriched_cache,
+            ):
+                if self._etf_enriched_cache is not None:
+                    self._etf_enriched_cache = None
+                    self._etf_enriched_cache_date = None
+                    self._etf_enriched_cache_live = False
+                if refresh:
+                    self._refresh_etf_enriched()
+            return self._gate_cached_frame(
+                self._etf_enriched_cache, self._etf_enriched_cache_date,
+            )
         return pl.DataFrame(), None
+
+    def _latest_cache_usable(self, cached: pl.DataFrame | None) -> bool:
+        if cached is None or getattr(cached, "is_empty", lambda: True)():
+            return False
+        try:
+            from app.services.kline_sync import daily_cache_usable, daily_route
+
+            return daily_cache_usable(cached, daily_route())
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _gate_cached_frame(
+        self,
+        cached: pl.DataFrame | None,
+        cache_date: date | None,
+    ) -> tuple[pl.DataFrame, date | None]:
+        """Hide leftover TickFlow in-memory latest after a custom switch."""
+        if cached is None:
+            return pl.DataFrame(), cache_date
+        try:
+            from app.services.kline_sync import filter_daily_cache
+
+            filtered = filter_daily_cache(cached)
+        except Exception:  # noqa: BLE001
+            return pl.DataFrame(), None
+        if filtered is None or filtered.is_empty():
+            return pl.DataFrame(), None
+        return filtered, cache_date
 
     def get_enriched_history(self, target_date: date, lookback_days: int) -> pl.DataFrame | None:
         """返回预计算的 enriched 历史数据 (仅 lookback 范围, 不含 warmup)。
@@ -1167,9 +1206,16 @@ class KlineRepository:
         # 只返回 lookback 范围 (日历天数 ≈ 2/3 交易日, 足够覆盖)
         lookback_start = target_date - timedelta(days=lookback_days)
         from app.services.kline_sync import filter_daily_cache
-        return filter_daily_cache(
-            cache.filter((pl.col("date") >= lookback_start) & (pl.col("date") <= target_date))
-        )
+
+        try:
+            filtered = filter_daily_cache(
+                cache.filter((pl.col("date") >= lookback_start) & (pl.col("date") <= target_date))
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        if filtered is None or filtered.is_empty():
+            return None
+        return filtered
 
     def get_enriched_range(
         self,
@@ -1192,11 +1238,18 @@ class KlineRepository:
 
         from app.services.kline_sync import filter_daily_cache
 
-        df = filter_daily_cache(
-            cache.filter((pl.col("date") >= start) & (pl.col("date") <= end))
-        )
+        try:
+            df = filter_daily_cache(
+                cache.filter((pl.col("date") >= start) & (pl.col("date") <= end))
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        if df is None or df.is_empty():
+            return None
         if symbols is not None:
             df = df.filter(pl.col("symbol").is_in(symbols))
+            if df.is_empty():
+                return None
         if columns and not df.is_empty():
             existing = [c for c in columns if c in df.columns]
             if "symbol" not in existing and "symbol" in df.columns:
@@ -1219,6 +1272,9 @@ class KlineRepository:
         date.today() 翻天时发生, 故先用 today 做廉价的 fast-path (μs 级),
         仅当 today 变化时才查磁盘确认 (DuckDB 扫 132 万行约 100ms+) 并按需重建。
         """
+        if self._live_agg_cache is not None and not self._live_agg_usable():
+            self._live_agg_cache = None
+            self._live_agg_cache_date = None
         if self._live_agg_cache is None:
             self._refresh_enriched()
             self._live_agg_check_date = date.today()  # 刚建过, 当天不必再查磁盘
@@ -1351,11 +1407,18 @@ class KlineRepository:
             hist_min = self._enriched_history_start
             hist_max = hist["date"].max()
             if hist_min is not None and hist_min <= start and hist_max >= start:
-                df = hist.filter(
-                    (pl.col("symbol") == symbol)
-                    & (pl.col("date") >= start)
-                    & (pl.col("date") <= end)
-                )
+                from app.services.kline_sync import filter_daily_cache
+
+                try:
+                    df = filter_daily_cache(
+                        hist.filter(
+                            (pl.col("symbol") == symbol)
+                            & (pl.col("date") >= start)
+                            & (pl.col("date") <= end)
+                        )
+                    )
+                except Exception:  # noqa: BLE001
+                    df = pl.DataFrame()
         if df.is_empty():
             df = self._scan_daily_symbol(symbol, warmup_start, end, None)
             if not df.is_empty():
@@ -1552,82 +1615,139 @@ class KlineRepository:
         return df
 
     def _filter_cached(self, cached: pl.DataFrame, symbol: str, columns: list[str] | None) -> pl.DataFrame:
-        df = cached.filter(pl.col("symbol") == symbol)
+        from app.services.kline_sync import filter_daily_cache
+
+        try:
+            df = filter_daily_cache(cached)
+        except Exception:  # noqa: BLE001
+            return pl.DataFrame()
+        if df is None or df.is_empty() or "symbol" not in df.columns:
+            return pl.DataFrame()
+        df = df.filter(pl.col("symbol") == symbol)
         if columns and not df.is_empty():
             existing = [c for c in columns if c in df.columns]
             df = df.select(existing)
         return df
 
     def _filter_cached_batch(self, cached: pl.DataFrame, symbols: list[str], columns: list[str] | None) -> pl.DataFrame:
-        df = cached.filter(pl.col("symbol").is_in(symbols))
+        from app.services.kline_sync import filter_daily_cache
+
+        try:
+            df = filter_daily_cache(cached)
+        except Exception:  # noqa: BLE001
+            return pl.DataFrame()
+        if df is None or df.is_empty() or "symbol" not in df.columns:
+            return pl.DataFrame()
+        df = df.filter(pl.col("symbol").is_in(symbols))
         if columns and not df.is_empty():
             existing = [c for c in columns if c in df.columns]
             df = df.select(existing)
         return df.sort(["symbol", "date"])
 
+    def _usable_history_cache(self) -> pl.DataFrame | None:
+        """In-memory hist only when it matches the current daily route."""
+        cache = self._enriched_history_cache
+        if cache is None or getattr(cache, "is_empty", lambda: True)():
+            return None
+        try:
+            from app.services.kline_sync import filter_daily_cache
+
+            filtered = filter_daily_cache(cache)
+        except Exception:  # noqa: BLE001
+            return None
+        if filtered is None or filtered.is_empty():
+            return None
+        return filtered
+
+    def _live_agg_usable(self) -> bool:
+        """Refuse leftover TickFlow live-agg after a custom daily switch."""
+        if self._live_agg_cache is None or getattr(self._live_agg_cache, "is_empty", lambda: True)():
+            return False
+        if self._enriched_history_cache is not None:
+            return self._latest_cache_usable(self._enriched_history_cache)
+        if self._enriched_cache is not None:
+            return self._latest_cache_usable(self._enriched_cache)
+        return False
+
     def _collect_gated_daily(self, lf, columns: list[str] | None) -> pl.DataFrame:
-        """Collect a daily/enriched scan, hiding leftover other-route rows."""
+        """Collect a daily/enriched scan, hiding leftover other-route rows.
+
+        Read/schema failures raise :class:`KlineReadError` so HTTP can 503
+        instead of silent-empty. Route-filter failures stay fail-closed.
+        """
         from app.services.kline_sync import filter_daily_cache
 
-        schema_names = lf.collect_schema().names()
-        keep_route = bool(columns) and "route" in columns
-        if columns:
-            existing = [c for c in columns if c in schema_names]
-            if "route" in schema_names and "route" not in existing:
-                existing.append("route")
-            if existing:
-                lf = lf.select(existing)
-        df = filter_daily_cache(guarded_collect(lf))
+        try:
+            schema_names = lf.collect_schema().names()
+            keep_route = bool(columns) and "route" in columns
+            if columns:
+                existing = [c for c in columns if c in schema_names]
+                if "route" in schema_names and "route" not in existing:
+                    existing.append("route")
+                if existing:
+                    lf = lf.select(existing)
+            raw = guarded_collect(lf)
+        except Exception as exc:  # noqa: BLE001
+            raise KlineReadError(f"日K读取失败: {exc}") from exc
+        try:
+            df = filter_daily_cache(raw)
+        except Exception:  # noqa: BLE001
+            return pl.DataFrame()
         if columns and not keep_route and df is not None and not df.is_empty() and "route" in df.columns:
             df = df.drop("route")
         return df
 
-    def _scan_daily_symbol(self, symbol: str, start: date, end: date, columns: list[str] | None) -> pl.DataFrame:
-        def _read() -> pl.DataFrame:
-            lf = scan_enriched_parquet(self._enriched_glob,
-                                 cast_options=pl.ScanCastOptions(integer_cast="allow-float")).filter(
-                (pl.col("symbol") == symbol)
-                & (pl.col("date") >= start)
-                & (pl.col("date") <= end)
-            ).sort("date")
-            return self._collect_gated_daily(lf, columns)
+    def _scan_usable_enriched(
+        self,
+        table: str,
+        start: date,
+        end: date,
+        columns: list[str] | None,
+        *,
+        symbol: str | None = None,
+        symbols: list[str] | None = None,
+    ) -> pl.DataFrame:
+        """Scan current-route partitions only — leftover files must not poison collect."""
+        from app.services.kline_sync import scan_usable_daily
 
-        return _collect_local_parquet(_read, self._enriched_glob, "日K读取失败")
+        lf = scan_usable_daily(self.store.data_dir, table=table)
+        if lf is None:
+            return pl.DataFrame()
+        pred = (pl.col("date") >= start) & (pl.col("date") <= end)
+        if symbol is not None:
+            lf = lf.filter(pred & (pl.col("symbol") == symbol)).sort("date")
+        else:
+            lf = lf.filter(pred & (pl.col("symbol").is_in(symbols or []))).sort(["symbol", "date"])
+        return self._collect_gated_daily(lf, columns)
+
+    def _scan_daily_symbol(self, symbol: str, start: date, end: date, columns: list[str] | None) -> pl.DataFrame:
+        return self._scan_usable_enriched(
+            "kline_daily_enriched", start, end, columns, symbol=symbol,
+        )
 
     def _scan_daily_batch(self, symbols: list[str], start: date, end: date, columns: list[str] | None) -> pl.DataFrame:
         try:
-            lf = scan_enriched_parquet(self._enriched_glob,
-                                 cast_options=pl.ScanCastOptions(integer_cast="allow-float")).filter(
-                (pl.col("symbol").is_in(symbols))
-                & (pl.col("date") >= start)
-                & (pl.col("date") <= end)
-            ).sort(["symbol", "date"])
-            return self._collect_gated_daily(lf, columns)
+            return self._scan_usable_enriched(
+                "kline_daily_enriched", start, end, columns, symbols=symbols,
+            )
         except Exception as e:  # noqa: BLE001
             logger.warning("日K批量查询失败: %s", e)
             return pl.DataFrame()
 
     def _scan_index_daily_symbol(self, symbol: str, start: date, end: date, columns: list[str] | None) -> pl.DataFrame:
         try:
-            lf = scan_enriched_parquet(self._index_enriched_glob,
-                                 cast_options=pl.ScanCastOptions(integer_cast="allow-float")).filter(
-                (pl.col("symbol") == symbol)
-                & (pl.col("date") >= start)
-                & (pl.col("date") <= end)
-            ).sort("date")
-            return self._collect_gated_daily(lf, columns)
+            return self._scan_usable_enriched(
+                "kline_index_enriched", start, end, columns, symbol=symbol,
+            )
         except Exception as e:  # noqa: BLE001
             logger.warning("指数日K查询失败: %s", e)
             return pl.DataFrame()
 
     def _scan_etf_daily_symbol(self, symbol: str, start: date, end: date, columns: list[str] | None) -> pl.DataFrame:
         try:
-            lf = scan_enriched_parquet(self._etf_enriched_glob).filter(
-                (pl.col("symbol") == symbol)
-                & (pl.col("date") >= start)
-                & (pl.col("date") <= end)
-            ).sort("date")
-            return self._collect_gated_daily(lf, columns)
+            return self._scan_usable_enriched(
+                "kline_etf_enriched", start, end, columns, symbol=symbol,
+            )
         except Exception as e:  # noqa: BLE001
             logger.debug("ETF 日K查询跳过: %s", e)
             return pl.DataFrame()
