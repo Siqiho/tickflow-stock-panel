@@ -72,6 +72,29 @@ def test_feature_availability_custom_depth_without_tickflow_cap(monkeypatch):
     assert feats["depth"]["available"] is True
     assert feats["depth"]["source"] == "depth_src"
     assert feats["depth"]["status"] == "available"
+    assert feats["depth"]["fallback"] is None
+
+
+def test_feature_availability_custom_adj_without_tickflow_cap(monkeypatch):
+    monkeypatch.setattr("app.services.preferences.get_realtime_data_provider", lambda: "public")
+    monkeypatch.setattr("app.services.preferences.get_adj_factor_provider", lambda: "fuyao")
+    monkeypatch.setattr("app.services.preferences.get_financial_provider", lambda: "tickflow")
+    monkeypatch.setattr("app.services.preferences.get_depth5_data_provider", lambda: "tickflow")
+    monkeypatch.setattr("app.services.preferences.get_minute_data_provider", lambda: "tickflow")
+    monkeypatch.setattr("app.services.preferences.is_public_financial_provider", lambda: False)
+    monkeypatch.setattr("app.services.preferences.is_public_adj_factor_provider", lambda: False)
+    monkeypatch.setattr("app.services.financial_normalize.local_financials_ready", lambda d: False)
+    monkeypatch.setattr("app.services.financial_normalize.local_adj_factor_ready", lambda d: False)
+    monkeypatch.setattr(
+        "app.data_providers.custom.provider_has_dataset",
+        lambda name, dataset: name == "fuyao" and dataset == "adj_factor",
+    )
+    monkeypatch.setattr("app.data_providers.custom.get_provider", lambda name: object())
+    feats = feature_availability(_capset(Cap.KLINE_DAILY_BATCH))
+    assert feats["adj_factor"]["available"] is True
+    assert feats["adj_factor"]["source"] == "fuyao"
+    assert feats["adj_factor"]["status"] == "available"
+    assert feats["adj_factor"]["reason_code"] == "ok"
 
 
 def test_feature_availability_reports_custom_sources(monkeypatch):

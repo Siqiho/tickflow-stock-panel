@@ -292,11 +292,26 @@ def feature_availability(
         adj_source = "local_public"
         adj_status = "available"
     elif adj_provider != "tickflow":
-        adj_ok = bool(capset.has(Cap.ADJ_FACTOR) or local_adj)
-        adj_reason = None if adj_ok else "当前复权源无法提供因子"
-        adj_code = "ok" if adj_ok else "no_capability"
-        adj_source = adj_provider
-        adj_status = "available" if adj_ok else "unavailable"
+        from app.services.kline_sync import _try_custom_adj_provider
+        _, adj_fate = _try_custom_adj_provider(adj_provider)
+        if adj_fate == "custom":
+            adj_ok = True
+            adj_reason = None
+            adj_code = "ok"
+            adj_source = adj_provider
+            adj_status = "available"
+        elif adj_fate == "skip":
+            adj_ok = False
+            adj_reason = "当前复权源解析失败"
+            adj_code = "no_capability"
+            adj_source = adj_provider
+            adj_status = "unavailable"
+        else:
+            adj_ok = bool(capset.has(Cap.ADJ_FACTOR) or local_adj)
+            adj_reason = None if adj_ok else "当前复权源无法提供因子"
+            adj_code = "ok" if adj_ok else "no_capability"
+            adj_source = adj_provider
+            adj_status = "available" if adj_ok else "unavailable"
     elif capset.has(Cap.ADJ_FACTOR):
         adj_reason = None
         adj_code = "ok"
@@ -417,7 +432,13 @@ def feature_availability(
                 "depth5": has_depth_single,
                 "depth5.batch": has_depth_batch,
             },
-            "fallback": None if has_depth_batch or has_depth_single else "public_l1",
+            "fallback": (
+                None
+                if depth_provider not in {"tickflow", "public"}
+                or has_depth_batch
+                or has_depth_single
+                else "public_l1"
+            ),
             "operation": "depth5" if has_depth_batch or has_depth_single else "sealed_l1",
             "depth5_available": has_depth_batch or has_depth_single,
         },

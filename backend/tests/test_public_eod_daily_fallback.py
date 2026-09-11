@@ -80,6 +80,10 @@ def test_public_eod_decision_ignores_realtime_provider():
     assert should_use_public_eod_fallback(
         pull_a_share=True, today_missing=True, weekday=0, has_quote_pool=True,
     ) is False
+    assert should_use_public_eod_fallback(
+        pull_a_share=True, today_missing=True, weekday=0, has_quote_pool=False,
+        daily_is_custom=True,
+    ) is False
 
 
 def test_sync_daily_by_public_quotes_empty_fetch(tmp_path, monkeypatch):

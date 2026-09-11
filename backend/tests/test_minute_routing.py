@@ -607,7 +607,7 @@ def test_sync_and_persist_minute_holds_repository_write_lock(monkeypatch, tmp_pa
 
 def test_get_provider_exception_falls_back_to_tickflow(monkeypatch):
     """Issue 2: get_provider raise ValueError →
-    _try_custom_minute 返回 (None, True), 无异常穿透。
+    _try_custom_minute 返回 (None, False), fail-closed, 无异常穿透。
     """
     monkeypatch.setattr(
         kline_sync.preferences,
@@ -630,7 +630,7 @@ def test_get_provider_exception_falls_back_to_tickflow(monkeypatch):
         ["600519.SH"], None, None, asset_type="stock",
     )
 
-    assert fallback is True
+    assert fallback is False
     assert df is None
 
 
@@ -638,7 +638,7 @@ def test_get_provider_exception_falls_back_to_tickflow(monkeypatch):
 
 def test_provider_has_dataset_exception_falls_back(monkeypatch):
     """Issue 2: provider_has_dataset raise →
-    _try_custom_minute 返回 (None, True), 无异常穿透。
+    _try_custom_minute 返回 (None, False), fail-closed, 无异常穿透。
     """
     monkeypatch.setattr(
         kline_sync.preferences,
@@ -657,7 +657,7 @@ def test_provider_has_dataset_exception_falls_back(monkeypatch):
         ["600519.SH"], None, None, asset_type="stock",
     )
 
-    assert fallback is True
+    assert fallback is False
     assert df is None
 
 
@@ -736,7 +736,7 @@ def test_generic_http_get_minute_omits_params_when_not_configured():
 
 def test_sync_and_persist_minute_resolver_exception_returns_zero(monkeypatch, tmp_path):
     """观察项加固: sync_and_persist_minute 开头 _resolve_minute_provider 异常 →
-    不向接口抛 500, 优雅降级 (minute_is_custom=False → 走 capset 检查 → 无权限 return 0)。
+    不向接口抛 500, fail-closed 返回 0 (即使具备 TickFlow minute cap 也不混源)。
     """
     monkeypatch.setattr(
         kline_sync.preferences,
@@ -789,19 +789,19 @@ def test_resolve_minute_provider_no_dataset_returns_silent_fallback(monkeypatch)
 
 
 def test_resolve_minute_provider_has_dataset_exception_returns_err(monkeypatch):
-    """观察项加固: provider_has_dataset 抛异常 → (None, True, str(e)), 上层据此 warning。"""
+    """观察项加固: provider_has_dataset 抛异常 → (None, False, str(e)), fail-closed。"""
     def _raising(name, ds):
         raise RuntimeError("registry corrupted")
     monkeypatch.setattr("app.data_providers.custom.provider_has_dataset", _raising)
     provider, fallback, err = kline_sync._resolve_minute_provider("mock_src")
     assert provider is None
-    assert fallback is True
+    assert fallback is False
     assert err is not None
     assert "registry corrupted" in err
 
 
 def test_resolve_minute_provider_get_provider_exception_returns_err(monkeypatch):
-    """观察项加固: provider_has_dataset 返回 True 但 get_provider 抛 → (None, True, str(e))。"""
+    """观察项加固: provider_has_dataset 返回 True 但 get_provider 抛 → (None, False, str(e))。"""
     monkeypatch.setattr(
         "app.data_providers.custom.provider_has_dataset",
         lambda name, ds: True,
@@ -811,7 +811,7 @@ def test_resolve_minute_provider_get_provider_exception_returns_err(monkeypatch)
     monkeypatch.setattr("app.data_providers.custom.get_provider", _raising_get)
     provider, fallback, err = kline_sync._resolve_minute_provider("mock_src")
     assert provider is None
-    assert fallback is True
+    assert fallback is False
     assert err is not None
     assert "not found" in err
 
@@ -852,7 +852,7 @@ def test_minute_allowed_resolver_exception_returns_false(monkeypatch):
 
 
 def test_intraday_monitor_support_resolver_exception_falls_back(monkeypatch):
-    """监控入口解析自定义源失败后继续按 TickFlow 能力判断。"""
+    """监控入口解析自定义源失败后 fail-closed，不借 TickFlow cap 混源。"""
     from app.tickflow.capabilities import Cap, CapabilitySet
 
     monkeypatch.setattr(
@@ -870,8 +870,8 @@ def test_intraday_monitor_support_resolver_exception_falls_back(monkeypatch):
 
     support = kline_sync.intraday_monitor_support(capset)
 
-    assert support["available"] is True
-    assert support["source"] == "minute_batch"
+    assert support["available"] is False
+    assert support["source"] is None
 
 
 # ---------- 测试 20: sync_minute_single 拒绝指数 symbol (防污染 kline_minute) ----------

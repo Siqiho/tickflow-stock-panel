@@ -134,6 +134,7 @@ def should_use_public_eod_fallback(
     today_missing: bool,
     weekday: int,
     has_quote_pool: bool,
+    daily_is_custom: bool = False,
 ) -> bool:
     """Synthesize today's official daily bars from public quotes when needed.
 
@@ -142,8 +143,15 @@ def should_use_public_eod_fallback(
     routing was stored — none/free installs then finished the pipeline with
     no today partition even though Tencent/Sina could fill it.
     Paid ``quote.pool`` already overwrites today, so it stays excluded.
+    A declared custom daily source must not be topped up from public quotes.
     """
-    return bool(pull_a_share and today_missing and weekday < 5 and not has_quote_pool)
+    return bool(
+        pull_a_share
+        and today_missing
+        and weekday < 5
+        and not has_quote_pool
+        and not daily_is_custom
+    )
 
 
 def adj_sync_uses_public_adapter(capset: CapabilitySet) -> bool:
@@ -152,10 +160,15 @@ def adj_sync_uses_public_adapter(capset: CapabilitySet) -> bool:
     Explicit public/sina* prefs use it. Leftover tickflow / healed
     same_as_daily also use it when TickFlow has no Cap.ADJ_FACTOR —
     matching ``kline_sync.sync_adj_factor``.
+    Declared custom adj must not be scoped as a public adapter.
     """
     try:
         if _prefs.is_public_adj_factor_provider():
             return True
+        name = _prefs.get_adj_factor_provider()
+        _, fate = kline_sync._try_custom_adj_provider(name)
+        if fate in {"custom", "skip"}:
+            return False
     except Exception:  # noqa: BLE001
         pass
     return not capset.has(Cap.ADJ_FACTOR)
@@ -418,7 +431,7 @@ def run_now(
             end_date=batch_end,
             on_chunk_done=_daily_chunk_progress,
         )
-        daily_source = "tickflow_batch"
+        daily_source = kline_sync.routed_daily_source_label()
         new_daily_days = _count_new_daily_days(latest_before)
         emit("sync_daily", 42, f"日K batch 完成,新增 {new_daily_days} 个交易日分区")
         logger.info(
@@ -459,7 +472,7 @@ def run_now(
             end_date=batch_end,
             on_chunk_done=_daily_chunk_progress,
         )
-        daily_source = "tickflow_batch"
+        daily_source = kline_sync.routed_daily_source_label()
         new_daily_days = _count_new_daily_days(latest_before)
         emit("sync_daily", 42, f"日K batch 完成,新增 {new_daily_days} 个交易日分区")
         logger.info(
@@ -482,7 +495,7 @@ def run_now(
             end_date=batch_end,
             on_chunk_done=_daily_chunk_progress,
         )
-        daily_source = "tickflow_batch"
+        daily_source = kline_sync.routed_daily_source_label()
         new_daily_days = _count_new_daily_days(latest_before)
         emit("sync_daily", 42, f"日K batch 完成,新增 {new_daily_days} 个交易日分区")
         logger.info(
@@ -500,6 +513,7 @@ def run_now(
         today_missing=today_missing,
         weekday=today.weekday(),
         has_quote_pool=capset.has(Cap.QUOTE_POOL),
+        daily_is_custom=kline_sync.daily_provider_is_custom(),
     )
     if want_public_eod:
         emit("sync_daily", 43, f"free 日K未含今日,改用公开行情合成 {today}…")
@@ -855,7 +869,7 @@ def run_now(
                 etf_inst = repo.get_etf_instruments()
                 if not etf_inst.is_empty() and "symbol" in etf_inst.columns:
                     etf_symbols = sorted(set(etf_inst["symbol"].to_list()))
-                if etf_symbols and capset.has(Cap.ADJ_FACTOR):
+                if etf_symbols and kline_sync.adj_live_fetch_allowed(capset):
                     try:
                         emit("sync_index", 88, "同步 ETF 除权因子…")
                         from datetime import datetime, timedelta
