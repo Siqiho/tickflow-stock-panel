@@ -68,6 +68,10 @@ def test_feature_availability_custom_depth_without_tickflow_cap(monkeypatch):
     monkeypatch.setattr("app.services.preferences.is_public_adj_factor_provider", lambda: False)
     monkeypatch.setattr("app.services.financial_normalize.local_financials_ready", lambda d: False)
     monkeypatch.setattr("app.services.financial_normalize.local_adj_factor_ready", lambda d: False)
+    monkeypatch.setattr(
+        "app.data_providers.custom.provider_has_dataset",
+        lambda name, dataset: name == "depth_src" and dataset == "depth5",
+    )
     feats = feature_availability(_capset(Cap.KLINE_DAILY_BATCH))
     assert feats["depth"]["available"] is True
     assert feats["depth"]["source"] == "depth_src"
@@ -109,7 +113,11 @@ def test_feature_availability_reports_custom_sources(monkeypatch):
     monkeypatch.setattr("app.services.financial_normalize.local_adj_factor_ready", lambda d: False)
     monkeypatch.setattr(
         "app.data_providers.custom.provider_has_dataset",
-        lambda name, dataset: name == "sdk" and dataset == "minute",
+        lambda name, dataset: (
+            (name == "sdk" and dataset in {"minute", "adj_factor"})
+            or (name == "fuyao" and dataset == "realtime")
+            or (name == "depth_src" and dataset == "depth5")
+        ),
     )
     monkeypatch.setattr("app.data_providers.custom.get_provider", lambda name: object())
 

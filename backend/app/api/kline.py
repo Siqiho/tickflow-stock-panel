@@ -252,12 +252,12 @@ def get_daily(
                 pref_key="daily_batch_compress",
             )
         # 拉除权因子做前复权: 公开/已声明自定义源不看 TickFlow cap;
-        # leftover TickFlow 仍要 Cap.ADJ_FACTOR。否则空 df → compute_enriched 退回未复权
+        # leftover TickFlow 有 cap 走 TickFlow, 无 cap 走公开新浪 qfq（与盘后同步同一契约）。
         factors = pl.DataFrame()
         capset = getattr(request.app.state, "capabilities", None)
         try:
             if kline_sync.adj_live_fetch_allowed(capset):
-                factors = kline_sync.fetch_adj_factor_single(symbol)
+                factors = kline_sync.fetch_adj_factor_single(symbol, capset=capset)
         except Exception as e:  # noqa: BLE001
             logger.debug("单股除权因子拉取失败 %s: %s", symbol, e)
         enriched = compute_enriched(raw, factors=factors)

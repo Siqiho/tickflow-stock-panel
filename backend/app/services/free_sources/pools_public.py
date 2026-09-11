@@ -377,10 +377,13 @@ def write_pool_parquet(df: pl.DataFrame, data_dir: Path, pool_id: str) -> Path:
         except Exception:
             pass
 
-    # Keep extended cols but ensure required ones exist
+    # Keep extended cols but ensure required ones exist.
+    # Tag provenance so get_pool / CSI resolvers refuse this file after
+    # pool_provider switches away from public.
     base = df.with_columns(
         pl.col("symbol").cast(pl.Utf8),
         pl.lit(as_of).alias("as_of"),
+        pl.lit("public").alias("route"),
     ).unique(subset=["symbol"], keep="first").sort("symbol")
     atomic_write_parquet(base, out)
     logger.info("pool %s wrote %d symbols -> %s", pool_id, base.height, out)

@@ -661,10 +661,11 @@ def adj_live_fetch_allowed(capset: CapabilitySet | None) -> bool:
             return True
         if fate == "skip":
             return False
+        # leftover TickFlow / undeclared: TickFlow when entitled, else public sina
+        return True
     except Exception:  # noqa: BLE001
         # Prefs unreadable: do not assume leftover TickFlow / public sina.
         return False
-    return bool(capset and capset.has(Cap.ADJ_FACTOR))
 
 
 def _persist_adj_factor_df(
@@ -1035,7 +1036,14 @@ def sync_minute_batch(
 
 def intraday_monitor_support(capset: CapabilitySet | None) -> dict[str, object]:
     """返回分时信号监控可用的数据能力和单轮标的上限。"""
-    provider_name = preferences.get_minute_data_provider()
+    try:
+        provider_name = preferences.get_minute_data_provider()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("minute prefs unreadable while checking monitor support: %s", e)
+        return {
+            "available": False, "source": None, "max_symbols": 0,
+            "reason": "分钟数据源偏好不可读",
+        }
     _, fallback, error = _resolve_minute_provider(provider_name)
     if error is not None:
         logger.warning("minute provider resolution failed while checking monitor support: %s", error)
@@ -1797,12 +1805,16 @@ def persist_historical_minute(
     }
 
 
-def fetch_adj_factor_single(symbol: str) -> pl.DataFrame:
+def fetch_adj_factor_single(
+    symbol: str,
+    capset: CapabilitySet | None = None,
+) -> pl.DataFrame:
     """按 adj_factor_provider 拉单股除权因子(不写入本地), 用于单股 K 线即时前复权。
 
     返回结构: symbol, trade_date, ex_factor (空 DataFrame 表示无除权事件或拉取失败)。
     与 _apply_adj_factor / compute_enriched 的 factors 参数格式一致。
-    声明了 adj_factor 的自定义源 fail-closed；未声明仍回退 TickFlow（旧契约）。
+    声明了 adj_factor 的自定义源 fail-closed；未声明仍回退 TickFlow（有 cap）
+    或公开新浪 qfq（无 cap，与 sync_adj_factor 同一旧契约）。
     """
     try:
         provider_name = preferences.get_adj_factor_provider()
@@ -1833,9 +1845,17 @@ def fetch_adj_factor_single(symbol: str) -> pl.DataFrame:
         return _normalize_adj_factor(raw)
     if fate == "undeclared":
         logger.info(
-            "adj provider %s 未声明 adj_factor, 单股除权按旧契约回退 TickFlow",
+            "adj provider %s 未声明 adj_factor, 单股除权按旧契约回退 TickFlow/公开适配器",
             provider_name,
         )
+
+    if not (capset and capset.has(Cap.ADJ_FACTOR)):
+        try:
+            from app.services.free_sources.adj_factor_public import fetch_adj_factors_symbol
+            return fetch_adj_factors_symbol(symbol)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("fetch_adj_factor_single(%s) leftover public failed: %s", symbol, e)
+            return pl.DataFrame()
 
     tf = get_client()
     try:
@@ -1954,7 +1974,13 @@ def sync_and_persist_minute(
     自定义源成功时走 on_segment 流式落盘; resolver 异常 fail-closed, 不混 TickFlow。
     读-改-写持仓库 _write_lock, 实际写盘走 _write_minute_partition / atomic_write_parquet。
     """
-    minute_provider = preferences.get_minute_data_provider()
+    try:
+        minute_provider = preferences.get_minute_data_provider()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "minute prefs unreadable at sync_and_persist_minute, fail-closed: %s", e,
+        )
+        return 0
     _, fallback, resolve_err = _resolve_minute_provider(minute_provider)
     minute_is_custom = not fallback and resolve_err is None
     if resolve_err is not None:

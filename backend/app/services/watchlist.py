@@ -417,8 +417,24 @@ def fetch_quotes(symbols: list[str], capset: CapabilitySet, timeout_s: float = 8
 
     优先用 quote.batch;否则降级为 quote.by_symbol 单股请求。
     timeout_s: 单批次请求超时(秒)，防止 API 卡死阻塞整个请求。
+
+    TickFlow-only leftover helper. Public / custom / unreadable realtime
+    prefs fail-closed here — callers that need routing use QuoteService.
     """
     if not symbols:
+        return []
+
+    try:
+        from app.services import preferences
+
+        name = preferences.get_realtime_data_provider()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("watchlist.fetch_quotes prefs unreadable, fail-closed: %s", e)
+        return []
+    if str(name or "").strip().lower() not in {"tickflow", ""}:
+        logger.warning(
+            "watchlist.fetch_quotes is TickFlow-only; route=%s fail-closed", name,
+        )
         return []
 
     tf = get_client()

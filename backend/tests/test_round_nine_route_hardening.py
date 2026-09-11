@@ -350,3 +350,228 @@ def test_undeclared_daily_still_falls_back_to_tickflow(monkeypatch):
     assert provider is None
     assert fallback is True
     assert err is None
+
+
+def test_get_pool_skips_stale_cache_for_custom(monkeypatch, tmp_path):
+    from app.tickflow import pools
+
+    cache = tmp_path / "pools"
+    cache.mkdir()
+    pl.DataFrame({
+        "symbol": ["000001.SZ", "600000.SH"],
+        "as_of": [date(2026, 1, 1), date(2026, 1, 1)],
+    }).write_parquet(cache / "CSI300.parquet")
+    monkeypatch.setattr(
+        pools,
+        "_pool_cache_path",
+        lambda pool_id: cache / f"{pool_id}.parquet",
+    )
+    monkeypatch.setattr(pools, "pool_route", lambda: "custom")
+    monkeypatch.setattr(pools, "_fetch_pool", lambda pool_id: [])
+    assert pools.get_pool("CSI300") == []
+
+
+def test_get_pool_skips_tickflow_tagged_cache_for_public(monkeypatch, tmp_path):
+    from app.tickflow import pools
+
+    cache = tmp_path / "pools"
+    cache.mkdir()
+    pl.DataFrame({
+        "symbol": ["000001.SZ"],
+        "as_of": [date(2026, 1, 1)],
+        "route": ["tickflow"],
+    }).write_parquet(cache / "CSI300.parquet")
+    monkeypatch.setattr(
+        pools,
+        "_pool_cache_path",
+        lambda pool_id: cache / f"{pool_id}.parquet",
+    )
+    monkeypatch.setattr(pools, "pool_route", lambda: "public")
+    monkeypatch.setattr(pools, "_fetch_pool", lambda pool_id: [])
+    assert pools.get_pool("CSI300") == []
+
+
+def test_custom_pool_uses_declared_provider(monkeypatch):
+    from app.tickflow import pools
+
+    class _P:
+        def get_constituents(self, pool_id):
+            return ["000001.SZ"] if pool_id == "CSI300" else []
+
+    monkeypatch.setattr(preferences, "get_pool_provider", lambda: "fuyao_pool")
+    monkeypatch.setattr(preferences, "is_public_pool_provider", lambda name=None: False)
+    monkeypatch.setattr(
+        "app.data_providers.custom.provider_has_dataset",
+        lambda name, dataset: name == "fuyao_pool" and dataset == "pool",
+    )
+    monkeypatch.setattr("app.data_providers.custom.get_provider", lambda name: _P())
+    tf = MagicMock(side_effect=AssertionError("must not TickFlow"))
+    monkeypatch.setattr(pools, "get_client", tf)
+    assert pools.pool_route() == "custom"
+    assert pools._fetch_pool("CSI300") == ["000001.SZ"]
+    tf.assert_not_called()
+
+
+def test_resolve_all_custom_pool_skips_tickflow_cache_and_demo(monkeypatch, tmp_path):
+    from app.services import universe_scope
+    from app.tickflow import pools
+
+    monkeypatch.setattr(pools, "pool_route", lambda: "custom")
+    monkeypatch.setattr(
+        pools,
+        "get_pool",
+        lambda pool_id, **kwargs: (_ for _ in ()).throw(
+            AssertionError(f"must not expand {pool_id}")
+        ),
+    )
+    assert universe_scope.resolve_symbols("ALL", data_dir=tmp_path) == []
+
+
+def test_ensure_csi_skips_stale_disk_for_custom(monkeypatch, tmp_path):
+    from app.services import universe_scope
+    from app.tickflow import pools
+
+    pools_dir = tmp_path / "pools"
+    pools_dir.mkdir()
+    pl.DataFrame({"symbol": ["000001.SZ"]}).write_parquet(pools_dir / "CSI300.parquet")
+    monkeypatch.setattr(pools, "pool_route", lambda: "custom")
+    public_sync = MagicMock(side_effect=AssertionError("must not public-sync"))
+    monkeypatch.setattr(
+        "app.data_providers.registry.get_provider",
+        lambda name: SimpleNamespace(sync_pools=public_sync),
+    )
+    assert universe_scope._ensure_csi_pool("CSI300", tmp_path) == []
+    public_sync.assert_not_called()
+
+
+def test_leftover_adj_live_without_cap_uses_public(monkeypatch):
+    monkeypatch.setattr(kline_sync.preferences, "get_adj_factor_provider", lambda: "tickflow")
+    monkeypatch.setattr(
+        kline_sync.preferences, "is_public_adj_factor_provider", lambda name=None: False,
+    )
+    public = MagicMock(return_value=pl.DataFrame({
+        "symbol": ["000001.SZ"],
+        "trade_date": [date(2020, 6, 1)],
+        "ex_factor": [1.1],
+    }))
+    monkeypatch.setattr(
+        "app.services.free_sources.adj_factor_public.fetch_adj_factors_symbol",
+        public,
+    )
+    tf = MagicMock(side_effect=AssertionError("must not call TickFlow without ADJ cap"))
+    monkeypatch.setattr(kline_sync, "get_client", tf)
+    assert kline_sync.adj_live_fetch_allowed(CapabilitySet()) is True
+    out = kline_sync.fetch_adj_factor_single("000001.SZ", capset=CapabilitySet())
+    assert out["ex_factor"].to_list() == [1.1]
+    public.assert_called_once()
+    tf.assert_not_called()
+
+
+def test_leftover_adj_live_with_cap_still_uses_tickflow(monkeypatch):
+    monkeypatch.setattr(kline_sync.preferences, "get_adj_factor_provider", lambda: "tickflow")
+    monkeypatch.setattr(
+        kline_sync.preferences, "is_public_adj_factor_provider", lambda name=None: False,
+    )
+    mock_tf = MagicMock()
+    mock_tf.klines.ex_factors.return_value = pl.DataFrame({
+        "symbol": ["000001.SZ"],
+        "trade_date": [date(2020, 6, 1)],
+        "ex_factor": [1.2],
+    })
+    monkeypatch.setattr(kline_sync, "get_client", lambda: mock_tf)
+    public = MagicMock(side_effect=AssertionError("must not public when entitled"))
+    monkeypatch.setattr(
+        "app.services.free_sources.adj_factor_public.fetch_adj_factors_symbol",
+        public,
+    )
+    out = kline_sync.fetch_adj_factor_single("000001.SZ", capset=_capset(Cap.ADJ_FACTOR))
+    assert out["ex_factor"].to_list() == [1.2]
+    mock_tf.klines.ex_factors.assert_called()
+    public.assert_not_called()
+
+
+def test_sync_and_persist_minute_prefs_failure_is_fail_closed(monkeypatch, tmp_path):
+    monkeypatch.setattr(kline_sync.preferences, "get_minute_data_provider", _prefs_boom)
+    tf = MagicMock(side_effect=AssertionError("must not TickFlow minute persist"))
+    monkeypatch.setattr(kline_sync, "get_client", tf)
+    written = kline_sync.sync_and_persist_minute(
+        ["000001.SZ"],
+        KlineRepository(DataStore(tmp_path)),
+        _capset(Cap.KLINE_MINUTE_BATCH),
+    )
+    assert written == 0
+    tf.assert_not_called()
+
+
+def test_intraday_monitor_support_prefs_failure_is_unavailable(monkeypatch):
+    monkeypatch.setattr(kline_sync.preferences, "get_minute_data_provider", _prefs_boom)
+    info = kline_sync.intraday_monitor_support(_capset(Cap.KLINE_MINUTE_BATCH))
+    assert info["available"] is False
+    assert info["source"] is None
+
+
+def test_undeclared_depth_label_is_unavailable(monkeypatch):
+    from app.tickflow.capabilities import feature_availability
+
+    monkeypatch.setattr("app.services.preferences.get_realtime_data_provider", lambda: "public")
+    monkeypatch.setattr("app.services.preferences.get_depth5_data_provider", lambda: "depth_src")
+    monkeypatch.setattr("app.services.preferences.get_financial_provider", lambda: "tickflow")
+    monkeypatch.setattr("app.services.preferences.get_adj_factor_provider", lambda: "tickflow")
+    monkeypatch.setattr("app.services.preferences.get_minute_data_provider", lambda: "tickflow")
+    monkeypatch.setattr("app.services.preferences.is_public_financial_provider", lambda: False)
+    monkeypatch.setattr("app.services.preferences.is_public_adj_factor_provider", lambda: False)
+    monkeypatch.setattr("app.services.financial_normalize.local_financials_ready", lambda d: False)
+    monkeypatch.setattr("app.services.financial_normalize.local_adj_factor_ready", lambda d: False)
+    monkeypatch.setattr(
+        "app.data_providers.custom.provider_has_dataset",
+        lambda name, dataset: False,
+    )
+    feats = feature_availability(CapabilitySet())
+    assert feats["depth"]["available"] is False
+    assert feats["depth"]["source"] == "depth_src"
+    assert feats["depth"]["status"] == "unavailable"
+
+
+def test_undeclared_realtime_label_is_unavailable(monkeypatch):
+    from app.tickflow.capabilities import feature_availability
+
+    monkeypatch.setattr("app.services.preferences.get_realtime_data_provider", lambda: "fuyao")
+    monkeypatch.setattr("app.services.preferences.get_depth5_data_provider", lambda: "tickflow")
+    monkeypatch.setattr("app.services.preferences.get_financial_provider", lambda: "tickflow")
+    monkeypatch.setattr("app.services.preferences.get_adj_factor_provider", lambda: "tickflow")
+    monkeypatch.setattr("app.services.preferences.get_minute_data_provider", lambda: "tickflow")
+    monkeypatch.setattr("app.services.preferences.is_public_financial_provider", lambda: False)
+    monkeypatch.setattr("app.services.preferences.is_public_adj_factor_provider", lambda: False)
+    monkeypatch.setattr("app.services.financial_normalize.local_financials_ready", lambda d: False)
+    monkeypatch.setattr("app.services.financial_normalize.local_adj_factor_ready", lambda d: False)
+    monkeypatch.setattr(
+        "app.data_providers.custom.provider_has_dataset",
+        lambda name, dataset: False,
+    )
+    feats = feature_availability(_capset(Cap.QUOTE_BATCH))
+    assert feats["quote"]["available"] is False
+    assert feats["quote"]["source"] == "fuyao"
+    assert feats["quote"]["mode"] == "none"
+
+
+def test_watchlist_fetch_quotes_public_is_fail_closed(monkeypatch):
+    from app.services import watchlist
+
+    monkeypatch.setattr(preferences, "get_realtime_data_provider", lambda: "public")
+    paid = MagicMock(side_effect=AssertionError("must not TickFlow"))
+    monkeypatch.setattr(watchlist, "get_client", paid)
+    assert watchlist.fetch_quotes(["000001.SZ"], _capset(Cap.QUOTE_BATCH)) == []
+    paid.assert_not_called()
+
+
+def test_minute_refresh_status_unresolved_is_not_available(monkeypatch, tmp_path):
+    from app.services.minute_refresh import MinuteRefreshService
+
+    monkeypatch.setattr(preferences, "get_full_minute_data_provider", _prefs_boom)
+    monkeypatch.setattr(preferences, "get_minute_refresh_enabled", lambda: False)
+    monkeypatch.setattr(preferences, "get_minute_refresh_interval", lambda: 6)
+    svc = MinuteRefreshService(SimpleNamespace())
+    st = svc.status()
+    assert st["provider_effective"] == "unresolved"
+    assert st["available"] is False
+    assert st["provider"] == ""
