@@ -649,6 +649,8 @@ def _select_adj_cols(df: pl.DataFrame) -> pl.DataFrame:
     cols = [c for c in ADJ_COLS if c in df.columns]
     if len(cols) < 3:
         return pl.DataFrame(schema={"symbol": pl.Utf8, "trade_date": pl.Date, "ex_factor": pl.Float64})
+    if "route" in df.columns:
+        cols = [*cols, "route"]
     return df.select(cols)
 
 
@@ -677,6 +679,14 @@ def merge_write_adj_factor(
     if df.is_empty():
         return 0, []
 
+    try:
+        from app.services.kline_sync import adj_cache_usable, adj_route, _tag_adj_route
+        df = _tag_adj_route(df)
+        route = adj_route()
+    except Exception:  # noqa: BLE001
+        adj_cache_usable = None
+        route = ""
+
     affected = df["symbol"].unique().to_list()
     factor_dir = "adj_factor_etf" if asset_type == "etf" else "adj_factor"
     out = Path(data_dir) / factor_dir / "all.parquet"
@@ -684,6 +694,8 @@ def merge_write_adj_factor(
 
     if out.exists():
         existing = _select_adj_cols(pl.read_parquet(out))
+        if adj_cache_usable is not None and not adj_cache_usable(existing, route):
+            existing = df.head(0)
         before = existing.height
         merged = (
             pl.concat([existing, df], how="diagonal_relaxed")

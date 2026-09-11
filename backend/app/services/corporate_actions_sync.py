@@ -171,16 +171,9 @@ def formal_event_facts(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def load_adj_factor_frame(data_dir: Path, *, asset_type: str = "stock") -> pl.DataFrame:
-    factor_dir = "adj_factor_etf" if asset_type == "etf" else "adj_factor"
-    path = Path(data_dir) / factor_dir / "all.parquet"
-    if not path.exists():
-        return pl.DataFrame(
-            schema={"symbol": pl.Utf8, "trade_date": pl.Date, "ex_factor": pl.Float64}
-        )
-    df = pl.read_parquet(path)
-    if "trade_date" in df.columns and df.schema["trade_date"] != pl.Date:
-        df = df.with_columns(pl.col("trade_date").cast(pl.Date, strict=False))
-    return df
+    from app.services.kline_sync import get_adj_factor_df
+
+    return get_adj_factor_df(data_dir, asset_type=asset_type)
 
 
 def map_coverage_status_to_marker(status: str | None, *, crosscheck_ok: bool | None = None) -> str:

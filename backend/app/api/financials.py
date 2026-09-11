@@ -83,17 +83,13 @@ def financial_status(request: Request):
     tables = {}
 
     for table in ("metrics", "income", "balance_sheet", "cash_flow", "shares"):
-        path = data_dir / "financials" / table / "part.parquet"
-        if path.exists():
-            try:
-                df = pl.read_parquet(path, columns=["symbol"])
-                tables[table] = {
-                    "rows": len(df),
-                    "symbols": df["symbol"].n_unique() if not df.is_empty() else 0,
-                }
-            except Exception:
-                tables[table] = {"rows": 0, "symbols": 0}
-        else:
+        try:
+            df = get_financial_df(data_dir, table)
+            tables[table] = {
+                "rows": len(df),
+                "symbols": df["symbol"].n_unique() if not df.is_empty() and "symbol" in df.columns else 0,
+            }
+        except Exception:
             tables[table] = {"rows": 0, "symbols": 0}
 
     fs = getattr(request.app.state, "financial_scheduler", None)
@@ -112,16 +108,13 @@ def financial_status(request: Request):
     # public detail coverage (expense/equity lines) for ops visibility
     detail_coverage: dict = {}
     try:
-        inc_path = data_dir / "financials" / "income" / "part.parquet"
-        bal_path = data_dir / "financials" / "balance_sheet" / "part.parquet"
-
         def _nn_syms(df: pl.DataFrame, col: str) -> int:
             if col not in df.columns:
                 return 0
             return int(df.filter(pl.col(col).is_not_null())["symbol"].n_unique())
 
-        if inc_path.exists():
-            idf = pl.read_parquet(inc_path)
+        idf = get_financial_df(data_dir, "income")
+        if not idf.is_empty():
             detail_coverage["income"] = {
                 "selling_expense": _nn_syms(idf, "selling_expense"),
                 "admin_expense": _nn_syms(idf, "admin_expense"),
@@ -130,8 +123,8 @@ def financial_status(request: Request):
                 "non_operating_income": _nn_syms(idf, "non_operating_income"),
                 "interest_income": _nn_syms(idf, "interest_income"),
             }
-        if bal_path.exists():
-            bdf = pl.read_parquet(bal_path)
+        bdf = get_financial_df(data_dir, "balance_sheet")
+        if not bdf.is_empty():
             detail_coverage["balance_sheet"] = {
                 "retained_earnings": _nn_syms(bdf, "retained_earnings"),
                 "share_capital": _nn_syms(bdf, "share_capital"),
@@ -143,10 +136,7 @@ def financial_status(request: Request):
     period_depth: dict = {}
     try:
         for tname in ("income", "balance_sheet", "cash_flow", "metrics"):
-            path = data_dir / "financials" / tname / "part.parquet"
-            if not path.exists():
-                continue
-            df = pl.read_parquet(path)
+            df = get_financial_df(data_dir, tname)
             if df.is_empty() or "symbol" not in df.columns:
                 continue
             g = df.group_by("symbol").len().rename({"len": "n"})

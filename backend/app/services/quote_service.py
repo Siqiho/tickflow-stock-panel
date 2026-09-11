@@ -1709,6 +1709,14 @@ class QuoteService:
                      不写 daily, 直接传给 compute_enriched_today 避免重复计算。
         """
         try:
+            if not persist:
+                from app.services.kline_sync import live_enriched_overlay_allowed
+                if not live_enriched_overlay_allowed():
+                    logger.info(
+                        "skip live enriched publish: daily route is custom/unresolved"
+                    )
+                    return
+
             today = date.today()
             t0 = time.perf_counter()
 
@@ -1773,14 +1781,11 @@ class QuoteService:
                 full_df = pl.concat([hist_df, daily_ohlcv], how="diagonal_relaxed")
                 full_df = full_df.sort(["symbol", "date"])
 
-                factor_dir = "adj_factor_etf" if asset_type == "etf" else "adj_factor"
-                factor_path = self._repo.store.data_dir / factor_dir / "all.parquet"
-                factors = pl.DataFrame()
-                if factor_path.exists():
-                    try:
-                        factors = pl.read_parquet(factor_path)
-                    except Exception:
-                        pass
+                from app.services.kline_sync import get_adj_factor_df
+                factors = get_adj_factor_df(
+                    self._repo.store.data_dir,
+                    asset_type="etf" if asset_type == "etf" else "stock",
+                )
                 instruments = self._repo.get_instruments() if asset_type == "stock" else None
 
                 enriched_full = compute_enriched(full_df, factors=factors, instruments=instruments)

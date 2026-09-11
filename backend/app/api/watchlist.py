@@ -412,11 +412,9 @@ def _join_local_financial_metrics(df: pl.DataFrame, repo, symbols: list[str]) ->
     data_dir = getattr(getattr(repo, "store", None), "data_dir", None)
     if data_dir is None:
         return df
-    path = data_dir / "financials" / "metrics" / "part.parquet"
-    if not path.exists():
-        return df
     try:
-        metrics = pl.read_parquet(path)
+        from app.services.financial_sync import get_financial_df
+        metrics = get_financial_df(data_dir, "metrics")
     except Exception as exc:
         logger.debug("read watchlist financial metrics failed: %s", exc)
         return df

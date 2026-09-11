@@ -100,19 +100,16 @@ def normalize_financial_rows(table: str, rows: list[dict[str, Any]]) -> list[dic
 
 
 def local_financials_ready(data_dir) -> bool:
-    """True if any of the four main tables has at least one row on disk."""
+    """True if a route-usable financial table has at least one row."""
     from pathlib import Path
 
-    import polars as pl
+    from app.services.financial_sync import get_financial_df
 
-    base = Path(data_dir) / "financials"
+    base = Path(data_dir)
     for table in ("metrics", "income", "balance_sheet", "cash_flow"):
-        path = base / table / "part.parquet"
-        if not path.exists():
-            continue
         try:
-            df = pl.read_parquet(path, columns=["symbol"])
-            if df.height > 0:
+            df = get_financial_df(base, table)
+            if df is not None and getattr(df, "height", 0) > 0:
                 return True
         except Exception:
             continue
@@ -122,13 +119,10 @@ def local_financials_ready(data_dir) -> bool:
 def local_adj_factor_ready(data_dir) -> bool:
     from pathlib import Path
 
-    import polars as pl
+    from app.services.kline_sync import get_adj_factor_df
 
-    path = Path(data_dir) / "adj_factor" / "all.parquet"
-    if not path.exists():
-        return False
     try:
-        df = pl.read_parquet(path, columns=["symbol"])
-        return df.height > 0
+        df = get_adj_factor_df(Path(data_dir), asset_type="stock")
+        return df is not None and getattr(df, "height", 0) > 0
     except Exception:
         return False

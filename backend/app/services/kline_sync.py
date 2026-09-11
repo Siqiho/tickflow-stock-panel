@@ -195,6 +195,34 @@ def live_daily_persist_allowed() -> bool:
         return False
 
 
+def daily_route() -> str:
+    """Effective daily write/read route: tickflow | <custom name> | unresolved.
+
+    Leftover / undeclared names resolve to tickflow (logged by the resolver).
+    Resolve failures and unreadable prefs are unresolved.
+    """
+    try:
+        name = (preferences.get_daily_data_provider() or "").strip().lower()
+    except Exception:  # noqa: BLE001
+        return "unresolved"
+    _, fallback, err = _resolve_daily_provider(name)
+    if err is not None:
+        return "unresolved"
+    if fallback:
+        return "tickflow"
+    return name or "custom"
+
+
+def live_enriched_overlay_allowed() -> bool:
+    """Whether in-memory live enriched may overlay charts / screener / latest.
+
+    Same gate as live canonical persist: leftover TickFlow daily keeps the
+    live overlay. Custom daily and unreadable prefs must not mix a different
+    realtime source into ``get_enriched_latest`` consumers.
+    """
+    return live_daily_persist_allowed()
+
+
 def _refresh_daily_view(repo: KlineRepository) -> None:
     try:
         d = repo.store.data_dir.as_posix()
@@ -688,6 +716,94 @@ def adj_live_fetch_allowed(capset: CapabilitySet | None) -> bool:
         return False
 
 
+def adj_route() -> str:
+    """Effective adj write/read route: public | tickflow | <custom name> | unresolved.
+
+    Leftover / undeclared names resolve to tickflow (logged by the resolver).
+    Resolve failures and unreadable prefs are unresolved.
+    """
+    try:
+        name = (preferences.get_adj_factor_provider() or "").strip().lower()
+    except Exception:  # noqa: BLE001
+        return "unresolved"
+    try:
+        if preferences.is_public_adj_factor_provider(name):
+            return "public"
+    except Exception:  # noqa: BLE001
+        return "unresolved"
+    custom, fate = _try_custom_adj_provider(name)
+    if fate == "skip":
+        return "unresolved"
+    if fate == "custom":
+        return name or "custom"
+    return "tickflow"
+
+
+def adj_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
+    """Whether on-disk adj factors may be served for the current route.
+
+    Custom / unresolved never reuse untagged TickFlow or public files.
+    Tagged files must match, except leftover TickFlow which may still
+    serve public-sina tags (intentional leftover adj contract).
+    Untagged legacy files stay valid for leftover TickFlow / public only.
+    """
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return False
+    expected = (route or "").strip().lower()
+    if not expected or expected == "unresolved":
+        return False
+    if "route" not in df.columns:
+        return expected in {"tickflow", "public"}
+    stored = [str(v or "").strip().lower() for v in df["route"].to_list()]
+    nonempty = [s for s in stored if s]
+    if not nonempty:
+        return expected in {"tickflow", "public"}
+    allowed = {expected}
+    if expected == "tickflow":
+        allowed.add("public")
+    if any(s not in allowed for s in nonempty):
+        return False
+    if len(nonempty) != len(stored):
+        return expected in {"tickflow", "public"}
+    return True
+
+
+def _tag_adj_route(df: pl.DataFrame) -> pl.DataFrame:
+    route = adj_route()
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return df
+    if not route or route == "unresolved" or "route" in df.columns:
+        return df
+    return df.with_columns(pl.lit(route).alias("route"))
+
+
+def get_adj_factor_df(data_dir, asset_type: str = "stock") -> pl.DataFrame:
+    """Read local adj parquet, refusing stale files after an adj-source switch."""
+    from pathlib import Path
+
+    factor_dir = "adj_factor_etf" if asset_type == "etf" else "adj_factor"
+    path = Path(data_dir) / factor_dir / "all.parquet"
+    empty = pl.DataFrame(
+        schema={"symbol": pl.Utf8, "trade_date": pl.Date, "ex_factor": pl.Float64}
+    )
+    if not path.exists():
+        return empty
+    try:
+        df = pl.read_parquet(path)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("读取 %s 失败: %s", factor_dir, e)
+        return empty
+    if "trade_date" in df.columns and df.schema["trade_date"] != pl.Date:
+        df = df.with_columns(pl.col("trade_date").cast(pl.Date, strict=False))
+    route = adj_route()
+    if not adj_cache_usable(df, route):
+        logger.info("skip stale %s for route=%s", factor_dir, route)
+        return empty
+    if "route" in df.columns:
+        return df.drop("route")
+    return df
+
+
 def _persist_adj_factor_df(
     new_data: pl.DataFrame,
     repo: KlineRepository,
@@ -695,6 +811,7 @@ def _persist_adj_factor_df(
 ) -> tuple[int, list[str]]:
     if new_data.is_empty():
         return 0, []
+    new_data = _tag_adj_route(new_data)
     affected = new_data["symbol"].unique().to_list()
     factor_dir = "adj_factor_etf" if asset_type == "etf" else "adj_factor"
     out = repo.store.data_dir / factor_dir / "all.parquet"
@@ -702,8 +819,10 @@ def _persist_adj_factor_df(
 
     if out.exists():
         existing = pl.read_parquet(out)
+        if not adj_cache_usable(existing, adj_route()):
+            existing = new_data.head(0)
         before = existing.height
-        merged = pl.concat([existing, new_data]).unique(
+        merged = pl.concat([existing, new_data], how="diagonal_relaxed").unique(
             subset=["symbol", "trade_date"], keep="last",
         ).sort(["symbol", "trade_date"])
         atomic_write_parquet(merged, out)
