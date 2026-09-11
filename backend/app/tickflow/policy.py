@@ -283,7 +283,7 @@ def _augment_custom_sources(capset: CapabilitySet) -> None:
 
 
 def detect_capabilities(force: bool = False) -> CapabilitySet:
-    """探测 TickFlow 档位, 再按本地自定义源补授能力。不改 Catalog full_minute.field=None。"""
+    """探测 TickFlow 档位, 再按本地自定义源补授能力。"""
     capset = _detect_tickflow_caps(force)
     _augment_custom_sources(capset)
     return capset

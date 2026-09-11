@@ -83,7 +83,7 @@ export function extraDatasetLabel(datasetId: string): string | null {
 }
 
 function declaredCapabilities(name: string, datasets: string[], matrix?: CapabilityMatrix): string[] {
-  const fromItem = datasets.filter((id) => id !== 'full_minute')
+  const fromItem = datasets
   const fromMatrix = (matrix?.capabilities ?? [])
     .filter((cap) => (
       cap.candidates.some((item) => item.name === name)

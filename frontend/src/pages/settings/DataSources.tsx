@@ -47,7 +47,12 @@ import {
   buildUnifiedSources,
   sourceById,
 } from '@/lib/dataSourceCatalog'
-import { type CatalogReadState } from '@/lib/dataSources'
+import {
+  type CatalogReadState,
+  DEFAULT_PROVIDER_ROUTING,
+  TICKFLOW_PROVIDER_ROUTING,
+  routingForSource,
+} from '@/lib/dataSources'
 import { QK } from '@/lib/queryKeys'
 import { useCapabilities, usePreferences } from '@/lib/useSharedQueries'
 import { AnchorWrap } from '@/lib/useCardFlash'
@@ -159,21 +164,10 @@ function patchMatrix(
 }
 
 /** Product defaults — must match backend getters (unset realtime → public). */
-const DEFAULT_ROUTING: Record<ProviderField, string> = {
-  daily_data_provider: 'tickflow',
-  adj_factor_provider: 'tickflow',
-  minute_data_provider: 'tickflow',
-  full_minute_data_provider: 'tickflow',
-  depth5_data_provider: 'tickflow',
-  realtime_data_provider: 'public',
-  financial_data_provider: 'tickflow',
-}
+const DEFAULT_ROUTING = DEFAULT_PROVIDER_ROUTING
 
 /** Explicit “let TickFlow take over” — paid path, including realtime. */
-const TICKFLOW_ROUTING: Record<ProviderField, string> = {
-  ...DEFAULT_ROUTING,
-  realtime_data_provider: 'tickflow',
-}
+const TICKFLOW_ROUTING = TICKFLOW_PROVIDER_ROUTING
 
 /** 单个能力卡: 当前生效提供方 + 配置/本地状态; 管理员可点候选切换。
  *  candidates 只含当前可提供该能力的源; 未就绪源 (pending) 置灰提示;
@@ -727,18 +721,9 @@ export function SettingsDataSourcesPanel({
       if (name === 'tickflow') {
         return api.updateDataProviders(TICKFLOW_ROUTING)
       }
-      const supported = new Set(
-        allItems.find(s => s.name === name)?.datasets ?? []
+      return api.updateDataProviders(
+        routingForSource(name, allItems.find(s => s.name === name)?.datasets ?? []),
       )
-      const pick = (dataset: string) =>
-        supported.has(dataset) ? name : DEFAULT_ROUTING[`${dataset}_data_provider` as ProviderField] ?? 'tickflow'
-      return api.updateDataProviders({
-        daily_data_provider: pick('daily'),
-        adj_factor_provider: pick('adj_factor'),
-        realtime_data_provider: pick('realtime'),
-        minute_data_provider: pick('minute'),
-        financial_data_provider: pick('financial'),
-      })
     },
     onSuccess: (_d, name) => {
       invalidateSources()

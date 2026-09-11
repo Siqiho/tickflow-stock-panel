@@ -35,6 +35,8 @@ def test_update_data_providers_writes_server_not_user_file(tmp_path, monkeypatch
         "realtime_data_provider": "public",
         "daily_data_provider": "tickflow",
         "financial_data_provider": "eastmoney",
+        "full_minute_data_provider": "tickflow",
+        "depth5_data_provider": "tickflow",
     }
     settings_api.update_data_providers(req, MagicMock())
 
@@ -44,8 +46,11 @@ def test_update_data_providers_writes_server_not_user_file(tmp_path, monkeypatch
     assert stored["daily_data_provider"] == "tickflow"
     assert stored["financial_provider"] == "eastmoney"
     assert stored["financial_data_provider"] == "eastmoney"
+    assert stored["full_minute_data_provider"] == "tickflow"
+    assert stored["depth5_data_provider"] == "tickflow"
     assert preferences.get_realtime_data_provider() == "public"
     assert preferences.get_financial_provider() == "eastmoney"
+    assert preferences.get_full_minute_data_provider() == "tickflow"
 
 
 def test_user_file_cannot_override_server_market_routing(tmp_path, monkeypatch):
@@ -110,6 +115,7 @@ def test_capability_matrix_injects_stored_same_as_daily(tmp_path, monkeypatch):
         "minute_data_provider": preferences.get_minute_data_provider(),
         "realtime_data_provider": preferences.get_realtime_data_provider(),
         "depth5_data_provider": preferences.get_depth5_data_provider(),
+        "full_minute_data_provider": preferences.get_full_minute_data_provider(),
         "financial_data_provider": preferences.get_financial_provider(),
     }
     caps = {c["id"]: c for c in build_capability_matrix(current, tickflow_tier="none")["capabilities"]}

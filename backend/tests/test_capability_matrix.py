@@ -17,6 +17,7 @@ DEFAULT_CURRENT = {
     "daily_data_provider": "tickflow",
     "adj_factor_provider": "tickflow",
     "minute_data_provider": "tickflow",
+    "full_minute_data_provider": "tickflow",
     "depth5_data_provider": "tickflow",
     "realtime_data_provider": "tickflow",
     "financial_data_provider": "tickflow",
@@ -33,8 +34,7 @@ def _by_id(matrix: dict) -> dict[str, dict]:
 
 
 def test_registry_covers_all_routing_fields():
-    """注册表是能力的单一权威: 可路由能力与偏好键一一对应、无重复;
-    full_minute 为不可路由能力 (field=None, 仅 TickFlow Expert 提供)。"""
+    """注册表是能力的单一权威: 可路由能力与偏好键一一对应、无重复。"""
     routable = [c["field"] for c in CAPABILITY_REGISTRY if c["field"] is not None]
     assert sorted(routable) == sorted(DEFAULT_CURRENT)
     assert len(set(routable)) == len(routable)
@@ -42,7 +42,7 @@ def test_registry_covers_all_routing_fields():
         "realtime", "daily", "minute", "full_minute", "depth5", "adj_factor", "financial",
     }
     full_minute = next(c for c in CAPABILITY_REGISTRY if c["id"] == "full_minute")
-    assert full_minute["field"] is None
+    assert full_minute["field"] == "full_minute_data_provider"
     assert full_minute["tf_tier"] == "expert"
     for cap in CAPABILITY_REGISTRY:
         expected_default = "public" if cap["id"] == "realtime" else "tickflow"
@@ -242,11 +242,10 @@ def test_unknown_current_display_falls_back_to_name(monkeypatch):
     assert caps["realtime"]["effective_display"] == "ghost"
 
 
-def test_full_minute_stays_expert_only_and_not_routable(monkeypatch):
-    """本地 Catalog: full_minute.field=None, 生效源恒为 tickflow。
+def test_full_minute_routes_like_other_capabilities(monkeypatch):
+    """全量分钟与取数路径一致: 偏好 full_minute_data_provider 决定生效源。
 
-    自定义源即使声明 full_minute 也不能通过偏好字段抢走生效源;
-    pro 档 TickFlow 不进候选, usable=False。
+    TickFlow 仍仅 Expert 进候选; 自定义源声明 full_minute 后可被路由。
     """
     _fake_sources(
         monkeypatch,
@@ -255,7 +254,7 @@ def test_full_minute_stays_expert_only_and_not_routable(monkeypatch):
     )
     caps = _by_id(build_capability_matrix(dict(DEFAULT_CURRENT), tickflow_tier="expert"))
     fm = caps["full_minute"]
-    assert fm["field"] is None
+    assert fm["field"] == "full_minute_data_provider"
     assert [c["name"] for c in fm["candidates"]] == ["tickflow", "myfm"]
     assert fm["usable"] is True
     assert fm["tf_available"] is True
@@ -263,7 +262,8 @@ def test_full_minute_stays_expert_only_and_not_routable(monkeypatch):
 
     routed = dict(DEFAULT_CURRENT, full_minute_data_provider="myfm")
     caps_routed = _by_id(build_capability_matrix(routed, tickflow_tier="expert"))
-    assert caps_routed["full_minute"]["effective"] == "tickflow"
+    assert caps_routed["full_minute"]["effective"] == "myfm"
+    assert caps_routed["full_minute"]["usable"] is True
 
     caps_pro = _by_id(build_capability_matrix(dict(DEFAULT_CURRENT), tickflow_tier="pro"))
     fm_pro = caps_pro["full_minute"]
@@ -271,6 +271,10 @@ def test_full_minute_stays_expert_only_and_not_routable(monkeypatch):
     assert fm_pro["tf_available"] is False
     assert fm_pro["effective"] == "tickflow"
     assert fm_pro["usable"] is False
+
+    caps_pro_routed = _by_id(build_capability_matrix(routed, tickflow_tier="pro"))
+    assert caps_pro_routed["full_minute"]["effective"] == "myfm"
+    assert caps_pro_routed["full_minute"]["usable"] is True
 
 
 def test_public_only_on_implemented_capabilities(monkeypatch):

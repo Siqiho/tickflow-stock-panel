@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   DATA_KEYS_SETTINGS_HREF,
   DATA_SOURCES_SETTINGS_HREF,
+  DEFAULT_PROVIDER_ROUTING,
+  TICKFLOW_PROVIDER_ROUTING,
   capabilityStatusRows,
   catalogLocalDataLabel,
   classifyMarginQueryError,
@@ -12,6 +14,7 @@ import {
   isPublicAdjFactorProvider,
   isPublicFinancialProvider,
   marginQueryErrorLabel,
+  routingForSource,
 } from './dataSources'
 import type { CapabilityMatrix, CatalogResponse, DataControlSummary, DataSourcesResponse } from './api'
 
@@ -131,6 +134,25 @@ describe('capabilityStatusRows', () => {
     expect(rows[0].localDataLabel).toBe('目录无记录')
     expect(rows[1].readyLabel).toBe('配置未就绪')
     expect(rows[1].configuredSource).toBe('TickFlow')
+  })
+})
+
+describe('routingForSource', () => {
+  it('lets a plugin take over declared datasets and leaves the rest on product defaults', () => {
+    const routed = routingForSource('fuyao', ['daily', 'adj_factor', 'realtime', 'financial', 'depth5'])
+    expect(routed.daily_data_provider).toBe('fuyao')
+    expect(routed.adj_factor_provider).toBe('fuyao')
+    expect(routed.realtime_data_provider).toBe('fuyao')
+    expect(routed.financial_data_provider).toBe('fuyao')
+    expect(routed.depth5_data_provider).toBe('fuyao')
+    expect(routed.minute_data_provider).toBe(DEFAULT_PROVIDER_ROUTING.minute_data_provider)
+    expect(routed.full_minute_data_provider).toBe(DEFAULT_PROVIDER_ROUTING.full_minute_data_provider)
+  })
+
+  it('does not treat restore-default as TickFlow realtime', () => {
+    expect(DEFAULT_PROVIDER_ROUTING.realtime_data_provider).toBe('public')
+    expect(TICKFLOW_PROVIDER_ROUTING.realtime_data_provider).toBe('tickflow')
+    expect(routingForSource('tickflow', ['daily']).realtime_data_provider).toBe('tickflow')
   })
 })
 

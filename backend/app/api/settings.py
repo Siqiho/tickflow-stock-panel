@@ -616,6 +616,7 @@ def get_preferences() -> dict:
         "financial_provider": preferences.get_financial_provider(),
         "pool_provider": preferences.get_pool_provider(),
         "minute_data_provider": preferences.get_minute_data_provider(),
+        "full_minute_data_provider": preferences.get_full_minute_data_provider(),
         "realtime_data_provider": preferences.get_realtime_data_provider(),
         "realtime_watchlist_symbols": preferences.get_realtime_watchlist_symbols(),
         **preferences.get_realtime_quote_scope(),
@@ -1771,7 +1772,7 @@ def list_data_sources() -> dict:
         "builtin": [{
             "name": "tickflow",
             "display_name": "TickFlow",
-            "datasets": ["daily", "adj_factor", "realtime", "minute", "depth5", "financial"],
+            "datasets": ["daily", "adj_factor", "realtime", "minute", "full_minute", "depth5", "financial"],
         }],
         "plugins": custom_sources.list_plugins(),
         "custom": custom_sources.list_sources(),
@@ -1793,6 +1794,7 @@ def get_capability_matrix() -> dict:
         "minute_data_provider": preferences.get_minute_data_provider(),
         "realtime_data_provider": preferences.get_realtime_data_provider(),
         "depth5_data_provider": preferences.get_depth5_data_provider(),
+        "full_minute_data_provider": preferences.get_full_minute_data_provider(),
         "financial_data_provider": preferences.get_financial_provider(),
     }
     return build_capability_matrix(current, tickflow_tier=tier_label())
@@ -1882,6 +1884,7 @@ class DataProvidersIn(BaseModel):
     daily_data_provider: str | None = None
     adj_factor_provider: str | None = None
     minute_data_provider: str | None = None
+    full_minute_data_provider: str | None = None
     depth5_data_provider: str | None = None
     realtime_data_provider: str | None = None
     financial_data_provider: str | None = None
@@ -1926,6 +1929,7 @@ def update_data_providers(req: DataProvidersIn, request: Request) -> dict:
         "daily_data_provider": preferences.get_daily_data_provider(),
         "adj_factor_provider": preferences.get_adj_factor_provider(),
         "minute_data_provider": preferences.get_minute_data_provider(),
+        "full_minute_data_provider": preferences.get_full_minute_data_provider(),
         "depth5_data_provider": preferences.get_depth5_data_provider(),
         "realtime_data_provider": preferences.get_realtime_data_provider(),
         "financial_data_provider": preferences.get_financial_provider(),
@@ -1985,6 +1989,8 @@ def delete_data_source(name: str, request: Request) -> dict:
         updates["adj_factor_provider"] = "tickflow"
     if preferences.get_minute_data_provider() == name:
         updates["minute_data_provider"] = "tickflow"
+    if preferences.get_full_minute_data_provider() == name:
+        updates["full_minute_data_provider"] = "tickflow"
     if preferences.get_depth5_data_provider() == name:
         updates["depth5_data_provider"] = "tickflow"
     if updates:

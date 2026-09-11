@@ -168,13 +168,14 @@ def _iter_custom_daily_chunks(
     start_time: datetime,
     end_time: datetime,
     on_chunk_done: Callable[[int, int], None] | None,
+    asset_type: str = "stock",
 ):
     """Yield normalized daily frames from a custom/plugin provider."""
     kwargs: dict = {
         "symbols": symbols,
         "start_time": start_time,
         "end_time": end_time,
-        "asset_type": "stock",
+        "asset_type": asset_type,
     }
     if on_chunk_done is not None:
         kwargs["on_chunk_done"] = on_chunk_done
@@ -225,6 +226,7 @@ def sync_and_persist_daily_batch(
         written = _persist_daily_chunks(
             _iter_custom_daily_chunks(
                 provider, symbols, start_time, end_time, on_chunk_done,
+                asset_type="stock",
             ),
             repo,
         )
@@ -251,6 +253,55 @@ def sync_and_persist_daily_batch(
     repo.append_daily(df)
     _refresh_daily_view(repo)
     return df.height
+
+
+def fetch_routed_daily(
+    symbols: list[str],
+    *,
+    start_time: datetime,
+    end_time: datetime,
+    asset_type: str = "stock",
+    capset: CapabilitySet | None = None,
+    count: int | None = None,
+    batch_size: int | None = None,
+    rpm: int | None = None,
+    on_chunk_done: Callable[[int, int], None] | None = None,
+) -> pl.DataFrame:
+    """Daily bars from ``daily_data_provider`` for stock / index / ETF.
+
+    A custom/plugin source that declares daily is fail-closed: empty or
+    stock-only adapters (e.g. Fuyao) must not silently call TickFlow.
+    TickFlow still requires ``KLINE_DAILY_BATCH`` when *capset* is given.
+    """
+    if not symbols:
+        return pl.DataFrame()
+
+    provider_name = preferences.get_daily_data_provider()
+    provider, fallback, err = _resolve_daily_provider(provider_name)
+    if err is not None:
+        logger.warning("custom daily provider %s resolution failed: %s", provider_name, err)
+    if not fallback and provider is not None:
+        frames = list(
+            _iter_custom_daily_chunks(
+                provider, symbols, start_time, end_time, on_chunk_done,
+                asset_type=asset_type,
+            )
+        )
+        if not frames:
+            return pl.DataFrame()
+        return pl.concat(frames, how="diagonal_relaxed")
+
+    if capset is not None and not capset.has(Cap.KLINE_DAILY_BATCH):
+        return pl.DataFrame()
+    return sync_daily_batch(
+        symbols,
+        count=count,
+        batch_size=batch_size,
+        rpm=rpm,
+        start_time=start_time,
+        end_time=end_time,
+        on_chunk_done=on_chunk_done,
+    )
 
 
 def _persist_daily_chunks(chunks, repo: KlineRepository) -> int:

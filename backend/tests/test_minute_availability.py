@@ -58,6 +58,28 @@ def test_feature_availability_includes_daily_and_minute(monkeypatch):
     assert feats["websocket"]["available"] is False
 
 
+def test_feature_availability_reports_custom_sources(monkeypatch):
+    monkeypatch.setattr("app.services.preferences.get_realtime_data_provider", lambda: "fuyao")
+    monkeypatch.setattr("app.services.preferences.get_financial_provider", lambda: "fuyao")
+    monkeypatch.setattr("app.services.preferences.get_adj_factor_provider", lambda: "sdk")
+    monkeypatch.setattr("app.services.preferences.get_depth5_data_provider", lambda: "depth_src")
+    monkeypatch.setattr("app.services.preferences.get_minute_data_provider", lambda: "sdk")
+    monkeypatch.setattr("app.services.preferences.is_public_financial_provider", lambda: False)
+    monkeypatch.setattr("app.services.preferences.is_public_adj_factor_provider", lambda: False)
+    monkeypatch.setattr("app.services.financial_normalize.local_financials_ready", lambda d: False)
+    monkeypatch.setattr("app.services.financial_normalize.local_adj_factor_ready", lambda d: False)
+
+    feats = feature_availability(
+        _capset(Cap.FINANCIAL, Cap.ADJ_FACTOR, Cap.DEPTH5_BATCH, Cap.KLINE_MINUTE_BATCH, Cap.QUOTE_BATCH),
+        minute_user_enabled=True,
+    )
+    assert feats["financial"]["source"] == "fuyao"
+    assert feats["adj_factor"]["source"] == "sdk"
+    assert feats["depth"]["source"] == "depth_src"
+    assert feats["minute"]["source"] == "sdk"
+    assert feats["quote"]["source"] == "fuyao"
+
+
 def test_feature_quote_tickflow_without_cap_is_unavailable(monkeypatch):
     """TickFlow leftover routing + no quote cap must not claim local_public."""
     monkeypatch.setattr(
