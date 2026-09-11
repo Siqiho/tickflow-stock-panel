@@ -916,7 +916,8 @@ def get_minute_batch(request: Request, body: dict):
             if isinstance(minute_dir, Path) and write_lock is not None:
                 with write_lock:
                     kline_sync._write_minute_partition(
-                        df_live, minute_dir, route=kline_sync.minute_route(),
+                        kline_sync._with_minute_route(df_live, kline_sync.minute_route()),
+                        minute_dir,
                     )
         except Exception as e:  # noqa: BLE001
             logger.warning("minute-batch 补拉落盘失败 (降级为仅返回): %s", e)

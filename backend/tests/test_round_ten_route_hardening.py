@@ -206,9 +206,8 @@ def test_get_minute_skips_stale_local_for_custom(monkeypatch, tmp_path):
 def test_minute_write_tags_current_route(tmp_path, monkeypatch):
     monkeypatch.setattr(kline_sync, "minute_route", lambda: "fuyao")
     written = kline_sync._write_minute_partition(
-        _minute_df(),
+        kline_sync._with_minute_route(_minute_df(), "fuyao"),
         tmp_path / "kline_minute",
-        route="fuyao",
     )
     assert written == 1
     saved = pl.read_parquet(tmp_path / "kline_minute" / "date=2026-07-17" / "part.parquet")

@@ -921,17 +921,26 @@ def _drop_null_datetime(existing: pl.DataFrame) -> pl.DataFrame:
     return existing
 
 
-def _write_minute_partition(
-    df: pl.DataFrame,
-    minute_dir,
-    route: str | None = None,
-) -> int:
+def _with_minute_route(df: pl.DataFrame, route: str | None = None) -> pl.DataFrame:
+    """Stamp ``route`` on a minute frame before persist. Signature of
+    ``_write_minute_partition`` stays ``(df, dir)`` so existing test mocks
+    keep working.
+    """
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return df
+    token = (route or "").strip().lower()
+    if not token or token == "unresolved" or "route" in df.columns:
+        return df
+    return df.with_columns(pl.lit(token).alias("route"))
+
+
+def _write_minute_partition(df: pl.DataFrame, minute_dir) -> int:
     """按 _trade_date 分区落盘分钟 K (读旧→concat→unique→原子写)。返回写入行数。
 
     persist_historical_minute 与 minute-batch 共用本函数 + atomic_write_parquet,
     发布侧统一走模块级 _minute_partition_lock 的乐观重试, 不另开写链。
-    ``route`` tags the writer so a later provider switch does not serve stale
-    TickFlow/public/custom parquet as if it were the current source.
+    Callers stamp ``route`` via ``_with_minute_route`` so a later provider
+    switch does not serve stale TickFlow/public/custom parquet.
     """
     from pathlib import Path
 
@@ -940,8 +949,6 @@ def _write_minute_partition(
     minute_dir = Path(minute_dir)
     if "datetime" not in df.columns:
         return 0
-    if route and route != "unresolved" and "route" not in df.columns:
-        df = df.with_columns(pl.lit(route).alias("route"))
     df = df.with_columns(pl.col("datetime").dt.date().alias("_trade_date"))
     written = 0
     for day_df in df.partition_by("_trade_date"):
@@ -1875,7 +1882,7 @@ def persist_historical_minute(
             before = pl.read_parquet(out).height
         except Exception:  # noqa: BLE001
             before = 0
-    written = _write_minute_partition(clean, minute_dir, route=minute_route())
+    written = _write_minute_partition(_with_minute_route(clean, minute_route()), minute_dir)
     added = max(0, written - before)
 
     repo.refresh_minute_views()
@@ -2130,7 +2137,7 @@ def sync_and_persist_minute(
     def _persist(seg_df: pl.DataFrame) -> None:
         with write_lock:
             written_box[0] += _write_minute_partition(
-                seg_df, minute_dir, route=minute_route(),
+                _with_minute_route(seg_df, minute_route()), minute_dir,
             )
 
     segment_days = preferences.get_minute_sync_segment_days()
