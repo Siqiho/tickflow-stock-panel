@@ -1771,7 +1771,7 @@ def list_data_sources() -> dict:
         "builtin": [{
             "name": "tickflow",
             "display_name": "TickFlow",
-            "datasets": ["daily", "adj_factor", "realtime", "minute"],
+            "datasets": ["daily", "adj_factor", "realtime", "minute", "depth5", "financial"],
         }],
         "plugins": custom_sources.list_plugins(),
         "custom": custom_sources.list_sources(),
@@ -1789,7 +1789,7 @@ def get_capability_matrix() -> dict:
     capset = detect_capabilities()
     current = {
         "daily_data_provider": preferences.get_daily_data_provider(),
-        "adj_factor_provider": preferences.get_adj_factor_provider(),
+        "adj_factor_provider": preferences.get_adj_factor_provider_stored(),
         "minute_data_provider": preferences.get_minute_data_provider(),
         "realtime_data_provider": preferences.get_realtime_data_provider(),
         "depth5_data_provider": preferences.get_depth5_data_provider(),
@@ -1914,7 +1914,10 @@ def update_data_providers(req: DataProvidersIn, request: Request) -> dict:
     if "financial_data_provider" in updates:
         updates["financial_provider"] = updates["financial_data_provider"]
     if updates:
-        preferences.save(updates)
+        # Shared market routing — must hit server prefs. save() wrote the
+        # caller account file, so getters (load_server) ignored the change
+        # whenever owner home != user_data/preferences.json.
+        preferences.save_server(updates)
     try:
         request.app.state.capabilities = detect_capabilities()
     except Exception as exc:  # noqa: BLE001
@@ -1974,14 +1977,18 @@ def delete_data_source(name: str, request: Request) -> dict:
     if preferences.get_daily_data_provider() == name:
         updates["daily_data_provider"] = "tickflow"
     if preferences.get_realtime_data_provider() == name:
-        updates["realtime_data_provider"] = "tickflow"
+        updates["realtime_data_provider"] = "public"
     if preferences.get_financial_provider() == name:
         updates["financial_provider"] = "tickflow"
         updates["financial_data_provider"] = "tickflow"
     if preferences.get_adj_factor_provider() == name:
         updates["adj_factor_provider"] = "tickflow"
+    if preferences.get_minute_data_provider() == name:
+        updates["minute_data_provider"] = "tickflow"
+    if preferences.get_depth5_data_provider() == name:
+        updates["depth5_data_provider"] = "tickflow"
     if updates:
-        preferences.save(updates)
+        preferences.save_server(updates)
     try:
         request.app.state.capabilities = detect_capabilities()
     except Exception as exc:  # noqa: BLE001

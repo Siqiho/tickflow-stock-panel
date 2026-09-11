@@ -45,7 +45,8 @@ def test_registry_covers_all_routing_fields():
     assert full_minute["field"] is None
     assert full_minute["tf_tier"] == "expert"
     for cap in CAPABILITY_REGISTRY:
-        assert cap["default"] == "tickflow"
+        expected_default = "public" if cap["id"] == "realtime" else "tickflow"
+        assert cap["default"] == expected_default
         assert cap["tf_tier"] in ("none", "starter", "pro", "expert")
         assert "follow" not in cap
 

@@ -58,7 +58,11 @@ import {
   invalidateIndexCatalogQueries,
 } from '@/lib/indexCatalogInvalidation'
 import { QK } from '@/lib/queryKeys'
-import { DATA_KEYS_SETTINGS_HREF, DATA_SOURCES_SETTINGS_HREF } from '@/lib/dataSources'
+import {
+  DATA_KEYS_SETTINGS_HREF,
+  DATA_SOURCES_SETTINGS_HREF,
+  isPublicFinancialProvider,
+} from '@/lib/dataSources'
 import { useToggleRealtimeQuotes, useUpdateQuoteInterval } from '@/lib/useSharedMutations'
 import { SettingsDataSourcesPanel } from '@/pages/settings/DataSources'
 import {
@@ -443,11 +447,12 @@ export function Data() {
     || (caps.data?.capabilities?.['kline.minute.batch'] && !(caps.data.capabilities['kline.minute.batch'] as { view_only?: boolean })?.view_only),
   )
   const hasAdjCap = Boolean(caps.data?.capabilities?.adj_factor)
-  const hasFinancialPublic = prefs.data?.financial_provider === 'public' || Boolean(caps.data?.capabilities?.financial)
+  const hasFinancialPublic = isPublicFinancialProvider(prefs.data?.financial_provider)
+    || Boolean(caps.data?.capabilities?.financial)
   const pipelineSteps = [
     '日K',
     ...(hasAdjCap ? ['复权'] : []),
-    ...(hasFinancialPublic && prefs.data?.financial_provider === 'public' ? ['财务'] : []),
+    ...(hasFinancialPublic && isPublicFinancialProvider(prefs.data?.financial_provider) ? ['财务'] : []),
     '指标',
     ...(indexAuto ? ['指数'] : []),
     ...(etfAuto ? ['ETF'] : []),

@@ -217,6 +217,20 @@ def get_daily_data_provider() -> str:
     return provider if provider in _allowed_data_providers() else "tickflow"
 
 
+def get_adj_factor_provider_stored() -> str:
+    """Raw adj preference for capability-matrix display.
+
+    May be ``same_as_daily``. Fetch paths use :func:`get_adj_factor_provider`,
+    which heals that token to a real source name.
+    """
+    provider = str(load_server().get("adj_factor_provider", "same_as_daily") or "same_as_daily").lower()
+    if provider == "same_as_daily":
+        return provider
+    if provider in _ALLOWED_ADJ_FACTOR_PROVIDERS or provider in _allowed_data_providers():
+        return provider
+    return get_daily_data_provider()
+
+
 def get_adj_factor_provider() -> str:
     """Adj factor source: tickflow | public/sina/sina_qfq/free | same_as_daily.
 
@@ -224,12 +238,10 @@ def get_adj_factor_provider() -> str:
     Legacy same_as_daily heals to the current daily provider so callers receive a
     real source name (capability-matrix status mapping still accepts the token).
     """
-    provider = str(load_server().get("adj_factor_provider", "same_as_daily") or "same_as_daily").lower()
+    provider = get_adj_factor_provider_stored()
     if provider == "same_as_daily":
         return get_daily_data_provider()
-    if provider in _ALLOWED_ADJ_FACTOR_PROVIDERS or provider in _allowed_data_providers():
-        return provider
-    return get_daily_data_provider()
+    return provider
 
 
 def is_public_adj_factor_provider(name: str | None = None) -> bool:
@@ -243,7 +255,8 @@ _ALLOWED_FINANCIAL_PROVIDERS = {"tickflow", "public", "eastmoney", "em", "free"}
 
 
 def get_full_minute_data_provider() -> str:
-    provider = str(load().get("full_minute_data_provider", "tickflow") or "tickflow").lower()
+    """Full-market minute source. Shared market setting — read server prefs."""
+    provider = str(load_server().get("full_minute_data_provider", "tickflow") or "tickflow").lower()
     return provider if provider in _allowed_data_providers() else "tickflow"
 
 

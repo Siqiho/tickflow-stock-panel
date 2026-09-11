@@ -31,6 +31,17 @@ export function findDataSource(
     ?? sources.custom.find(source => source.name === name)
 }
 
+const PUBLIC_FINANCIAL_ALIASES = new Set(['public', 'eastmoney', 'em', 'free'])
+const PUBLIC_ADJ_ALIASES = new Set(['public', 'sina', 'sina_qfq', 'free'])
+
+export function isPublicFinancialProvider(name: string | undefined): boolean {
+  return PUBLIC_FINANCIAL_ALIASES.has((name || '').trim().toLowerCase())
+}
+
+export function isPublicAdjFactorProvider(name: string | undefined): boolean {
+  return PUBLIC_ADJ_ALIASES.has((name || '').trim().toLowerCase())
+}
+
 export function displaySourceName(name: string | undefined): string {
   if (!name) return '未配置'
   if (name === 'tickflow') return 'TickFlow'

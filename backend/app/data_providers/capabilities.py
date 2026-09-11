@@ -53,7 +53,7 @@ CAPABILITY_REGISTRY: list[dict] = [
         "label": "实时行情",
         "desc": "全市场实时快照",
         "field": "realtime_data_provider",
-        "default": "tickflow",
+        "default": "public",
         "tf_tier": "starter",
     },
     {

@@ -1,0 +1,17 @@
+Sample source-routing decisions (no network, DATA_DIR=/tmp/ot-data-source-wiring-followup-sample)
+
+=== registry realtime default ===
+  realtime.default=public
+
+=== adj_sync_uses_public_adapter ===
+  empty capset -> True   (leftover tickflow / none/free → public sina)
+  ADJ_FACTOR   -> False  (TickFlow Starter+ keeps paid path)
+
+=== daily resolver ===
+  tickflow -> fallback=True  (custom path only when provider declares daily)
+
+=== feature adj leftover tickflow ===
+  source=local_public reason_code=public_fallback
+
+=== public EOD still independent ===
+  weekday missing, no quote.pool -> True
