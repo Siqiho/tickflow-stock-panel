@@ -259,14 +259,9 @@ def sync_and_persist_index_daily(
 
 
 def _load_etf_factors(repo: KlineRepository) -> pl.DataFrame:
-    factor_path = repo.store.data_dir / "adj_factor_etf" / "all.parquet"
-    if not factor_path.exists():
-        return pl.DataFrame()
-    try:
-        return pl.read_parquet(factor_path)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("ETF 复权因子读取失败: %s", e)
-        return pl.DataFrame()
+    from app.services.kline_sync import get_adj_factor_df
+
+    return get_adj_factor_df(repo.store.data_dir, asset_type="etf")
 
 
 def sync_etf_adj_factor(

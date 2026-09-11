@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import glob as globlib
 import logging
+import re
 import sys
 import threading
 from datetime import date
@@ -53,6 +54,17 @@ def _collect_local_parquet(action, pattern: str, label: str) -> pl.DataFrame:
 def enriched_dirname(asset_type: str) -> str:
     """asset_type → enriched parquet 目录名。ETF 走独立目录, 其余(stock)用日K enriched。"""
     return "kline_etf_enriched" if asset_type == "etf" else "kline_daily_enriched"
+
+
+def _route_sql_predicate(route: str, *, leftover_public: bool = False) -> str | None:
+    token = (route or "").strip().lower()
+    if not token or token == "unresolved" or not re.fullmatch(r"[a-z0-9_.-]+", token):
+        return None
+    if leftover_public and token == "tickflow":
+        return "lower(coalesce(CAST(route AS VARCHAR), 'tickflow')) IN ('tickflow', 'public')"
+    if token in {"tickflow", "public"}:
+        return f"lower(coalesce(CAST(route AS VARCHAR), '{token}')) = '{token}'"
+    return f"lower(CAST(route AS VARCHAR)) = '{token}'"
 
 
 class DataStore:
@@ -258,31 +270,120 @@ class DataStore:
         try:
             from app.services.kline_sync import get_adj_factor_df
         except Exception:  # noqa: BLE001
-            return
-        for asset_type, view_name, subdir in (
-            ("stock", "adj_factor", "adj_factor"),
-            ("etf", "adj_factor_etf", "adj_factor_etf"),
-        ):
-            path = self.data_dir / subdir / "all.parquet"
-            if not path.exists():
-                continue
-            glob = f"{d}/{subdir}/**/*.parquet"
-            try:
-                df = get_adj_factor_df(self.data_dir, asset_type=asset_type)
-                self.db.execute(f"DROP VIEW IF EXISTS {view_name}")
-                self.db.execute(f"DROP TABLE IF EXISTS {view_name}")
-                if df is None or df.is_empty():
-                    self.db.execute(
-                        f"CREATE OR REPLACE VIEW {view_name} AS "
-                        f"SELECT * FROM read_parquet('{glob}', union_by_name=true) WHERE 1=0"
-                    )
+            get_adj_factor_df = None
+        if get_adj_factor_df is not None:
+            for asset_type, view_name, subdir in (
+                ("stock", "adj_factor", "adj_factor"),
+                ("etf", "adj_factor_etf", "adj_factor_etf"),
+            ):
+                path = self.data_dir / subdir / "all.parquet"
+                if not path.exists():
                     continue
-                tmp = f"_tf_gate_{view_name}"
-                self.db.register(tmp, df.to_arrow())
-                self.db.execute(f"CREATE TABLE {view_name} AS SELECT * FROM {tmp}")
-                self.db.unregister(tmp)
+                glob = f"{d}/{subdir}/**/*.parquet"
+                try:
+                    df = get_adj_factor_df(self.data_dir, asset_type=asset_type)
+                    self.db.execute(f"DROP VIEW IF EXISTS {view_name}")
+                    self.db.execute(f"DROP TABLE IF EXISTS {view_name}")
+                    if df is None or df.is_empty():
+                        self.db.execute(
+                            f"CREATE OR REPLACE VIEW {view_name} AS "
+                            f"SELECT * FROM read_parquet('{glob}', union_by_name=true) WHERE 1=0"
+                        )
+                        continue
+                    tmp = f"_tf_gate_{view_name}"
+                    self.db.register(tmp, df.to_arrow())
+                    self.db.execute(f"CREATE TABLE {view_name} AS SELECT * FROM {tmp}")
+                    self.db.unregister(tmp)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("gated adj view %s skipped: %s", view_name, exc)
+
+        try:
+            from app.services.kline_sync import minute_route
+        except Exception:  # noqa: BLE001
+            minute_route = None
+        if minute_route is not None:
+            if self._has_parquet("kline_minute"):
+                self._register_route_filtered_view(
+                    "kline_minute",
+                    f"{d}/kline_minute/**/*.parquet",
+                    minute_route(),
+                )
+            if self._has_parquet("kline_etf_minute"):
+                self._register_route_filtered_view(
+                    "kline_etf_minute",
+                    f"{d}/kline_etf_minute/**/*.parquet",
+                    minute_route(),
+                )
+
+        try:
+            from app.services.depth_service import depth_route
+        except Exception:  # noqa: BLE001
+            depth_route = None
+        if depth_route is not None:
+            depth_globs: list[str] = []
+            if self._has_parquet("depth5"):
+                depth_globs.append(f"{d}/depth5/**/*.parquet")
+            if self._has_parquet("sealed_l1"):
+                depth_globs.append(f"{d}/sealed_l1/**/*.parquet")
+            if depth_globs:
+                self._register_route_filtered_view(
+                    "depth5",
+                    depth_globs if len(depth_globs) > 1 else depth_globs[0],
+                    depth_route(),
+                    leftover_public=True,
+                )
+
+    def _register_route_filtered_view(
+        self,
+        name: str,
+        glob: str | list[str],
+        route: str,
+        *,
+        leftover_public: bool = False,
+    ) -> None:
+        """Register a DuckDB view that hides stale other-route parquet.
+
+        Untagged legacy files stay visible only for leftover TickFlow / public.
+        ``leftover_public`` lets leftover TickFlow also see ``route=public``
+        tags (adj / depth sina-or-L1 leftover contract).
+        """
+        if isinstance(glob, list):
+            joined = ", ".join(f"'{g}'" for g in glob)
+            source = f"read_parquet([{joined}], union_by_name=true)"
+            first_glob = glob[0]
+        else:
+            source = f"read_parquet('{glob}', union_by_name=true)"
+            first_glob = glob
+        empty_sql = f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {source} WHERE 1=0"
+        pred = _route_sql_predicate(route, leftover_public=leftover_public)
+        try:
+            self.db.execute(f"DROP VIEW IF EXISTS {name}")
+            self.db.execute(f"DROP TABLE IF EXISTS {name}")
+        except Exception:  # noqa: BLE001
+            pass
+        if pred is None:
+            try:
+                self.db.execute(empty_sql)
             except Exception as exc:  # noqa: BLE001
-                logger.debug("gated adj view %s skipped: %s", view_name, exc)
+                logger.debug("empty gated view %s skipped: %s", name, exc)
+            return
+        try:
+            self.db.execute(
+                f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {source} WHERE {pred}"
+            )
+        except Exception:
+            expected = (route or "").strip().lower()
+            try:
+                if expected in {"tickflow", "public"}:
+                    self.db.execute(
+                        f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {source}"
+                    )
+                else:
+                    self.db.execute(empty_sql)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "gated view %s fallback skipped (%s): %s", name, first_glob, exc,
+                )
 
     def _has_parquet(self, subdir: str) -> bool:
         return any((self.data_dir / subdir).rglob("*.parquet"))
@@ -1215,7 +1316,7 @@ class KlineRepository:
     ) -> pl.DataFrame:
         """分钟K查询 — Polars scan_parquet + predicate pushdown。"""
         glob = self._etf_minute_glob if asset_type == "etf" else self._minute_glob
-        return _collect_local_parquet(
+        df = _collect_local_parquet(
             lambda: pl.scan_parquet(glob).filter(
                 (pl.col("symbol") == symbol)
                 & (pl.col("datetime").dt.date() == trade_date)
@@ -1223,6 +1324,7 @@ class KlineRepository:
             glob,
             "分钟K读取失败",
         )
+        return self._gate_minute_df(df)
 
     def get_minute_batch(
         self,
@@ -1235,7 +1337,7 @@ class KlineRepository:
             return pl.DataFrame()
         glob = self._etf_minute_glob if asset_type == "etf" else self._minute_glob
         try:
-            return guarded_collect(
+            df = guarded_collect(
                 pl.scan_parquet(glob).filter(
                     pl.col("symbol").is_in(symbols)
                     & (pl.col("datetime").dt.date() == trade_date)
@@ -1244,6 +1346,18 @@ class KlineRepository:
         except Exception as e:  # noqa: BLE001
             logger.warning("批量分钟K查询失败: %s", e)
             return pl.DataFrame()
+        return self._gate_minute_df(df)
+
+    def _gate_minute_df(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Refuse stale TickFlow/public minute bars after a minute-source switch."""
+        try:
+            from app.services.kline_sync import filter_minute_cache
+            return filter_minute_cache(df)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("minute cache gate failed, fail-closed: %s", exc)
+            if df is None or getattr(df, "is_empty", lambda: True)():
+                return df if df is not None else pl.DataFrame()
+            return df.head(0)
 
     # ================================================================
     # Polars 查询内部方法
@@ -1694,6 +1808,7 @@ class KlineRepository:
         try:
             with self._lock:
                 self.db.execute(sql)
+                self.store._register_gated_catalog_views()
                 self.store._register_unified_views()
         except Exception as exc:  # noqa: BLE001
             logger.warning("minute view refresh failed: %s", exc)

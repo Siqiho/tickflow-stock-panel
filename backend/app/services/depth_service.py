@@ -37,6 +37,82 @@ from app.tickflow.rate_limits import chunked, resolve_limit, sleep_between_batch
 logger = logging.getLogger(__name__)
 
 
+def depth_route() -> str:
+    """Effective depth write/read route: public | tickflow | <custom name> | unresolved.
+
+    Leftover TickFlow stays tickflow (fetch may still use public L1).
+    Undeclared custom names and unreadable prefs are unresolved — never
+    serve leftover TickFlow/public sealed parquet as if it were current.
+    """
+    from app.services import preferences
+
+    try:
+        name = (preferences.get_depth5_data_provider() or "").strip().lower()
+    except Exception:  # noqa: BLE001
+        return "unresolved"
+    if name in {"public", "tickflow"}:
+        return name
+    from app.data_providers import custom as custom_sources
+
+    try:
+        if custom_sources.provider_has_dataset(name, "depth5"):
+            return name or "custom"
+        return "unresolved"
+    except Exception:  # noqa: BLE001
+        return "unresolved"
+
+
+def depth_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
+    """Whether on-disk sealed depth may be served for the current route.
+
+    Custom / unresolved never reuse untagged TickFlow or public files.
+    Leftover TickFlow may still serve public-tagged L1 (intentional leftover).
+    Untagged legacy files stay valid for leftover TickFlow / public only.
+    """
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return False
+    expected = (route or "").strip().lower()
+    if not expected or expected == "unresolved":
+        return False
+    if "route" not in df.columns:
+        return expected in {"tickflow", "public"}
+    stored = [str(v or "").strip().lower() for v in df["route"].to_list()]
+    nonempty = [s for s in stored if s]
+    if not nonempty:
+        return expected in {"tickflow", "public"}
+    allowed = {expected}
+    if expected == "tickflow":
+        allowed.add("public")
+    if any(s not in allowed for s in nonempty):
+        return False
+    if len(nonempty) != len(stored):
+        return expected in {"tickflow", "public"}
+    return True
+
+
+def depth_stored_usable(stored: str | None, route: str) -> bool:
+    """In-memory sealed cache route vs current depth route."""
+    expected = (route or "").strip().lower()
+    if not expected or expected == "unresolved":
+        return False
+    token = (stored or "").strip().lower()
+    if not token:
+        return expected in {"tickflow", "public"}
+    allowed = {expected}
+    if expected == "tickflow":
+        allowed.add("public")
+    return token in allowed
+
+
+def _tag_depth_route(df: pl.DataFrame) -> pl.DataFrame:
+    route = depth_route()
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return df
+    if not route or route == "unresolved" or "route" in df.columns:
+        return df
+    return df.with_columns(pl.lit(route).alias("route"))
+
+
 # 套餐 → (轮询间隔下限s, 上限s)
 TIER_INTERVAL_RANGE: dict[str, tuple[float, float]] = {
     "pro": (10.0, 120.0),
@@ -75,6 +151,7 @@ class DepthService:
         self._sealed_fetched_ts: float = 0.0   # 上次拉取的 perf_counter
         self._sealed_fetched_at: float = 0.0   # 上次拉取的 wall-clock 时间戳
         self._persisted_date: date | None = None  # 已落盘的日期
+        self._sealed_cache_route: str | None = None
 
         # 系统接管状态(防通知刷屏)
         self._last_taken_over: bool | None = None
@@ -114,11 +191,10 @@ class DepthService:
         """从 parquet 恢复内存缓存(服务重启后)。"""
         if not self._repo:
             return
-        out = self._sealed_artifact_for_read(d)
-        if out is None:
+        df = self._sealed_df_for_read(d)
+        if df is None:
             return
         try:
-            df = pl.read_parquet(out)
             cache: dict[str, dict] = {}
             for row in df.to_dicts():
                 sym = row.get("symbol")
@@ -132,11 +208,17 @@ class DepthService:
                     "status": row.get("status"),
                     "fetched_ts": row.get("fetched_at"),
                 }
+            stored_route = depth_route()
+            if "route" in df.columns:
+                tags = [str(v or "").strip().lower() for v in df["route"].to_list() if v]
+                if tags:
+                    stored_route = tags[0]
             with self._lock:
                 self._sealed_cache = cache
                 self._sealed_ready = True
                 self._sealed_date = d
                 self._persisted_date = d
+                self._sealed_cache_route = stored_route
             logger.info("depth sealed: 从 parquet 恢复 %d 只 (日期=%s)", len(cache), d)
         except Exception as e:  # noqa: BLE001
             logger.warning("depth sealed 从 parquet 恢复失败: %s", e)
@@ -260,6 +342,7 @@ class DepthService:
             self._sealed_date = enriched_date  # 记录数据对应的交易日(可能是昨天,如休市)
             self._sealed_fetched_ts = now_perf
             self._sealed_fetched_at = now_wall
+            self._sealed_cache_route = depth_route()
 
         logger.info("depth sealed: 拉取 %d 只 (涨停%d/跌停%d) 日期=%s%s",
                     len(new_cache), len(syms_up), len(syms_down),
@@ -448,7 +531,7 @@ class DepthService:
         # 显式 schema: sealed_up/sealed_down 是 bool 与 None 混合, 不指定 schema
         # polars 会按首行推断类型, 后续遇到不一致 (bool vs null) 报
         # "could not append value: false of type: bool to the builder"。
-        df = pl.DataFrame(rows, schema={
+        df = _tag_depth_route(pl.DataFrame(rows, schema={
             "symbol": pl.Utf8,
             "sealed_up": pl.Boolean,
             "sealed_down": pl.Boolean,
@@ -456,7 +539,7 @@ class DepthService:
             "bid1_vol": pl.Int64,
             "status": pl.Utf8,
             "fetched_at": pl.Float64,
-        })
+        }))
         ds = today.isoformat()
         # The persisted shape is always the seven-column sealed-limit summary,
         # even when TickFlow depth was the upstream source. It is not a five-level book.
@@ -481,10 +564,8 @@ class DepthService:
         logger.info("depth sealed 落盘: %d 行 → %s", df.height, out)
 
     def _persisted_for_date(self, d: date) -> bool:
-        """检查某日 depth5 文件是否已存在。"""
-        if not self._repo:
-            return False
-        return self._sealed_artifact_for_read(d) is not None
+        """检查某日可用 depth 文件是否已存在 (stale other-route 不算)。"""
+        return self._sealed_df_for_read(d) is not None
 
     def _sealed_artifact_for_read(self, d: date) -> Path | None:
         if not self._repo:
@@ -495,6 +576,23 @@ class DepthService:
             if path.exists():
                 return path
         return None
+
+    def _sealed_df_for_read(self, d: date) -> pl.DataFrame | None:
+        out = self._sealed_artifact_for_read(d)
+        if out is None:
+            return None
+        try:
+            df = pl.read_parquet(out)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("sealed parquet 读取失败: %s", e)
+            return None
+        if not depth_cache_usable(df, depth_route()):
+            logger.info("skip stale sealed parquet for route=%s", depth_route())
+            return None
+        return df
+
+    def _memory_route_usable(self) -> bool:
+        return depth_stored_usable(self._sealed_cache_route, depth_route())
 
     # ================================================================
     # 查询(供 limit_ladder API 用)
@@ -510,7 +608,13 @@ class DepthService:
         age: 距上次拉取秒数(盘后定版为 None)
         """
         # 内存缓存(sealed 数据对应的交易日 = target_date 时才用)
-        if self._sealed_date and target_date == self._sealed_date and self._sealed_ready and self._sealed_cache:
+        if (
+            self._sealed_date
+            and target_date == self._sealed_date
+            and self._sealed_ready
+            and self._sealed_cache
+            and self._memory_route_usable()
+        ):
             return self._read_from_memory(is_down)
         # parquet(历史或盘后定版)
         return self._read_from_parquet(target_date, is_down)
@@ -537,13 +641,8 @@ class DepthService:
     def _read_from_parquet(self, target_date: date, is_down: bool) -> dict:
         if not self._repo:
             return {}
-        out = self._sealed_artifact_for_read(target_date)
-        if out is None:
-            return {}
-        try:
-            df = pl.read_parquet(out)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("sealed parquet 读取失败: %s", e)
+        df = self._sealed_df_for_read(target_date)
+        if df is None:
             return {}
         sealed_key = "sealed_down" if is_down else "sealed_up"
         # 封单量: 涨停=买一量, 跌停=卖一量
@@ -565,8 +664,8 @@ class DepthService:
         """sealed 数据是否就绪(供前端降级判定)。"""
         # 内存缓存对应的数据日 == 查询日 → 看内存就绪状态
         if self._sealed_date and target_date == self._sealed_date:
-            return self._sealed_ready
-        # 其他日期: 有 parquet 就 ready
+            return bool(self._sealed_ready and self._memory_route_usable())
+        # 其他日期: 有当前路由可用的 parquet 才 ready
         return self._persisted_for_date(target_date)
 
     def get_sealed_age(self, target_date: date) -> float | None:

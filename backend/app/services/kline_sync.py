@@ -777,6 +777,30 @@ def _tag_adj_route(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(pl.lit(route).alias("route"))
 
 
+def adj_coverage_start(data_dir, asset_type: str, fallback: datetime) -> datetime:
+    """Incremental adj window start from gated local coverage.
+
+    Stale TickFlow/public files under a custom/unresolved route must not
+    advance the start date (that would skip a full custom backfill).
+    """
+    df = get_adj_factor_df(data_dir, asset_type=asset_type)
+    if df is None or getattr(df, "is_empty", lambda: True)() or "trade_date" not in df.columns:
+        return fallback
+    max_date = df["trade_date"].max()
+    if max_date is None:
+        return fallback
+    if isinstance(max_date, str):
+        try:
+            max_date = date.fromisoformat(max_date)
+        except ValueError:
+            return fallback
+    if isinstance(max_date, datetime):
+        max_date = max_date.date()
+    if not isinstance(max_date, date):
+        return fallback
+    return datetime.combine(max_date, datetime.min.time())
+
+
 def get_adj_factor_df(data_dir, asset_type: str = "stock") -> pl.DataFrame:
     """Read local adj parquet, refusing stale files after an adj-source switch."""
     from pathlib import Path
@@ -1040,6 +1064,35 @@ def _drop_null_datetime(existing: pl.DataFrame) -> pl.DataFrame:
     return existing
 
 
+def _incoming_minute_route(df: pl.DataFrame) -> str:
+    if df is not None and "route" in df.columns:
+        stored = [str(v or "").strip().lower() for v in df["route"].to_list()]
+        nonempty = {s for s in stored if s}
+        if len(nonempty) == 1:
+            return next(iter(nonempty))
+    return minute_route()
+
+
+def _prepare_existing_minute(existing: pl.DataFrame, incoming_route: str) -> pl.DataFrame:
+    existing = _drop_null_datetime(existing)
+    if existing is None or getattr(existing, "is_empty", lambda: True)():
+        return existing
+    if not minute_cache_usable(existing, incoming_route):
+        logger.info("replace stale minute partition for route=%s", incoming_route)
+        return existing.head(0)
+    return existing
+
+
+def filter_minute_cache(df: pl.DataFrame | None, route: str | None = None) -> pl.DataFrame:
+    """Return ``df`` only when it matches the current minute route."""
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return df if df is not None else pl.DataFrame()
+    expected = (route if route is not None else minute_route()).strip().lower()
+    if not minute_cache_usable(df, expected):
+        return df.head(0)
+    return df
+
+
 def _with_minute_route(df: pl.DataFrame, route: str | None = None) -> pl.DataFrame:
     """Stamp ``route`` on a minute frame before persist. Signature of
     ``_write_minute_partition`` stays ``(df, dir)`` so existing test mocks
@@ -1072,14 +1125,18 @@ def _write_minute_partition(df: pl.DataFrame, minute_dir) -> int:
     written = 0
     for day_df in df.partition_by("_trade_date"):
         trade_date = day_df["_trade_date"][0]
+        incoming = day_df.drop("_trade_date")
+        expected = _incoming_minute_route(incoming)
         out = minute_dir / f"date={trade_date}" / "part.parquet"
         written += optimistic_upsert_parquet(
-            day_df.drop("_trade_date"),
+            incoming,
             out,
             keys=["symbol", "datetime"],
             sort_by=["symbol", "datetime"],
             lock=_minute_partition_lock,
-            prepare_existing=_drop_null_datetime,
+            prepare_existing=lambda existing, route=expected: _prepare_existing_minute(
+                existing, route,
+            ),
         )
     return written
 

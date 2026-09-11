@@ -922,18 +922,12 @@ def run_now(
                         emit("sync_index", 88, "同步 ETF 除权因子…")
                         from datetime import datetime, timedelta
                         adj_end = datetime.now()
-                        adj_path = repo.store.data_dir / "adj_factor_etf" / "all.parquet"
                         fallback_start = adj_end - timedelta(days=30)
-                        adj_start = fallback_start
-                        if adj_path.exists():
-                            max_date = pl.scan_parquet(adj_path).select(pl.col("trade_date").max()).collect().item()
-                            if max_date is not None:
-                                if isinstance(max_date, str):
-                                    adj_start = datetime.combine(_date.fromisoformat(max_date), datetime.min.time())
-                                elif isinstance(max_date, datetime):
-                                    adj_start = datetime.combine(max_date.date(), datetime.min.time())
-                                else:
-                                    adj_start = datetime.combine(max_date, datetime.min.time())
+                        adj_start = kline_sync.adj_coverage_start(
+                            repo.store.data_dir,
+                            "etf",
+                            fallback_start,
+                        )
                         _, affected_etfs = index_sync.sync_etf_adj_factor(
                             etf_symbols,
                             repo,
@@ -1163,6 +1157,10 @@ def _refresh_views(repo: KlineRepository) -> None:
             )
         except Exception as e:
             logger.warning("refresh view %s failed: %s", name, e)
+    try:
+        repo.store._register_gated_catalog_views()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("re-gate catalog views after pipeline refresh failed: %s", e)
     repo.store._register_unified_views()
 
 
@@ -1194,6 +1192,10 @@ def _refresh_single_view(repo: KlineRepository, name: str) -> None:
         )
     except Exception as e:
         logger.warning("refresh view %s failed: %s", name, e)
+    try:
+        repo.store._register_gated_catalog_views()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("re-gate catalog views after %s refresh failed: %s", name, e)
 
 
 def _resolve_minute_symbols(capset: CapabilitySet) -> list[str]:
