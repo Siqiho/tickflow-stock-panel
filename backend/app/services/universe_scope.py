@@ -127,16 +127,28 @@ def tickflow_all_a_expansion_allowed(capset, *, scope: str | None = None) -> boo
 def _ensure_csi_pool(pool_id: str, data_dir: Path, *, refresh_if_missing: bool = True) -> list[str]:
     from app.data_providers.registry import get_provider
     from app.services.free_sources.pools_public import load_pool_symbols
-    from app.tickflow.pools import get_pool, pool_route
-
-    # Prefer on-disk cache (already written; not a live mix).
-    syms = load_pool_symbols(data_dir, pool_id)
-    if syms:
-        return [str(s).strip().upper() for s in syms if s]
-    if not refresh_if_missing:
-        return []
+    from app.tickflow.pools import get_pool, pool_cache_usable, pool_route
 
     route = pool_route()
+    if route in {"custom", "unresolved"}:
+        logger.warning(
+            "pool_provider route=%s cannot use cached CSI pool %s",
+            route, pool_id,
+        )
+        return []
+
+    # Prefer on-disk cache only when provenance matches the current route.
+    path = data_dir / "pools" / f"{pool_id}.parquet"
+    if path.exists():
+        try:
+            df = pl.read_parquet(path)
+            if pool_cache_usable(df, route):
+                return [str(s).strip().upper() for s in df["symbol"].to_list() if s]
+            logger.info("skip stale CSI cache %s for route=%s", pool_id, route)
+        except Exception as e:
+            logger.warning("read CSI pool %s failed: %s", pool_id, e)
+    if not refresh_if_missing:
+        return []
     if route == "public":
         try:
             get_provider("public").sync_pools(data_dir, pool_ids=[pool_id])
@@ -175,12 +187,22 @@ def resolve_symbols(
         # Prefer instruments parquet (works offline / free)
         out = _load_instruments(data_dir)
         if not out:
-            try:
-                out = [str(s).strip().upper() for s in (get_pool("CN_Equity_A", refresh=False) or []) if s]
-            except Exception:
-                out = []
-        if not out:
-            out = list(DEMO_SYMBOLS)
+            from app.tickflow.pools import pool_route
+
+            route = pool_route()
+            if route == "tickflow":
+                try:
+                    out = [
+                        str(s).strip().upper()
+                        for s in (get_pool("CN_Equity_A", refresh=False) or [])
+                        if s
+                    ]
+                except Exception:
+                    out = []
+            # Public leftover may use the offline demo set. Custom / unreadable
+            # prefs must not expand via TickFlow cache or DEMO mix.
+            if not out and route not in {"custom", "unresolved"}:
+                out = list(DEMO_SYMBOLS)
     elif sc == SCOPE_CSI1800:
         a = _ensure_csi_pool(SCOPE_CSI800, data_dir, refresh_if_missing=refresh_pools_if_missing)
         b = _ensure_csi_pool(SCOPE_CSI1000, data_dir, refresh_if_missing=refresh_pools_if_missing)

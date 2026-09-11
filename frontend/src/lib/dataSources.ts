@@ -20,6 +20,7 @@ export const CAPABILITY_LOCAL_DATASETS: Record<string, string[]> = {
   minute: ['stock_minute'],
   depth5: ['depth5'],
   financial: ['financial_metrics'],
+  pool: [],
 }
 
 export function findDataSource(
@@ -51,11 +52,13 @@ export const DEFAULT_PROVIDER_ROUTING: Record<ProviderField, string> = {
   depth5_data_provider: 'tickflow',
   realtime_data_provider: 'public',
   financial_data_provider: 'tickflow',
+  pool_provider: 'public',
 }
 
 export const TICKFLOW_PROVIDER_ROUTING: Record<ProviderField, string> = {
   ...DEFAULT_PROVIDER_ROUTING,
   realtime_data_provider: 'tickflow',
+  pool_provider: 'tickflow',
 }
 
 const DATASET_TO_FIELD: Record<string, ProviderField> = {
@@ -66,6 +69,7 @@ const DATASET_TO_FIELD: Record<string, ProviderField> = {
   full_minute: 'full_minute_data_provider',
   depth5: 'depth5_data_provider',
   financial: 'financial_data_provider',
+  pool: 'pool_provider',
 }
 
 export function routingForSource(name: string, datasets: string[]): Record<ProviderField, string> {
@@ -84,6 +88,7 @@ export function routingForSource(name: string, datasets: string[]): Record<Provi
     full_minute_data_provider: pick('full_minute'),
     depth5_data_provider: pick('depth5'),
     financial_data_provider: pick('financial'),
+    pool_provider: pick('pool'),
   }
 }
 

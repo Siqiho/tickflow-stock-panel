@@ -77,26 +77,103 @@ def _use_public_pools() -> bool:
     return pool_route() == "public"
 
 
+def pool_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
+    """Whether an on-disk pool parquet may be served for the current route.
+
+    Custom / unreadable prefs must not reuse TickFlow- or public-era cache.
+    Tagged files must match ``route``. Untagged legacy files are only valid
+    for the public route (the historical CSI XLS writer).
+    """
+    if df is None or df.is_empty() or "symbol" not in df.columns:
+        return False
+    if route in {"custom", "unresolved"}:
+        return False
+    if "route" in df.columns:
+        stored = str(df["route"][0] or "").strip().lower()
+        return bool(stored) and stored == route
+    return route == "public"
+
+
 def get_pool(pool_id: PoolId, refresh: bool = False) -> list[str]:
     """返回标的池里的 symbol 列表。"""
     if pool_id == "watchlist":
         return _load_watchlist()
 
+    route = pool_route()
     cache = _pool_cache_path(pool_id)
     if cache.exists() and not refresh:
-        df = pl.read_parquet(cache)
-        return df["symbol"].to_list()
+        try:
+            df = pl.read_parquet(cache)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("read pool cache %s failed: %s", pool_id, e)
+            df = None
+        if pool_cache_usable(df, route):
+            return df["symbol"].to_list()
+        logger.info("skip stale pool cache %s for route=%s", pool_id, route)
 
     symbols = _fetch_pool(pool_id)
     if symbols:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        pl.DataFrame({"symbol": symbols, "as_of": [date.today()] * len(symbols)}).write_parquet(cache)
+        pl.DataFrame({
+            "symbol": symbols,
+            "as_of": [date.today()] * len(symbols),
+            "route": [route] * len(symbols),
+        }).write_parquet(cache)
     return symbols
+
+
+def _fetch_custom_pool(pool_id: PoolId) -> list[str]:
+    """Declared custom/plugin pool source. Fail-closed if undeclared or call fails."""
+    try:
+        from app.data_providers import custom as custom_sources
+        from app.services import preferences
+
+        name = preferences.get_pool_provider()
+        if not custom_sources.provider_has_dataset(name, "pool"):
+            logger.warning("pool provider %s 未声明 pool, fail-closed", name)
+            return []
+        provider = custom_sources.get_provider(name)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("pool provider resolve failed, fail-closed: %s", e)
+        return []
+
+    raw = None
+    for meth in ("get_pool", "get_constituents", "get_pool_symbols"):
+        fn = getattr(provider, meth, None)
+        if not callable(fn):
+            continue
+        try:
+            raw = fn(pool_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "pool provider %s.%s(%s) failed, fail-closed: %s",
+                name, meth, pool_id, e,
+            )
+            return []
+        break
+    else:
+        logger.warning(
+            "pool provider %s has no get_pool/get_constituents, fail-closed", name,
+        )
+        return []
+
+    if raw is None:
+        return []
+    if isinstance(raw, pl.DataFrame):
+        if raw.is_empty() or "symbol" not in raw.columns:
+            return []
+        return [str(s).strip().upper() for s in raw["symbol"].to_list() if s]
+    if isinstance(raw, (list, tuple)):
+        return [str(s).strip().upper() for s in raw if s]
+    logger.warning("pool provider %s returned unsupported type %s", name, type(raw).__name__)
+    return []
 
 
 def _fetch_pool(pool_id: PoolId) -> list[str]:
     """拉取池成份: public(中证/新浪) 或 TickFlow universes。"""
     route = pool_route()
+    if route == "custom":
+        return _fetch_custom_pool(pool_id)
     # Public index constituents for CSI300/CSI500/SSE50
     if pool_id in _POOL_NAME_HINTS and route == "public":
         try:

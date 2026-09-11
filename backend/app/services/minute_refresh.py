@@ -394,12 +394,16 @@ class MinuteRefreshService:
             enabled = preferences.get_minute_refresh_enabled()
         running = self._thread is not None and self._thread.is_alive()
         gate = self._gate_reason()
+        custom_provider, effective = self._resolve_custom()
+        stored = self.active_provider()
+        available = effective == "tickflow" or custom_provider is not None
         return {
             "enabled": enabled,
             "running": running,
             "healthy": self.is_healthy(),
-            "provider": self.active_provider(),
-            "provider_effective": self._resolve_custom()[1],
+            "provider": stored if available else "",
+            "provider_effective": effective,
+            "available": available,
             "repair_only": self.repair_only(),
             "interval_seconds": preferences.get_minute_refresh_interval(),
             "capability_ok": self.capability_ok(),

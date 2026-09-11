@@ -284,11 +284,13 @@ def test_public_pool_prefs_failure_does_not_call_tickflow(monkeypatch):
 
 def test_extend_history_public_pool_skips_tickflow_all_a(monkeypatch):
     from app.services import extend_history
+    from app.tickflow import pools
 
     monkeypatch.setattr(
         "app.services.preferences.is_public_pool_provider",
-        lambda: True,
+        lambda name=None: True,
     )
+    monkeypatch.setattr(pools, "pool_route", lambda: "public")
     def _pool(pool_id, **kwargs):
         if pool_id == "CN_Equity_A":
             raise AssertionError("must not refresh CN_Equity_A via TickFlow")

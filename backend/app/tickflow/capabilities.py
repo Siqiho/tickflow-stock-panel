@@ -424,11 +424,24 @@ def feature_availability(
         depth_source = "none"
         depth_status = "unavailable"
     elif depth_provider not in {"tickflow", "public", None}:
-        depth_ok = True
-        depth_reason = None
-        depth_code = "ok"
-        depth_source = depth_provider
-        depth_status = "available"
+        from app.data_providers import custom as custom_sources
+
+        try:
+            declared = custom_sources.provider_has_dataset(depth_provider, "depth5")
+        except Exception:
+            declared = False
+        if declared:
+            depth_ok = True
+            depth_reason = None
+            depth_code = "ok"
+            depth_source = depth_provider
+            depth_status = "available"
+        else:
+            depth_ok = False
+            depth_reason = "当前五档源未声明 depth5"
+            depth_code = "no_capability"
+            depth_source = depth_provider
+            depth_status = "unavailable"
     elif depth_provider == "public":
         depth_ok = True
         depth_reason = None
@@ -475,12 +488,26 @@ def feature_availability(
         quote_status = "public_fallback"
         quote_mode = "full_market_public"
     elif realtime_provider and realtime_provider not in {"tickflow", ""}:
-        quote_ok = True
-        quote_reason = None
-        quote_code = "ok"
-        quote_source = realtime_provider
-        quote_status = "available"
-        quote_mode = "full_market"
+        from app.data_providers import custom as custom_sources
+
+        try:
+            declared = custom_sources.provider_has_dataset(realtime_provider, "realtime")
+        except Exception:
+            declared = False
+        if declared:
+            quote_ok = True
+            quote_reason = None
+            quote_code = "ok"
+            quote_source = realtime_provider
+            quote_status = "available"
+            quote_mode = "full_market"
+        else:
+            quote_ok = False
+            quote_reason = "当前实时源未声明 realtime"
+            quote_code = "no_capability"
+            quote_source = realtime_provider
+            quote_status = "unavailable"
+            quote_mode = "none"
     elif has_quote:
         quote_ok = True
         quote_reason = None

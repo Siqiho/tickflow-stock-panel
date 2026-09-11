@@ -102,7 +102,11 @@ def get_index_daily(
     capset = request.app.state.capabilities
     if capset is None:
         capset = CapabilitySet()
-    if not capset.has(Cap.KLINE_DAILY_BATCH) and not kline_sync.daily_provider_is_custom():
+    try:
+        daily_is_custom = kline_sync.daily_provider_is_custom()
+    except Exception:  # noqa: BLE001
+        return {"symbol": symbol, "name": info.get("name"), "index_info": info, "rows": [], "source": "none"}
+    if not capset.has(Cap.KLINE_DAILY_BATCH) and not daily_is_custom:
         return {"symbol": symbol, "name": info.get("name"), "index_info": info, "rows": [], "source": "none"}
 
     try:

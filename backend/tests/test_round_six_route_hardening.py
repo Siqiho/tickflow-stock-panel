@@ -252,6 +252,10 @@ def test_feature_custom_depth_does_not_advertise_public_l1(monkeypatch):
     monkeypatch.setattr("app.services.preferences.is_public_adj_factor_provider", lambda: False)
     monkeypatch.setattr("app.services.financial_normalize.local_financials_ready", lambda d: False)
     monkeypatch.setattr("app.services.financial_normalize.local_adj_factor_ready", lambda d: False)
+    monkeypatch.setattr(
+        "app.data_providers.custom.provider_has_dataset",
+        lambda name, dataset: name == "depth_src" and dataset == "depth5",
+    )
     feats = feature_availability(CapabilitySet())
     assert feats["depth"]["source"] == "depth_src"
     assert feats["depth"]["fallback"] is None

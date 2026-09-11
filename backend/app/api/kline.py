@@ -252,12 +252,12 @@ def get_daily(
                 pref_key="daily_batch_compress",
             )
         # 拉除权因子做前复权: 公开/已声明自定义源不看 TickFlow cap;
-        # leftover TickFlow 仍要 Cap.ADJ_FACTOR。否则空 df → compute_enriched 退回未复权
+        # leftover TickFlow 有 cap 走 TickFlow, 无 cap 走公开新浪 qfq（与盘后同步同一契约）。
         factors = pl.DataFrame()
         capset = getattr(request.app.state, "capabilities", None)
         try:
             if kline_sync.adj_live_fetch_allowed(capset):
-                factors = kline_sync.fetch_adj_factor_single(symbol)
+                factors = kline_sync.fetch_adj_factor_single(symbol, capset=capset)
         except Exception as e:  # noqa: BLE001
             logger.debug("单股除权因子拉取失败 %s: %s", symbol, e)
         enriched = compute_enriched(raw, factors=factors)
@@ -1068,23 +1068,31 @@ def get_minute(
                 {"provider": provider, "persisted": True, "quality": result},
             )
 
+        # Leftover TickFlow may still use TDX then public/TickFlow (old contract).
+        # Declared custom minute / prefs-unreadable / resolve failure must not.
+        may_use_tdx = False
         try:
-            from app.services.free_sources.tdx_history_minute import fetch_history_minute
+            may_use_tdx = kline_sync.minute_may_use_leftover_public()
+        except Exception:  # noqa: BLE001
+            may_use_tdx = False
+        if may_use_tdx:
+            try:
+                from app.services.free_sources.tdx_history_minute import fetch_history_minute
 
-            return _accept_candidate(
-                "easy_tdx_1.20.6",
-                "tdx_public",
-                fetch_history_minute(symbol, trade_date),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "TDX historical minute failed or rejected for %s %s: %s",
-                symbol,
-                trade_date,
-                exc,
-            )
+                return _accept_candidate(
+                    "easy_tdx_1.20.6",
+                    "tdx_public",
+                    fetch_history_minute(symbol, trade_date),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "TDX historical minute failed or rejected for %s %s: %s",
+                    symbol,
+                    trade_date,
+                    exc,
+                )
 
-        # TDX 不可用时保留已有 TickFlow/公开源作为受同一质量门约束的兜底。
+        # TDX 不可用或未允许时保留已有 TickFlow/公开源作为受同一质量门约束的兜底。
         try:
             return _accept_candidate(
                 "runtime_minute_fallback",

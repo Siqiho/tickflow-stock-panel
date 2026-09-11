@@ -147,12 +147,22 @@ describe('routingForSource', () => {
     expect(routed.depth5_data_provider).toBe('fuyao')
     expect(routed.minute_data_provider).toBe(DEFAULT_PROVIDER_ROUTING.minute_data_provider)
     expect(routed.full_minute_data_provider).toBe(DEFAULT_PROVIDER_ROUTING.full_minute_data_provider)
+    expect(routed.pool_provider).toBe(DEFAULT_PROVIDER_ROUTING.pool_provider)
+  })
+
+  it('routes a declared pool dataset and keeps the public default otherwise', () => {
+    const routed = routingForSource('csi_plugin', ['pool'])
+    expect(routed.pool_provider).toBe('csi_plugin')
+    expect(routed.daily_data_provider).toBe(DEFAULT_PROVIDER_ROUTING.daily_data_provider)
+    expect(DEFAULT_PROVIDER_ROUTING.pool_provider).toBe('public')
+    expect(TICKFLOW_PROVIDER_ROUTING.pool_provider).toBe('tickflow')
   })
 
   it('does not treat restore-default as TickFlow realtime', () => {
     expect(DEFAULT_PROVIDER_ROUTING.realtime_data_provider).toBe('public')
     expect(TICKFLOW_PROVIDER_ROUTING.realtime_data_provider).toBe('tickflow')
     expect(routingForSource('tickflow', ['daily']).realtime_data_provider).toBe('tickflow')
+    expect(routingForSource('tickflow', ['daily']).pool_provider).toBe('tickflow')
   })
 })
 

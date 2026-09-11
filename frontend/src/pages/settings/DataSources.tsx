@@ -69,6 +69,7 @@ const DATASET_LABEL: Record<string, string> = {
   depth5: '五档',
   financial: '财务',
   full_minute: '全量分钟',
+  pool: '成分',
 }
 
 /** 能力图标 (纯展示; 能力清单本身由后端注册表驱动) */
