@@ -77,6 +77,37 @@ def _latest_enriched_date(repo) -> date | None:
     return filtered["date"].max()
 
 
+def _scan_change_pct(repo, start: date, end: date) -> pl.DataFrame | None:
+    """Disk fallback when leftover TickFlow hist cache hides custom daily."""
+    store = getattr(getattr(repo, "store", None), "data_dir", None)
+    if store is None:
+        return None
+    try:
+        from app.services.kline_sync import filter_daily_cache, scan_usable_daily
+
+        lf = scan_usable_daily(store, table="kline_daily_enriched")
+        if lf is None:
+            return None
+        names = set(lf.collect_schema().names())
+        keep = [c for c in ("symbol", "date", "change_pct", "route") if c in names]
+        if "symbol" not in keep or "date" not in keep:
+            return None
+        df = filter_daily_cache(
+            lf.select(keep).filter(
+                (pl.col("date") >= start) & (pl.col("date") <= end)
+            ).collect()
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if df is None or df.is_empty():
+        return None
+    if "change_pct" not in df.columns:
+        return None
+    if "route" in df.columns:
+        df = df.drop("route")
+    return df
+
+
 def _load_concept_map_df(repo, kind: str = "concept") -> tuple[pl.DataFrame, int]:
     """构建并缓存 {symbol_upper → 维度成员} 的已展开 polars 映射表。
 
@@ -186,6 +217,8 @@ def build_rps_rotation(
     df = repo.get_enriched_range(
         start, latest, columns=["symbol", "date", "change_pct"]
     )
+    if df is None or df.is_empty():
+        df = _scan_change_pct(repo, start, latest)
     if df is None or df.is_empty():
         return {"dates": [], "columns": {}, "concept_count": 0}
 

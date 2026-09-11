@@ -4,7 +4,7 @@
 - 坐标：接在 `cursor/harden-round-nineteen-cce9` / PR #20 之后。
 - 不是 `accepted` / `production`。正式 `DATA_DIR` 与用户 Mac 运行面不在本环境。
 
-English summary: twentieth-round leftover mix-source / fail-open paths that round 19 left on the cache / overview / persist side. Overview official-day no longer treats leftover TickFlow as official when the probe throws. Screener latest stays on disk provenance. In-memory enriched latest / hist / overlay caches drop leftover TickFlow after a custom switch. Live-agg baseline uses file provenance instead of temporarily ungated SQL. Auction enrich and official trend overlay fail-closed on probe throw. Public EOD persist refuses custom / unresolved daily internally. Leftover TickFlow still sees untagged partitions.
+English summary: twentieth-round leftover mix-source / fail-open paths that round 19 left on the cache / overview / persist / scan side. Overview official-day no longer treats leftover TickFlow as official when the probe throws. Screener latest stays on disk provenance. In-memory enriched latest / hist / overlay / live-agg caches drop leftover TickFlow after a custom switch. Daily / index / ETF scans use usable partitions only so leftover schema cannot empty the current route. History / range filter throws return None. Index/ETF status calendars no longer count leftover DuckDB rows. Auction enrich and official trend overlay fail-closed on probe throw. Public EOD persist refuses custom / unresolved daily internally. Leftover TickFlow still sees untagged partitions.
 
 ## 还剩什么错
 
@@ -17,6 +17,9 @@ English summary: twentieth-round leftover mix-source / fail-open paths that roun
 | 竞价 enrich / 趋势 overlay | 探针抛错向上冒 | 调用方 except 后再 leftover-mix |
 | 公开 EOD 落盘 | 只靠调用方门控 | 直接调用会把公开行情标成自定义 route |
 | 派生日历 | 走会抛的 `usable_*` | 探针失败时估值窗口不确定 |
+| 日 K / 指数 / ETF scan | 全 glob leftover + 强制 schema | leftover Int64/坏文件把自定义分区扫成空 |
+| hist / range / live-agg | 过滤抛错或 leftover 命中当空结果 | 回测 / 轮动 / 盘中递推吃 TickFlow 或静默空 |
+| 指数 / ETF 状态行数 | 日历已门控仍读 DuckDB count | 切源后 coverage 行数仍是 leftover |
 
 ## 改了什么
 
@@ -25,6 +28,9 @@ English summary: twentieth-round leftover mix-source / fail-open paths that roun
 3. **live-agg 基准**：上一交易日走 `safe_usable_daily_partition_dates`，不读可能短暂未门控的 DuckDB。
 4. **公开 EOD**：`sync_daily_by_public_quotes` 内部拒绝自定义 / 偏好不可读日 K，leftover TickFlow 仍可补今日。
 5. **派生日历**：`list_partition_dates` 走 `safe_usable_daily_partition_dates`。
+6. **scan 不再吃 leftover 文件**：`get_daily` / batch / 指数 / ETF 只扫 `scan_usable_daily`。leftover TickFlow 分区的 schema 差异不能再把当前源扫成空。
+7. **hist / range / live-agg**：过滤抛错返回 None / 空；leftover 内存 hist 不再当命中。RPS 缺缓存时走可用分区。
+8. **状态行数**：指数 / ETF 日历只认 provenance，不再用 leftover-visible DuckDB `count(*)`。
 
 未改：盘后默认时刻、已声明分钟源调用失败且具备 TickFlow minute cap 时的回退、leftover TickFlow 单票公开分时 / 自选历史 TDX、实时 leftover TickFlow + free 仍是 `mode=none`、个股/指数/ETF 维表仍固定 TickFlow（无 `instrument_provider`）、quote_snapshot 响应覆盖（带 `is_quote_snapshot`）、显式 `adj=public` / `depth5=public`、`.env`、鉴权。
 

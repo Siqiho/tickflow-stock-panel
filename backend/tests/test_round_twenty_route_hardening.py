@@ -1,11 +1,14 @@
 """Twentieth-round leftover mix-source / fail-open paths.
 
 Closes remaining except-fallback leftover globs and leftover-shadowed
-reads that round 19 left on the cache / overview / persist side:
+reads that round 19 left on the cache / overview / persist / scan side:
 - overview official-day probe throw no longer treats leftover as official
 - screener latest_date stays on disk provenance (no leftover cache / SQL)
 - in-memory enriched latest / hist / overlay caches drop leftover TickFlow
 - live-agg baseline uses file provenance, not temporarily ungated SQL
+- leftover TickFlow parquet no longer poisons the full enriched glob
+- get_enriched_history / range / live-agg drop leftover TickFlow on throw
+- index/ETF status calendars do not count leftover DuckDB rows
 - auction enrich / official trend overlay fail-closed when the probe throws
 - public EOD persist refuses custom / unresolved daily internally
 - reference_derived calendars use safe dates
@@ -27,7 +30,8 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
-from app.services import auction_benchmark, kline_sync
+from app.api import data as data_api
+from app.services import auction_benchmark, kline_sync, rps_rotation
 from app.services.intraday_overview import load_official_trend_overlay
 from app.services.market_overview_builder import _has_official_enriched
 from app.services.quote_service import QuoteService
@@ -144,6 +148,12 @@ def test_get_daily_skips_leftover_hist_cache(monkeypatch, tmp_path):
         "2026-07-16",
         _daily_df(route="fuyao", day=date(2026, 7, 16)),
     )
+    _write_part(
+        tmp_path,
+        "kline_daily_enriched",
+        "2026-07-17",
+        _daily_df(route="tickflow").with_columns(pl.lit(999.0).alias("close")),
+    )
     _patch_custom_daily(monkeypatch)
     repo = KlineRepository(DataStore(tmp_path))
     leftover = _daily_df(route="tickflow").with_columns(pl.lit(999.0).alias("close"))
@@ -155,6 +165,130 @@ def test_get_daily_skips_leftover_hist_cache(monkeypatch, tmp_path):
     assert not df.is_empty()
     assert date(2026, 7, 17) not in [d if isinstance(d, date) else d for d in df["date"].to_list()]
     assert float(df.filter(pl.col("date") == date(2026, 7, 16))["close"][0]) == pytest.approx(10.1)
+
+
+def test_get_daily_batch_skips_leftover_schema_poison(monkeypatch, tmp_path):
+    _write_part(
+        tmp_path,
+        "kline_daily_enriched",
+        "2026-07-16",
+        _daily_df(route="fuyao", day=date(2026, 7, 16)),
+    )
+    _write_part(
+        tmp_path,
+        "kline_daily_enriched",
+        "2026-07-17",
+        _daily_df(route="tickflow").with_columns(pl.lit(999.0).alias("close")),
+    )
+    _patch_custom_daily(monkeypatch)
+    repo = KlineRepository(DataStore(tmp_path))
+    df = repo.get_daily_batch(["000001.SZ"], date(2026, 7, 16), date(2026, 7, 17))
+    assert not df.is_empty()
+    assert date(2026, 7, 17) not in [d if isinstance(d, date) else d for d in df["date"].to_list()]
+
+
+def test_get_index_daily_skips_leftover_schema_poison(monkeypatch, tmp_path):
+    _write_part(
+        tmp_path,
+        "kline_index_enriched",
+        "2026-07-16",
+        _daily_df("000001.SH", route="fuyao", day=date(2026, 7, 16)),
+    )
+    _write_part(
+        tmp_path,
+        "kline_index_enriched",
+        "2026-07-17",
+        _daily_df("000001.SH", route="tickflow").with_columns(pl.lit(999.0).alias("close")),
+    )
+    _patch_custom_daily(monkeypatch)
+    repo = KlineRepository(DataStore(tmp_path))
+    df = repo.get_index_daily("000001.SH", date(2026, 7, 16), date(2026, 7, 17))
+    assert not df.is_empty()
+    assert float(df["close"][0]) == pytest.approx(10.1)
+
+
+def test_get_enriched_range_skips_leftover_hist(monkeypatch, tmp_path):
+    _patch_custom_daily(monkeypatch)
+    repo = KlineRepository(DataStore(tmp_path))
+    leftover = _daily_df(route="tickflow").with_columns(pl.lit(0.05).alias("change_pct"))
+    repo._enriched_history_cache = leftover
+    repo._enriched_history_start = date(2026, 7, 1)
+    assert repo.get_enriched_range(date(2026, 7, 17), date(2026, 7, 17)) is None
+    assert repo.get_enriched_history(date(2026, 7, 17), 1) is None
+
+
+def test_get_enriched_range_never_fail_open(monkeypatch, tmp_path):
+    _write_part(tmp_path, "kline_daily_enriched", "2026-07-17", _daily_df(route="tickflow"))
+    _patch_custom_daily(monkeypatch)
+    repo = KlineRepository(DataStore(tmp_path))
+    leftover = _daily_df(route="tickflow").with_columns(pl.lit(0.05).alias("change_pct"))
+    repo._enriched_history_cache = leftover
+    repo._enriched_history_start = date(2026, 7, 1)
+    monkeypatch.setattr(kline_sync, "filter_daily_cache", _prefs_boom)
+    assert repo.get_enriched_range(date(2026, 7, 17), date(2026, 7, 17)) is None
+    assert repo.get_enriched_history(date(2026, 7, 17), 1) is None
+
+
+def test_get_live_agg_skips_leftover_hist(monkeypatch, tmp_path):
+    _write_part(
+        tmp_path,
+        "kline_daily_enriched",
+        "2026-07-16",
+        _daily_df(route="fuyao", day=date(2026, 7, 16)),
+    )
+    _patch_custom_daily(monkeypatch)
+    repo = KlineRepository(DataStore(tmp_path))
+    leftover = _daily_df(route="tickflow")
+    repo._enriched_history_cache = leftover
+    repo._enriched_history_start = date(2026, 7, 1)
+    repo._enriched_cache = leftover
+    repo._enriched_cache_date = date(2026, 7, 17)
+    repo._live_agg_cache = leftover
+    repo._live_agg_cache_date = date(2026, 7, 17)
+    out = repo.get_live_agg()
+    if out is not None and not out.is_empty() and "route" in out.columns:
+        assert "tickflow" not in [str(v).lower() for v in out["route"].to_list()]
+    assert repo._live_agg_usable() is False or (
+        repo._enriched_cache is None or repo._latest_cache_usable(repo._enriched_cache)
+    )
+
+
+def test_status_index_does_not_count_leftover_sql_rows(monkeypatch, tmp_path):
+    _write_part(
+        tmp_path,
+        "kline_index_daily",
+        "2026-07-16",
+        _daily_df("000001.SH", route="fuyao", day=date(2026, 7, 16)),
+    )
+    _write_part(
+        tmp_path,
+        "kline_index_daily",
+        "2026-07-17",
+        _daily_df("000001.SH", route="tickflow"),
+    )
+    _patch_custom_daily(monkeypatch)
+    repo = KlineRepository(DataStore(tmp_path))
+    stats = data_api._safe_aggregate_index_daily(repo)
+    assert stats is not None
+    assert stats["latest_date"] == "2026-07-16"
+    assert stats["trading_days"] == 1
+    assert stats["rows"] == 0
+
+
+def test_rps_scan_skips_leftover_hist(monkeypatch, tmp_path):
+    custom = _daily_df(route="fuyao", day=date(2026, 7, 16)).with_columns(
+        pl.lit(0.02).alias("change_pct"),
+    )
+    leftover = _daily_df(route="tickflow").with_columns(pl.lit(0.99).alias("change_pct"))
+    _write_part(tmp_path, "kline_daily_enriched", "2026-07-16", custom)
+    _write_part(tmp_path, "kline_daily_enriched", "2026-07-17", leftover)
+    _patch_custom_daily(monkeypatch)
+    repo = KlineRepository(DataStore(tmp_path))
+    repo._enriched_history_cache = leftover
+    repo._enriched_history_start = date(2026, 7, 1)
+    df = rps_rotation._scan_change_pct(repo, date(2026, 7, 16), date(2026, 7, 17))
+    assert df is not None and not df.is_empty()
+    assert float(df["change_pct"][0]) == pytest.approx(0.02)
 
 
 def test_filter_cached_skips_leftover_under_custom(monkeypatch, tmp_path):
@@ -257,6 +391,8 @@ def test_untagged_leftover_still_serves_latest(monkeypatch, tmp_path):
     assert latest == date(2026, 7, 17)
     assert not df.is_empty()
     assert ScreenerService(repo).latest_date() == date(2026, 7, 17)
+    daily = repo.get_daily("000001.SZ", date(2026, 7, 17), date(2026, 7, 17))
+    assert not daily.is_empty()
 
 
 def test_daily_prefs_unreadable_stays_fail_closed(monkeypatch, tmp_path):
