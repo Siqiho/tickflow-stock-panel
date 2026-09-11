@@ -182,6 +182,19 @@ def routed_daily_source_label() -> str:
         return "none"
 
 
+def live_daily_persist_allowed() -> bool:
+    """Whether TickFlow/custom realtime may write canonical ``kline_daily``.
+
+    Leftover TickFlow daily keeps the live-quote persist path. Declared custom
+    daily and unreadable prefs must not be overwritten by a different live
+    source — persist a quote snapshot instead.
+    """
+    try:
+        return not daily_provider_is_custom()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _refresh_daily_view(repo: KlineRepository) -> None:
     try:
         d = repo.store.data_dir.as_posix()
@@ -396,10 +409,17 @@ def sync_daily_by_quotes(repo: KlineRepository) -> int:
 
     一个请求覆盖 ~5500 只股票,比 batch K-line 快几个数量级。
     返回写入的行数。
+    Custom / unresolved daily must not be TickFlow-quote overwritten.
     """
     from datetime import date as _date
 
     from app.tickflow.client import get_client
+
+    if not live_daily_persist_allowed():
+        logger.warning(
+            "sync_daily_by_quotes skipped: custom/unresolved daily must not TickFlow-mix",
+        )
+        return 0
 
     tf = get_client()
     try:
@@ -901,11 +921,26 @@ def _drop_null_datetime(existing: pl.DataFrame) -> pl.DataFrame:
     return existing
 
 
+def _with_minute_route(df: pl.DataFrame, route: str | None = None) -> pl.DataFrame:
+    """Stamp ``route`` on a minute frame before persist. Signature of
+    ``_write_minute_partition`` stays ``(df, dir)`` so existing test mocks
+    keep working.
+    """
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return df
+    token = (route or "").strip().lower()
+    if not token or token == "unresolved" or "route" in df.columns:
+        return df
+    return df.with_columns(pl.lit(token).alias("route"))
+
+
 def _write_minute_partition(df: pl.DataFrame, minute_dir) -> int:
     """按 _trade_date 分区落盘分钟 K (读旧→concat→unique→原子写)。返回写入行数。
 
     persist_historical_minute 与 minute-batch 共用本函数 + atomic_write_parquet,
     发布侧统一走模块级 _minute_partition_lock 的乐观重试, 不另开写链。
+    Callers stamp ``route`` via ``_with_minute_route`` so a later provider
+    switch does not serve stale TickFlow/public/custom parquet.
     """
     from pathlib import Path
 
@@ -1256,6 +1291,82 @@ def minute_may_use_leftover_public() -> bool:
         return False
     _, fallback, err = _resolve_minute_provider(name)
     return bool(fallback) and err is None
+
+
+def minute_route() -> str:
+    """Effective minute write/read route: public | tickflow | <custom name> | unresolved.
+
+    Leftover / undeclared names resolve to tickflow (logged by the resolver).
+    Resolve failures and unreadable prefs are unresolved — never serve stale
+    cache as if it belonged to the current source.
+    """
+    try:
+        name = (preferences.get_minute_data_provider() or "").strip().lower()
+    except Exception:  # noqa: BLE001
+        return "unresolved"
+    if name == "public":
+        return "public"
+    _, fallback, err = _resolve_minute_provider(name)
+    if err is not None:
+        return "unresolved"
+    if fallback:
+        return "tickflow"
+    return name or "custom"
+
+
+def full_minute_route() -> str:
+    """Effective full-minute write/read route (same tokens as ``minute_route``)."""
+    try:
+        name = (preferences.get_full_minute_data_provider() or "").strip().lower()
+    except Exception:  # noqa: BLE001
+        return "unresolved"
+    if name == "public":
+        return "public"
+    _, fallback, err = _resolve_full_minute_provider(name)
+    if err is not None:
+        return "unresolved"
+    if fallback:
+        return "tickflow"
+    return name or "custom"
+
+
+def full_minute_may_use_minute_fallback() -> bool:
+    """Leftover TickFlow / undeclared full_minute may fall back to minute batch.
+
+    Declared custom full_minute and unreadable prefs must not mix
+    ``minute_data_provider`` (including TickFlow) into monitor signals.
+    """
+    try:
+        name = preferences.get_full_minute_data_provider()
+    except Exception:  # noqa: BLE001
+        return False
+    _, fallback, err = _resolve_full_minute_provider(name)
+    return bool(fallback) and err is None
+
+
+def minute_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
+    """Whether on-disk minute bars may be served for the current route.
+
+    Tagged files must match ``route``. Untagged legacy files are only valid
+    for leftover TickFlow / public. Custom / unresolved never reuse a
+    previous source's parquet.
+    """
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return False
+    expected = (route or "").strip().lower()
+    if not expected or expected == "unresolved":
+        return False
+    if "route" not in df.columns:
+        return expected in {"tickflow", "public"}
+    stored = [str(v or "").strip().lower() for v in df["route"].to_list()]
+    nonempty = [s for s in stored if s]
+    if not nonempty:
+        return expected in {"tickflow", "public"}
+    if any(s != expected for s in nonempty):
+        return False
+    if len(nonempty) != len(stored):
+        return expected in {"tickflow", "public"}
+    return True
 
 
 def minute_sync_allowed(capset: CapabilitySet | None) -> bool:
@@ -1771,7 +1882,7 @@ def persist_historical_minute(
             before = pl.read_parquet(out).height
         except Exception:  # noqa: BLE001
             before = 0
-    written = _write_minute_partition(clean, minute_dir)
+    written = _write_minute_partition(_with_minute_route(clean, minute_route()), minute_dir)
     added = max(0, written - before)
 
     repo.refresh_minute_views()
@@ -2025,7 +2136,9 @@ def sync_and_persist_minute(
 
     def _persist(seg_df: pl.DataFrame) -> None:
         with write_lock:
-            written_box[0] += _write_minute_partition(seg_df, minute_dir)
+            written_box[0] += _write_minute_partition(
+                _with_minute_route(seg_df, minute_route()), minute_dir,
+            )
 
     segment_days = preferences.get_minute_sync_segment_days()
     sync_minute_batch(
