@@ -76,4 +76,4 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round12 \
     tests/free_sources/test_adj_factor_public.py
 ```
 
-云环境结果见 `evidence/test-results.md`。
+云环境结果：backend 目标 **369 passed**。见 `evidence/test-results.md`。

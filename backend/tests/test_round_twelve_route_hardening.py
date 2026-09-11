@@ -322,8 +322,7 @@ def test_minute_refresh_coverage_ignores_stale_custom(monkeypatch, tmp_path):
         lambda n, dataset: n == "fuyao" and dataset == "full_minute",
     )
     monkeypatch.setattr("app.data_providers.custom.get_provider", lambda n: SimpleNamespace())
-    svc = MinuteRefreshService()
-    svc.set_repo(KlineRepository(DataStore(tmp_path)))
+    svc = MinuteRefreshService(KlineRepository(DataStore(tmp_path)))
     assert svc._today_coverage_lag_minutes() is None
 
 
