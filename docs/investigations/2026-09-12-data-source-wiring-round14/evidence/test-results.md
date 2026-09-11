@@ -52,6 +52,8 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round14 \
     tests/test_quote_index_merge.py
 ```
 
-Result: pending isolated run (pre-testing revision).
+Result: **435 passed**.
 
 No `.env` read. No live network. Formal `DATA_DIR` / user Mac tree not touched.
+
+Round-fourteen tests cover same-date daily/enriched persist replacing stale TickFlow partitions (leftover TickFlow still merges untagged files), unresolved daily skipping writes, public adj coverage hidden under custom adj (leftover TickFlow still reads/writes sina coverage), `sync_adj_factor_public` / `merge_write_adj_*` refusing custom adj, share-capital public fetch/write refusing custom financial, reference-derived shares using the gated reader, financial last_sync ignoring leftover parquet mtime, minute earliest/latest dates ignoring leftover files under a custom minute route, and leftover TickFlow contracts (mode=none, undeclared daily, prefs-unreadable persist/overlay block).

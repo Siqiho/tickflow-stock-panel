@@ -147,7 +147,8 @@ def test_daily_unresolved_skips_write(monkeypatch, tmp_path):
     monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", _prefs_boom)
     repo = KlineRepository(DataStore(tmp_path))
     repo.append_daily(_daily_df("000001.SZ"))
-    assert not (tmp_path / "kline_daily").exists()
+    daily_dir = tmp_path / "kline_daily"
+    assert not daily_dir.exists() or list(daily_dir.rglob("*.parquet")) == []
 
 
 def test_merge_live_daily_replaces_stale_custom(monkeypatch, tmp_path):

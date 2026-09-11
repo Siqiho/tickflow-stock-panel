@@ -84,4 +84,4 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round14 \
     tests/test_quote_index_merge.py
 ```
 
-云环境结果见 `evidence/test-results.md`。
+云环境结果：backend 目标 **435 passed**。见 `evidence/test-results.md`。
