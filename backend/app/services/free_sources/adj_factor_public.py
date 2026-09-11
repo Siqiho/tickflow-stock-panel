@@ -61,33 +61,44 @@ def _coverage_path(data_dir: Path, *, asset_type: str = "stock") -> Path:
     return Path(data_dir) / factor_dir / "coverage.parquet"
 
 
+def _empty_adj_coverage() -> pl.DataFrame:
+    return pl.DataFrame(
+        schema={
+            "symbol": pl.Utf8,
+            "status": pl.Utf8,
+            "source": pl.Utf8,
+            "events_n": pl.Int64,
+            "checked_at": pl.Utf8,
+            "note": pl.Utf8,
+        }
+    )
+
+
+def _adj_public_route_ok() -> bool:
+    """Leftover TickFlow / public may read or write sina coverage.
+
+    Custom / unresolved must not treat leftover public coverage as current
+    and must not write sina factors into a custom adj file.
+    """
+    try:
+        from app.services.kline_sync import adj_public_write_allowed
+
+        return adj_public_write_allowed()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def read_adj_coverage(data_dir: Path, *, asset_type: str = "stock") -> pl.DataFrame:
+    if not _adj_public_route_ok():
+        return _empty_adj_coverage()
     path = _coverage_path(data_dir, asset_type=asset_type)
     if not path.exists():
-        return pl.DataFrame(
-            schema={
-                "symbol": pl.Utf8,
-                "status": pl.Utf8,
-                "source": pl.Utf8,
-                "events_n": pl.Int64,
-                "checked_at": pl.Utf8,
-                "note": pl.Utf8,
-            }
-        )
+        return _empty_adj_coverage()
     try:
         df = pl.read_parquet(path)
     except Exception as e:
         logger.warning("read adj coverage failed: %s", e)
-        return pl.DataFrame(
-            schema={
-                "symbol": pl.Utf8,
-                "status": pl.Utf8,
-                "source": pl.Utf8,
-                "events_n": pl.Int64,
-                "checked_at": pl.Utf8,
-                "note": pl.Utf8,
-            }
-        )
+        return _empty_adj_coverage()
     for c, dt in (
         ("symbol", pl.Utf8),
         ("status", pl.Utf8),
@@ -108,6 +119,14 @@ def merge_write_adj_coverage(
     asset_type: str = "stock",
 ) -> int:
     """Upsert coverage rows by symbol. Returns total coverage row count."""
+    if not _adj_public_route_ok():
+        path = _coverage_path(data_dir, asset_type=asset_type)
+        if path.exists():
+            try:
+                return int(pl.read_parquet(path).height)
+            except Exception:  # noqa: BLE001
+                return 0
+        return 0
     if isinstance(rows, pl.DataFrame):
         new_df = rows
     else:
@@ -680,7 +699,18 @@ def merge_write_adj_factor(
         return 0, []
 
     try:
-        from app.services.kline_sync import adj_cache_usable, adj_route, _tag_adj_route
+        from app.services.kline_sync import (
+            adj_cache_usable,
+            adj_public_write_allowed,
+            adj_route,
+            _tag_adj_route,
+        )
+        if not adj_public_write_allowed():
+            logger.info(
+                "public adj_factor write skipped for route=%s (no custom mix)",
+                adj_route(),
+            )
+            return 0, []
         df = _tag_adj_route(df)
         route = adj_route()
     except Exception:  # noqa: BLE001
@@ -747,6 +777,38 @@ def sync_adj_factor_public(
 
     start_d = _as_date(start)
     end_d = _as_date(end)
+    if not _adj_public_route_ok():
+        try:
+            from app.services.kline_sync import adj_route
+
+            route = adj_route()
+        except Exception:  # noqa: BLE001
+            route = "unresolved"
+        logger.info(
+            "sync_adj_factor_public skipped for route=%s (no custom/unresolved mix)",
+            route,
+        )
+        return {
+            "ok": False,
+            "skipped": True,
+            "reason": f"adj route {route} must not write public sina factors",
+            "source": "sina_qfq+em_bonus_fallback",
+            "asset_type": asset_type,
+            "requested": len(_normalize_adj_symbols(symbols)),
+            "symbols_skipped": [],
+            "symbols_skipped_n": 0,
+            "symbols_todo_n": 0,
+            "rows_fetched": 0,
+            "rows_delta": 0,
+            "symbols_affected": [],
+            "symbols_affected_n": 0,
+            "coverage_rows": 0,
+            "path": str(
+                Path(data_dir)
+                / ("adj_factor_etf" if asset_type == "etf" else "adj_factor")
+                / "all.parquet"
+            ),
+        }
     ordered = _normalize_adj_symbols(symbols)
     workers_n = max(1, int(workers or 1))
     flush_n = max(1, int(flush_every or 1))

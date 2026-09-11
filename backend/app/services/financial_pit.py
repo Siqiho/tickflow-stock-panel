@@ -382,6 +382,12 @@ def staging_atomic_replace_financial_table(
     staging_dir.mkdir(parents=True, exist_ok=True)
     staging = staging_dir / "part.parquet"
     frame = ensure_pit_columns(frame, table=table)
+    try:
+        from app.services.financial_sync import _tag_financial_route
+
+        frame = _tag_financial_route(frame)
+    except Exception:  # noqa: BLE001
+        pass
     atomic_write_parquet(frame, staging)
     # atomic replace into formal path
     atomic_write_parquet(frame, target)
