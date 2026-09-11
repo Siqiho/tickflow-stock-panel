@@ -25,6 +25,14 @@ def _public_fin() -> bool:
         return False
 
 
+def _custom_fin() -> bool:
+    try:
+        from app.services.financial_sync import _use_custom_financials
+        return _use_custom_financials()
+    except Exception:
+        return False
+
+
 def _local_fin_ready(request: Request | None = None, data_dir=None) -> bool:
     try:
         from app.services.financial_normalize import local_financials_ready
@@ -41,11 +49,16 @@ def _local_fin_ready(request: Request | None = None, data_dir=None) -> bool:
 
 
 def _fin_available(capset, request: Request | None = None) -> bool:
-    """Expert Cap, public provider, or non-empty local financials parquet."""
-    if capset is not None and capset.has(Cap.FINANCIAL):
-        return True
-    if _public_fin():
-        return True
+    """Expert Cap, public/custom provider, or non-empty local financials parquet."""
+    try:
+        from app.services.financial_sync import financials_live_allowed
+        if financials_live_allowed(capset):
+            return True
+    except Exception:
+        if capset is not None and capset.has(Cap.FINANCIAL):
+            return True
+        if _public_fin() or _custom_fin():
+            return True
     return _local_fin_ready(request)
 
 
@@ -87,8 +100,11 @@ def financial_status(request: Request):
     last_sync = fs.last_sync if fs else {}
 
     from app.services import preferences as _prefs
-    if _public_fin() or capset.has(Cap.FINANCIAL):
-        provider = _prefs.get_financial_provider()
+    if _public_fin() or _custom_fin() or capset.has(Cap.FINANCIAL):
+        try:
+            provider = _prefs.get_financial_provider()
+        except Exception:
+            provider = "none"
     elif _local_fin_ready(request):
         provider = "local"
     else:

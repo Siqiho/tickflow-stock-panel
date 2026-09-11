@@ -322,14 +322,16 @@ _ALLOWED_POOL_PROVIDERS = {"tickflow", "public", "csindex", "sina", "free"}
 
 
 def get_pool_provider() -> str:
-    """Index constituent pool source: tickflow | public/csindex/sina/free.
+    """Index constituent pool source: tickflow | public/csindex/sina/free | plugin.
 
     public* uses free_sources.pools_public (CSI XLS + Sina fallback).
+    A stored custom/plugin name is preserved even if the registry is down
+    so fetch paths can fail-closed instead of silently healing to public.
     """
     provider = str(load_server().get("pool_provider", "public") or "public").lower()
     if provider in _ALLOWED_POOL_PROVIDERS:
         return provider
-    return "public"
+    return _coerce_routed_provider(provider, default="public")
 
 
 def is_public_pool_provider(name: str | None = None) -> bool:

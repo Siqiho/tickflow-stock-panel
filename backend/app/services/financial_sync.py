@@ -25,22 +25,37 @@ FINANCIAL_TABLES = ("metrics", "income", "balance_sheet", "cash_flow", "shares")
 STATEMENT_TABLES = ("metrics", "income", "balance_sheet", "cash_flow")
 
 
-def _use_public_financials() -> bool:
+def _financial_route() -> str:
+    """Return public | custom | tickflow | unresolved."""
     try:
         from app.services import preferences
-        return preferences.is_public_financial_provider()
+        name = preferences.get_financial_provider()
+        if preferences.is_public_financial_provider(name):
+            return "public"
+        if name and name != "tickflow":
+            return "custom"
+        return "tickflow"
     except Exception:
-        return False
+        return "unresolved"
+
+
+def _use_public_financials() -> bool:
+    return _financial_route() == "public"
 
 
 def _use_custom_financials() -> bool:
     """True when financial_provider is a plugin/custom name, not TickFlow/public."""
-    try:
-        from app.services import preferences
-        name = preferences.get_financial_provider()
-        return bool(name) and name != "tickflow" and not preferences.is_public_financial_provider(name)
-    except Exception:
+    return _financial_route() == "custom"
+
+
+def financials_live_allowed(capset: CapabilitySet | None) -> bool:
+    """Whether a live financial pull may run (no TickFlow mix on unresolved prefs)."""
+    route = _financial_route()
+    if route == "unresolved":
         return False
+    if route in {"public", "custom"}:
+        return True
+    return capset is not None and capset.has(Cap.FINANCIAL)
 
 
 def _resolve_custom_financial_provider():
@@ -109,9 +124,13 @@ def _get_symbols(data_dir: Path) -> list[str]:
     - public 财务源：使用 preferences.public_data_scope（默认 CSI300）
     - TickFlow：instruments 全表（Expert 批量）
     """
-    try:
-        from app.services import preferences
-        if preferences.is_public_financial_provider():
+    route = _financial_route()
+    if route == "unresolved":
+        logger.warning("financial symbols skipped: financial provider prefs unreadable")
+        return []
+    if route == "public":
+        try:
+            from app.services import preferences
             from app.services.universe_scope import resolve_symbols
             scope = preferences.get_public_data_scope()
             syms = resolve_symbols(
@@ -123,8 +142,11 @@ def _get_symbols(data_dir: Path) -> list[str]:
             if syms:
                 logger.info("financial symbols from public_data_scope=%s n=%d", scope, len(syms))
                 return syms
-    except Exception as e:
-        logger.warning("public financial scope resolve failed: %s", e)
+            logger.warning("public financial scope %s resolved empty, fail-closed", scope)
+            return []
+        except Exception as e:
+            logger.warning("public financial scope resolve failed, fail-closed: %s", e)
+            return []
 
     inst_path = data_dir / "instruments" / "instruments.parquet"
     if not inst_path.exists():
@@ -147,6 +169,10 @@ def _sync_table(
     """同步单张财务表。返回写入的行数。"""
     if not symbols:
         logger.warning("sync_%s skipped: no symbols", table)
+        return 0
+
+    if _financial_route() == "unresolved":
+        logger.warning("sync_%s skipped: financial provider prefs unreadable", table)
         return 0
 
     # Public free path (East Money HSF10) — no TickFlow Cap.FINANCIAL
@@ -262,12 +288,8 @@ def sync_shares(data_dir: Path, capset: CapabilitySet) -> int:
 
 def sync_all(data_dir: Path, capset: CapabilitySet) -> dict[str, int]:
     """同步所有财务表。返回 {table: rows}。"""
-    if (
-        not capset.has(Cap.FINANCIAL)
-        and not _use_public_financials()
-        and not _use_custom_financials()
-    ):
-        logger.info("sync_all financials skipped: no FINANCIAL capability")
+    if not financials_live_allowed(capset):
+        logger.info("sync_all financials skipped: no live financial route")
         return {}
 
     symbols = _get_symbols(data_dir)
@@ -362,8 +384,8 @@ class FinancialScheduler:
         # 即便 app.state.capabilities 已更新, 调度器仍报 "no FINANCIAL capability"。
         self._data_dir = data_dir
         self._capset = capset
-        if not capset.has(Cap.FINANCIAL) and not _use_public_financials():
-            logger.info("FinancialScheduler skipped: no FINANCIAL capability")
+        if not financials_live_allowed(capset):
+            logger.info("FinancialScheduler skipped: no live financial route")
             return
         # 从持久化恢复上次同步时间: 重启后前端仍能显示真实最后同步时间,而非"尚未同步"
         try:
@@ -496,7 +518,7 @@ class FinancialScheduler:
         用 _is_syncing 标志防并发:若已有同步在进行,本次直接跳过,
         避免重复请求拖慢服务端 / 触发上游限流。
         """
-        if (not self._capset or not self._capset.has(Cap.FINANCIAL)) and not _use_public_financials():
+        if not financials_live_allowed(self._capset):
             return {}
         with self._lock:
             if self._is_syncing:
@@ -521,7 +543,7 @@ class FinancialScheduler:
         /status 已能看到 syncing=True,无竞态窗口;同时防止快速重复点击
         启动多个后台线程。后台线程复用 _run_body 执行真正的同步逻辑。
         """
-        if (not self._capset or not self._capset.has(Cap.FINANCIAL)) and not _use_public_financials():
+        if not financials_live_allowed(self._capset):
             return {"started": False, "reason": "no FINANCIAL capability"}
         with self._lock:
             if self._is_syncing:

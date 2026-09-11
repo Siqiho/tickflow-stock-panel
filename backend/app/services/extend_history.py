@@ -37,33 +37,52 @@ def _invalidate(table: str | None = None) -> None:
 
 
 def _resolve_universe(capset: CapabilitySet) -> list[str]:
-    """解析标的池 — 与 daily_pipeline 独立的副本。"""
-    if capset.has(Cap.KLINE_DAILY_BATCH):
+    """解析标的池 — 与 daily_pipeline 独立的副本, 共用同一扩张门槛。"""
+    from app.config import settings
+    from pathlib import Path
+
+    from app.services import preferences as _prefs
+    from app.services.universe_scope import (
+        SCOPE_ALL,
+        normalize_scope,
+        resolve_symbols,
+        tickflow_all_a_expansion_allowed,
+    )
+    from app.tickflow.pools import DEMO_SYMBOLS, get_pool
+
+    try:
+        scope = normalize_scope(_prefs.get_pipeline_universe_scope(), default=SCOPE_ALL)
+        allow_tickflow_all = tickflow_all_a_expansion_allowed(capset, scope=scope)
+    except Exception:
+        scope = SCOPE_ALL
+        allow_tickflow_all = False
+
+    if allow_tickflow_all:
         try:
-            from app.services import preferences as _prefs
-            from app.tickflow.pools import get_pool
-            # Public pool must not silently expand ALL via TickFlow universes.
-            if not _prefs.is_public_pool_provider():
-                all_a = get_pool("CN_Equity_A", refresh=True)
-                if all_a:
-                    return sorted(all_a)
+            all_a = get_pool("CN_Equity_A", refresh=True)
+            if all_a:
+                return sorted(all_a)
         except Exception as e:
             logger.warning("CN_Equity_A pool unavailable: %s", e)
 
-    from app.tickflow.pools import DEMO_SYMBOLS, get_pool as _get_pool
-    from app.config import settings
-    from pathlib import Path
-    import polars as pl
+    try:
+        syms = resolve_symbols(
+            scope,
+            data_dir=Path(settings.data_dir),
+            default=SCOPE_ALL,
+            include_watchlist=True,
+            refresh_pools_if_missing=True,
+        )
+        if syms:
+            return syms
+    except Exception as e:
+        logger.warning("extend_history resolve_symbols failed: %s", e)
+
     base: set[str] = set(DEMO_SYMBOLS)
-    base.update(_get_pool("watchlist"))
-    d = Path(settings.data_dir)
-    inst_path = d / "instruments" / "instruments.parquet"
-    if inst_path.exists():
-        try:
-            inst = pl.read_parquet(inst_path, columns=["symbol"])
-            base.update(inst["symbol"].to_list())
-        except Exception as e:
-            logger.warning("instruments supplement failed: %s", e)
+    try:
+        base.update(get_pool("watchlist") or [])
+    except Exception:
+        pass
     return sorted(base)
 
 
