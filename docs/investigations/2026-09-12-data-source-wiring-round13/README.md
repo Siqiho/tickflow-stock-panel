@@ -80,4 +80,4 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round13 \
     tests/test_corporate_actions_sync.py
 ```
 
-云环境结果见 `evidence/test-results.md`。
+云环境结果：backend 目标 **405 passed**。见 `evidence/test-results.md`。
