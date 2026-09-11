@@ -84,11 +84,9 @@ CAPABILITY_REGISTRY: list[dict] = [
         "id": "full_minute",
         "label": "全量分钟",
         "desc": "盘中全市场当日分钟落盘 (冷启动全天 + 标的池增量)",
-        "field": None,
+        "field": "full_minute_data_provider",
         "default": "tickflow",
         "tf_tier": "expert",
-        # 本地 Catalog: full_minute 不可路由, 无对应 provider 偏好字段。
-        # 上游 908b 改为 full_minute_data_provider; 与本地 Expert-only 语义冲突, 保留 None。
     },
 ]
 

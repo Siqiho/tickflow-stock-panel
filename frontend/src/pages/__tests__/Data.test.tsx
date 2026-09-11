@@ -42,7 +42,7 @@ const matrixFixture: CapabilityMatrix = {
       current: 'public', current_display: '公开源', effective: 'public', effective_display: '公开源',
       usable: true, tf_available: false,
     }),
-    matrixCap('full_minute', '全量分钟', { field: null, tf_tier: 'expert', tf_available: false, usable: false }),
+    matrixCap('full_minute', '全量分钟', { tf_tier: 'expert', tf_available: false, usable: false }),
   ],
 }
 
@@ -55,7 +55,7 @@ const noneTierMatrix: CapabilityMatrix = {
     matrixCap('minute', '分钟K', { tf_tier: 'pro', tf_available: false, usable: false }),
     matrixCap('depth5', '五档盘口', { tf_tier: 'pro', tf_available: false, usable: false }),
     matrixCap('financial', '财务数据', { tf_tier: 'expert', tf_available: false, usable: false }),
-    matrixCap('full_minute', '全量分钟', { field: null, tf_tier: 'expert', tf_available: false, usable: false }),
+    matrixCap('full_minute', '全量分钟', { tf_tier: 'expert', tf_available: false, usable: false }),
   ],
 }
 

@@ -33,6 +33,72 @@ def _use_public_financials() -> bool:
         return False
 
 
+def _use_custom_financials() -> bool:
+    """True when financial_provider is a plugin/custom name, not TickFlow/public."""
+    try:
+        from app.services import preferences
+        name = preferences.get_financial_provider()
+        return bool(name) and name != "tickflow" and not preferences.is_public_financial_provider(name)
+    except Exception:
+        return False
+
+
+def _resolve_custom_financial_provider():
+    """Return a custom financial provider, or None if it must not run.
+
+    Fail-closed: a selected custom source never falls through to TickFlow.
+    """
+    from app.services import preferences
+    from app.data_providers import custom as custom_sources
+
+    name = preferences.get_financial_provider()
+    try:
+        if not custom_sources.provider_has_dataset(name, "financial"):
+            logger.warning(
+                "financial provider %s 未声明 financial, 跳过 (不回退 TickFlow)",
+                name,
+            )
+            return None
+        return custom_sources.get_provider(name)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("financial provider %s 解析失败, 跳过: %s", name, e)
+        return None
+
+
+def _write_financial_df(df: pl.DataFrame, data_dir: Path, table: str) -> int:
+    if df is None or df.is_empty() or "symbol" not in df.columns:
+        return 0
+    out_dir = data_dir / "financials" / table
+    out_dir.mkdir(parents=True, exist_ok=True)
+    df.write_parquet(out_dir / "part.parquet")
+    logger.info("sync_%s done: %d records written", table, len(df))
+    return len(df)
+
+
+def _sync_custom_financial_table(
+    table: str,
+    symbols: list[str],
+    data_dir: Path,
+    latest_only: bool,
+) -> int:
+    provider = _resolve_custom_financial_provider()
+    if provider is None:
+        return 0
+    fetch = getattr(provider, "get_financials", None)
+    if not callable(fetch):
+        logger.warning("financial provider 未实现 get_financials, 跳过")
+        return 0
+    try:
+        try:
+            df = fetch(table, symbols, latest_only=latest_only)
+        except TypeError:
+            df = fetch(table, symbols)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("sync_%s custom provider failed: %s", table, e)
+        return 0
+    return _write_financial_df(df, data_dir, table)
+
+
 # ================================================================
 # 同步函数
 # ================================================================
@@ -97,6 +163,10 @@ def _sync_table(
             return sync_shares_snapshot(data_dir, symbols=symbols)
         result = sync_financials_public(symbols, data_dir, tables=(table,), max_periods=max_periods)
         return int((result.get("rows") or {}).get(table) or 0)
+
+    # Plugin/custom financial source: fail-closed, never TickFlow.
+    if _use_custom_financials():
+        return _sync_custom_financial_table(table, symbols, data_dir, latest_only)
 
     if not capset.has(Cap.FINANCIAL):
         logger.info("sync_%s skipped: no FINANCIAL capability", table)
@@ -192,7 +262,11 @@ def sync_shares(data_dir: Path, capset: CapabilitySet) -> int:
 
 def sync_all(data_dir: Path, capset: CapabilitySet) -> dict[str, int]:
     """同步所有财务表。返回 {table: rows}。"""
-    if not capset.has(Cap.FINANCIAL) and not _use_public_financials():
+    if (
+        not capset.has(Cap.FINANCIAL)
+        and not _use_public_financials()
+        and not _use_custom_financials()
+    ):
         logger.info("sync_all financials skipped: no FINANCIAL capability")
         return {}
 

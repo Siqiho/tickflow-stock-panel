@@ -2,7 +2,8 @@
 
 标的列表优先用免费的 exchanges.get_instruments(type=index/etf) 拉取
 (None/Free 档均可用,无需 quote.pool 权限);付费档可额外用
-quotes.get_by_universes 作为补充来源。日K统一走 klines.batch。
+quotes.get_by_universes 作为补充来源。日K走 ``daily_data_provider``
+(自定义源 fail-closed, TickFlow 仍走 klines.batch)。
 """
 from __future__ import annotations
 
@@ -203,9 +204,6 @@ def sync_and_persist_index_daily(
     否则取 index_instruments 表全量(指数+ETF 合并存储)。
     on_chunk_done(current, total) 每个批次完成后回调。
     """
-    if not capset.has(Cap.KLINE_DAILY_BATCH):
-        return 0
-
     if symbols_override:
         symbols = sorted(set(s for s in symbols_override if s))
         if not symbols:
@@ -236,12 +234,13 @@ def sync_and_persist_index_daily(
         if i > 0 and interval > 0 and len(chunks) > rpm:
             import time
             time.sleep(interval)
-        raw = kline_sync.sync_daily_batch(
+        raw = kline_sync.fetch_routed_daily(
             chunk,
-            count=count,
-            batch_size=None,
             start_time=start_time,
             end_time=end_time,
+            count=count,
+            asset_type="index",
+            capset=capset,
         )
         if raw.is_empty():
             continue
@@ -302,9 +301,6 @@ def sync_and_persist_etf_daily(
     """同步 ETF 日K到独立 kline_etf_* parquet,并计算 ETF enriched。
     on_chunk_done(current, total) 每个批次完成后回调。
     """
-    if not capset.has(Cap.KLINE_DAILY_BATCH):
-        return 0
-
     if symbols_override:
         symbols = sorted(set(s for s in symbols_override if s))
     else:
@@ -335,12 +331,13 @@ def sync_and_persist_etf_daily(
         if i > 0 and interval > 0 and len(chunks) > rpm:
             import time
             time.sleep(interval)
-        raw = kline_sync.sync_daily_batch(
+        raw = kline_sync.fetch_routed_daily(
             chunk,
-            count=count,
-            batch_size=None,
             start_time=start_time,
             end_time=end_time,
+            count=count,
+            asset_type="etf",
+            capset=capset,
         )
         if raw.is_empty():
             continue

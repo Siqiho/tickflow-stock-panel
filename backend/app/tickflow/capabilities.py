@@ -212,28 +212,54 @@ def feature_availability(
     except Exception:
         local_fin = local_adj = pub_fin = pub_adj = False
 
+    try:
+        fin_provider = _prefs.get_financial_provider()
+        adj_provider = _prefs.get_adj_factor_provider()
+        depth_provider = _prefs.get_depth5_data_provider()
+        minute_provider = _prefs.get_minute_data_provider()
+    except Exception:
+        fin_provider = "tickflow"
+        adj_provider = "tickflow"
+        depth_provider = "tickflow"
+        minute_provider = "tickflow"
+
     fin_ok = bool(capset.has(Cap.FINANCIAL) or pub_fin or local_fin)
     adj_ok = bool(capset.has(Cap.ADJ_FACTOR) or pub_adj or local_adj)
 
-    if capset.has(Cap.FINANCIAL):
-        fin_reason = None
-        fin_code = "ok"
-        fin_source = "tickflow"
-    elif pub_fin or local_fin:
+    if pub_fin or (not capset.has(Cap.FINANCIAL) and local_fin and fin_provider == "tickflow"):
         fin_reason = None
         fin_code = "ok"
         fin_source = "local_public"
+    elif fin_provider != "tickflow":
+        fin_reason = None if fin_ok else "当前财务源无法提供数据,且本地尚未同步财务表"
+        fin_code = "ok" if fin_ok else "no_capability"
+        fin_source = fin_provider
+    elif capset.has(Cap.FINANCIAL):
+        fin_reason = None
+        fin_code = "ok"
+        fin_source = "tickflow"
     else:
         fin_reason = "当前档位无财务数据权限,且本地尚未同步财务表"
         fin_code = "no_capability"
         fin_source = "none"
 
-    if capset.has(Cap.ADJ_FACTOR):
+    if pub_adj:
+        adj_reason = None
+        adj_code = "ok"
+        adj_source = "local_public"
+        adj_status = "available"
+    elif adj_provider != "tickflow":
+        adj_ok = bool(capset.has(Cap.ADJ_FACTOR) or local_adj)
+        adj_reason = None if adj_ok else "当前复权源无法提供因子"
+        adj_code = "ok" if adj_ok else "no_capability"
+        adj_source = adj_provider
+        adj_status = "available" if adj_ok else "unavailable"
+    elif capset.has(Cap.ADJ_FACTOR):
         adj_reason = None
         adj_code = "ok"
         adj_source = "tickflow"
         adj_status = "available"
-    elif pub_adj or local_adj:
+    elif local_adj:
         adj_reason = None
         adj_code = "ok"
         adj_source = "local_public"
@@ -250,7 +276,13 @@ def feature_availability(
     # Depth / sealed: TickFlow Pro+ batch depth, else public L1 (bid1/ask1 vol)
     has_depth_batch = capset.has(Cap.DEPTH5_BATCH)
     has_depth_single = capset.has(Cap.DEPTH5)
-    if has_depth_batch or has_depth_single:
+    if depth_provider not in {"tickflow", "public"}:
+        depth_ok = has_depth_batch or has_depth_single
+        depth_reason = None if depth_ok else "当前五档源无法提供盘口"
+        depth_code = "ok" if depth_ok else "no_capability"
+        depth_source = depth_provider
+        depth_status = "available" if depth_ok else "unavailable"
+    elif has_depth_batch or has_depth_single:
         depth_ok = True
         depth_reason = None
         depth_code = "ok"
@@ -275,7 +307,14 @@ def feature_availability(
     except Exception:
         realtime_provider = "public"
 
-    if has_quote:
+    if has_quote and realtime_provider not in {"tickflow", "public", ""}:
+        quote_ok = True
+        quote_reason = None
+        quote_code = "ok"
+        quote_source = realtime_provider
+        quote_status = "available"
+        quote_mode = "full_market"
+    elif has_quote:
         quote_ok = True
         quote_reason = None
         quote_code = "ok"
@@ -305,6 +344,8 @@ def feature_availability(
         quote_mode = "none"
 
     minute_info = minute_availability(capset, user_enabled=minute_user_enabled)
+    if minute_provider != "tickflow" and minute_info.get("source") == "tickflow":
+        minute_info = {**minute_info, "source": minute_provider}
 
     return {
         "daily": daily_availability(capset),

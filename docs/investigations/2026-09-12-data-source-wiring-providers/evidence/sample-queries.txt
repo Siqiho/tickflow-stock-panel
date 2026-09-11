@@ -1,0 +1,22 @@
+Routing decisions sampled in the isolated pytest process (no network):
+
+- daily_data_provider=myhttp, declares daily, symbols_override=000001.SH
+  → index sync calls get_daily(asset_type=index), TickFlow klines.batch not called
+- same provider returns empty (Fuyao-like stock-only)
+  → index rows=0, TickFlow still not called even if Cap.KLINE_DAILY_BATCH is present
+- daily_data_provider=tickflow without KLINE_DAILY_BATCH
+  → index rows=0, batch not called
+- daily_data_provider=myhttp + ETF 510300.SH
+  → get_daily(asset_type=etf), TickFlow not called
+- financial_provider=fuyao, declares financial
+  → get_financials('income') writes parquet; TickFlow financials.income not called
+- financial_provider=fuyao, does not declare financial, Cap.FINANCIAL present
+  → rows=0, TickFlow not called
+- financial_provider=tickflow + Cap.FINANCIAL
+  → TickFlow client path unchanged
+- capability matrix full_minute_data_provider=myfm
+  → effective=myfm, usable=True (including TickFlow pro when only the plugin is a candidate)
+- feature_availability with custom minute/depth/financial/realtime
+  → source fields are the plugin names, not tickflow
+- routingForSource('fuyao', [daily, adj, realtime, financial, depth5])
+  → those five route to fuyao; minute + full_minute stay on product defaults

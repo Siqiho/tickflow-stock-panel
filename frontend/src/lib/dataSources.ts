@@ -5,6 +5,7 @@ import type {
   DataControlSummary,
   DataSourcesResponse,
   DatasetCatalogEntry,
+  ProviderField,
 } from './api'
 
 export const DATA_SOURCES_SETTINGS_HREF = '/data?section=sources'
@@ -40,6 +41,50 @@ export function isPublicFinancialProvider(name: string | undefined): boolean {
 
 export function isPublicAdjFactorProvider(name: string | undefined): boolean {
   return PUBLIC_ADJ_ALIASES.has((name || '').trim().toLowerCase())
+}
+
+export const DEFAULT_PROVIDER_ROUTING: Record<ProviderField, string> = {
+  daily_data_provider: 'tickflow',
+  adj_factor_provider: 'tickflow',
+  minute_data_provider: 'tickflow',
+  full_minute_data_provider: 'tickflow',
+  depth5_data_provider: 'tickflow',
+  realtime_data_provider: 'public',
+  financial_data_provider: 'tickflow',
+}
+
+export const TICKFLOW_PROVIDER_ROUTING: Record<ProviderField, string> = {
+  ...DEFAULT_PROVIDER_ROUTING,
+  realtime_data_provider: 'tickflow',
+}
+
+const DATASET_TO_FIELD: Record<string, ProviderField> = {
+  daily: 'daily_data_provider',
+  adj_factor: 'adj_factor_provider',
+  realtime: 'realtime_data_provider',
+  minute: 'minute_data_provider',
+  full_minute: 'full_minute_data_provider',
+  depth5: 'depth5_data_provider',
+  financial: 'financial_data_provider',
+}
+
+export function routingForSource(name: string, datasets: string[]): Record<ProviderField, string> {
+  if (name === 'tickflow') return { ...TICKFLOW_PROVIDER_ROUTING }
+  const supported = new Set(datasets)
+  const pick = (dataset: string) => (
+    supported.has(dataset)
+      ? name
+      : DEFAULT_PROVIDER_ROUTING[DATASET_TO_FIELD[dataset]] ?? 'tickflow'
+  )
+  return {
+    daily_data_provider: pick('daily'),
+    adj_factor_provider: pick('adj_factor'),
+    realtime_data_provider: pick('realtime'),
+    minute_data_provider: pick('minute'),
+    full_minute_data_provider: pick('full_minute'),
+    depth5_data_provider: pick('depth5'),
+    financial_data_provider: pick('financial'),
+  }
 }
 
 export function displaySourceName(name: string | undefined): string {

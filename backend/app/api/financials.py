@@ -87,13 +87,12 @@ def financial_status(request: Request):
     last_sync = fs.last_sync if fs else {}
 
     from app.services import preferences as _prefs
-    provider = "tickflow"
-    if _public_fin():
+    if _public_fin() or capset.has(Cap.FINANCIAL):
         provider = _prefs.get_financial_provider()
     elif _local_fin_ready(request):
         provider = "local"
-    elif capset.has(Cap.FINANCIAL):
-        provider = "tickflow"
+    else:
+        provider = "none"
     # public detail coverage (expense/equity lines) for ops visibility
     detail_coverage: dict = {}
     try:
