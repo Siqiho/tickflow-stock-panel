@@ -217,6 +217,13 @@ def validate(rule: dict) -> None:
             else:
                 raise ValueError(f"第 {i+1} 个条件: op {op!r} 非法 (应为 truth 或 {OPS})")
 
+        from app.strategy.intraday_signals import uses_intraday_signals
+        if uses_intraday_signals(rule):
+            if rule.get("asset_type") == "index":
+                raise ValueError("指数监控不支持分时信号")
+            if rule.get("scope", "symbols") != "symbols":
+                raise ValueError("分时监控仅支持指定标的")
+
     # scope 校验
     if rule.get("scope", "symbols") not in SCOPES:
         raise ValueError(f"scope 必须是 {SCOPES} 之一")

@@ -46,5 +46,13 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-leftover \
     tests/test_custom_daily_routing.py \
     tests/test_index_daily_routing.py \
     tests/test_financial_custom_routing.py \
-    tests/test_custom_depth_provider.py
+    tests/test_custom_depth_provider.py \
+    tests/test_capability_augment.py \
+    tests/test_quote_snapshot_persistence.py \
+    tests/test_realtime_public_full_market.py \
+    tests/test_kline_detail_transport.py \
+    tests/test_repair_daily_override.py \
+    tests/test_capability_matrix.py
 ```
+
+云环境结果：backend 目标 **163 passed**（含先前因缺 `fetch_intraday_monitor_batch` 被deselected 的监控分时用例）。见 `evidence/test-results.md`。

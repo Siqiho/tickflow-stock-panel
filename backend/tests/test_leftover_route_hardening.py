@@ -29,7 +29,7 @@ def _adj_df(symbol: str = "000001.SZ") -> pl.DataFrame:
 
 def _route_custom_adj(monkeypatch, provider, *, name: str = "fuyao", declared: bool = True):
     monkeypatch.setattr(kline_sync.preferences, "get_adj_factor_provider", lambda: name)
-    monkeypatch.setattr(kline_sync.preferences, "is_public_adj_factor_provider", lambda: False)
+    monkeypatch.setattr(kline_sync.preferences, "is_public_adj_factor_provider", lambda *a, **k: False)
     from app.data_providers import custom
     monkeypatch.setattr(
         custom,
