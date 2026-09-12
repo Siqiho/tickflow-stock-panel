@@ -439,6 +439,9 @@ class DataStore:
             expected = (route or "").strip().lower()
             try:
                 if expected in {"tickflow", "public"}:
+                    # Untagged leftover TickFlow / public parquet has no route
+                    # column, so the SQL predicate cannot be applied. Serve the
+                    # leftover glob only when the current route is leftover.
                     self.db.execute(
                         f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {source}"
                     )

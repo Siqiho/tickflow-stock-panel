@@ -344,8 +344,8 @@ def _quote_overlay_allowed() -> bool:
 
     Custom / unresolved daily must not mix leftover TickFlow or public
     snapshots onto HTTP daily. Default leftover TickFlow daily + public
-    realtime still overlays (isolated live asset). Snapshot *files* stay
-    realtime-route gated.
+    realtime still overlays (isolated live asset, labeled
+    ``is_quote_snapshot``). Snapshot *files* stay realtime-route gated.
     """
     try:
         daily = kline_sync.daily_route()
@@ -1237,8 +1237,8 @@ def get_minute(
                 {"provider": provider, "persisted": True, "quality": result},
             )
 
-        # Leftover TickFlow may still use TDX then public/TickFlow (old contract).
-        # Declared custom minute / prefs-unreadable / resolve failure must not.
+        # Explicit public minute may still use TDX then public. Leftover
+        # TickFlow / declared custom / prefs-unreadable must not.
         may_use_tdx = False
         try:
             may_use_tdx = kline_sync.minute_may_use_leftover_public()

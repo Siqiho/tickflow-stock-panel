@@ -6,7 +6,7 @@ Keeps prior contracts:
 - leftover TickFlow + no ADJ cap still uses the public sina adapter
 - entitled TickFlow minute fallback after a custom *call* failure
 - TickFlow default depth empty result may still use public L1
-- leftover TickFlow single-symbol minute view may still use public intraday
+- leftover TickFlow single-symbol minute view no longer uses public intraday
 """
 from __future__ import annotations
 
@@ -128,20 +128,19 @@ def test_fetch_minute_single_custom_call_fail_skips_public(monkeypatch):
     public.assert_not_called()
 
 
-def test_fetch_minute_single_leftover_tickflow_keeps_public(monkeypatch):
+def test_fetch_minute_single_leftover_tickflow_skips_public(monkeypatch):
     monkeypatch.setattr(kline_sync.preferences, "get_minute_data_provider", lambda: "tickflow")
+    monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "tickflow")
     monkeypatch.setattr(
         kline_sync,
         "get_client",
         lambda: (_ for _ in ()).throw(RuntimeError("tickflow down")),
     )
-    monkeypatch.setattr(
-        kline_sync,
-        "_public_minute_fallback",
-        lambda symbol, trade_date: _minute(symbol),
-    )
+    public = MagicMock(side_effect=AssertionError("must not mix public minute"))
+    monkeypatch.setattr(kline_sync, "_public_minute_fallback", public)
     out = kline_sync.fetch_minute_single("600000.SH", date(2026, 7, 17), capset=CapabilitySet())
-    assert out["symbol"].to_list() == ["600000.SH"]
+    assert out.is_empty()
+    public.assert_not_called()
 
 
 def test_persist_minute_resolve_fail_skips_entitled_tickflow(monkeypatch, tmp_path):

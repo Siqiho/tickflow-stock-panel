@@ -9,8 +9,7 @@ Closes residual fail-open / silent mix that round 27 left documented:
 - after-hours TickFlow instrument / index jobs skip after custom daily
 - leftover TickFlow prefers tagged extras; unreadable extras stay fail-closed
 
-Keeps remaining TickFlow leftover contracts:
-- leftover TickFlow single-symbol minute view may still use public / TDX
+Keeps remaining TickFlow leftover contracts that round 30 later closed:
 - leftover TickFlow still sees untagged-only partitions
 - after-hours default clock times / .env / auth stay out of scope
 """
@@ -372,12 +371,12 @@ def test_leftover_tickflow_still_sees_untagged_only(monkeypatch, tmp_path):
     assert kline_sync.read_usable_daily_partition(part)["close"].to_list() == [10.1]
 
 
-def test_unreadable_extras_still_count_for_leftover_tickflow(monkeypatch, tmp_path):
+def test_unreadable_extras_are_fail_closed_for_leftover_tickflow(monkeypatch, tmp_path):
     part = tmp_path / "kline_daily" / "date=2026-07-17"
     part.mkdir(parents=True)
     (part / "part.parquet").write_bytes(b"")
     monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "tickflow")
-    assert kline_sync.usable_daily_partition_dates(tmp_path) == [date(2026, 7, 17)]
+    assert kline_sync.usable_daily_partition_dates(tmp_path) == []
     _patch_custom_daily(monkeypatch)
     assert kline_sync.usable_daily_partition_dates(tmp_path) == []
 

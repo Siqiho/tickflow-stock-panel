@@ -938,25 +938,24 @@ def _refresh_views(request: Request) -> None:
     db = repo.store.db
     d = repo.store.data_dir.as_posix()
 
-    # 注册旧路径视图（兼容）。kline_ext 只挂最新 date=* 分区, 不 leftover-union 历史。
-    for name, subdir in [("instruments_ext", "instruments_ext"), ("kline_ext", "kline_ext")]:
-        old_dir = Path(d) / subdir
-        if not old_dir.exists():
-            continue
-        if name == "kline_ext":
-            old_glob = _latest_date_partition_glob(old_dir)
-            if not old_glob:
-                continue
-        else:
-            old_glob = f"{d}/{subdir}/**/*.parquet"
-        sql = (
-            f"CREATE OR REPLACE VIEW {name} AS "
-            f"SELECT * FROM read_parquet('{old_glob}', union_by_name=true)"
-        )
-        try:
-            db.execute(sql)
-        except Exception:
-            pass
+    # instruments_ext follows the daily route. Do not leftover-glob remount.
+    store = getattr(repo, "store", None)
+    if store is not None and hasattr(store, "re_gate_catalog_views"):
+        store.re_gate_catalog_views()
+
+    # kline_ext 只挂最新 date=* 分区, 不 leftover-union 历史。
+    old_dir = Path(d) / "kline_ext"
+    if old_dir.exists():
+        old_glob = _latest_date_partition_glob(old_dir)
+        if old_glob:
+            sql = (
+                f"CREATE OR REPLACE VIEW kline_ext AS "
+                f"SELECT * FROM read_parquet('{old_glob}', union_by_name=true)"
+            )
+            try:
+                db.execute(sql)
+            except Exception:
+                pass
 
     # 注册新路径视图：每个扩展表一个视图 ext_{config_id}
     ext_base = Path(d) / "ext_data"

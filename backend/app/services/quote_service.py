@@ -122,7 +122,8 @@ def quote_snapshot_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("quote snapshot probe failed %s: %s", part, exc)
-        return expected in {"tickflow", "public"}
+        # Corrupt leftovers used to mint a TickFlow / public calendar entry.
+        return False
     return quote_snapshot_cache_usable(df, expected)
 
 
