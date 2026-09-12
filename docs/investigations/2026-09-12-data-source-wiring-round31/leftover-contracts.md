@@ -12,6 +12,6 @@ in a later hardening round unless product explicitly changes the contract.
 | Explicit `adj=public` / `depth5=public` / `financial=public` / `pool=public` | settings + `/api/free-ext` | User-selected public surface; leftover TickFlow Lab still refuses |
 | `.env` / auth | settings / secrets | Out of scope for routing hardening |
 
-Closed in this round (not leftovers): unreadable leftover TickFlow daily / minute probes (calendars / catalog / usable reads stay fail-closed); unreadable tagged leftover no longer falls back to untagged extras; leftover TickFlow `kline_ext` remount / date-range after a custom daily; unreadable leftover `kline_ext` date markers; leftover TickFlow financial / pool jobs after a custom or unresolved daily.
+Closed in this round (not leftovers): unreadable leftover TickFlow calendars stay fail-closed; unreadable tagged leftover no longer falls back to untagged extras (reads / catalog / get_minute stay fail-loud on leftover TickFlow); leftover TickFlow `kline_ext` remount / date-range after a custom daily; unreadable leftover `kline_ext` date markers; leftover TickFlow financial / pool jobs after a custom or unresolved daily.
 
 Round 30 already closed: leftover TickFlow single-symbol public / TDX minute; leftover TickFlow minute / depth / full-minute / adj after a custom daily; unreadable leftover TickFlow *calendars* (reads / catalog / get_minute stay fail-loud on direct leftover reads); custom-route DuckDB remount no longer leftover-globs; HTTP ext leftover-glob of `instruments_ext`.

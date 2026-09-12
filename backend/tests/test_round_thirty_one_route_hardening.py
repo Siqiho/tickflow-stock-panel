@@ -1,7 +1,7 @@
 """Thirty-first-round leftover mix-source / fail-open paths.
 
 Closes residual fail-open / silent mix that round 30 left documented:
-- unreadable leftover daily / minute probes no longer mint calendars
+- unreadable leftover calendars stay fail-closed; leftover reads stay fail-loud
 - unreadable tagged leftover no longer falls back to untagged extras
 - leftover TickFlow kline_ext remount skips after custom daily
 - unreadable leftover kline_ext date markers no longer mint a view
@@ -104,9 +104,10 @@ def test_unreadable_daily_probe_is_fail_closed(monkeypatch, tmp_path):
     part.parent.mkdir(parents=True)
     part.write_bytes(b"")
     monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "tickflow")
-    assert kline_sync.daily_partition_usable(part) is False
+    # Leftover TickFlow readers stay fail-loud; calendars stay fail-closed.
+    assert kline_sync.daily_partition_usable(part) is True
     assert kline_sync.usable_daily_partition_dates(tmp_path) == []
-    assert kline_sync.usable_daily_partition_files(part.parent) == []
+    assert kline_sync.usable_daily_partition_files(part.parent) == [part]
     assert kline_sync.read_usable_daily_partition(part.parent).is_empty()
 
 
@@ -115,9 +116,9 @@ def test_unreadable_minute_probe_is_fail_closed(monkeypatch, tmp_path):
     part.parent.mkdir(parents=True)
     part.write_bytes(b"")
     monkeypatch.setattr(kline_sync.preferences, "get_minute_data_provider", lambda: "tickflow")
-    assert kline_sync.minute_partition_usable(part) is False
+    assert kline_sync.minute_partition_usable(part) is True
     assert kline_sync.usable_minute_partition_dates(tmp_path) == []
-    assert kline_sync.usable_minute_partition_files(part.parent) == []
+    assert kline_sync.usable_minute_partition_files(part.parent) == [part]
 
 
 def test_unreadable_tagged_leftover_does_not_mix_untagged(monkeypatch, tmp_path):
@@ -127,7 +128,9 @@ def test_unreadable_tagged_leftover_does_not_mix_untagged(monkeypatch, tmp_path)
     _daily_df().write_parquet(part / "extra.parquet")
     monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "tickflow")
     assert kline_sync.usable_daily_partition_dates(tmp_path) == []
-    assert kline_sync.usable_daily_partition_files(part) == []
+    assert [path.name for path in kline_sync.usable_daily_partition_files(part)] == [
+        "part.parquet",
+    ]
     assert kline_sync.read_usable_daily_partition(part).is_empty()
 
 
@@ -138,7 +141,9 @@ def test_unreadable_tagged_minute_does_not_mix_untagged(monkeypatch, tmp_path):
     _minute_df().write_parquet(part / "extra.parquet")
     monkeypatch.setattr(kline_sync.preferences, "get_minute_data_provider", lambda: "tickflow")
     assert kline_sync.usable_minute_partition_dates(tmp_path) == []
-    assert kline_sync.usable_minute_partition_files(part) == []
+    assert [path.name for path in kline_sync.usable_minute_partition_files(part)] == [
+        "part.parquet",
+    ]
 
 
 def test_unreadable_tagged_quote_does_not_mix_untagged(monkeypatch, tmp_path):
@@ -150,12 +155,12 @@ def test_unreadable_tagged_quote_does_not_mix_untagged(monkeypatch, tmp_path):
     assert usable_quote_snapshot_files(part) == []
 
 
-def test_catalog_skips_unreadable_leftover_daily(monkeypatch, tmp_path):
+def test_catalog_keeps_unreadable_leftover_daily_fail_loud(monkeypatch, tmp_path):
     part = tmp_path / "kline_daily" / "date=2026-07-17" / "part.parquet"
     part.parent.mkdir(parents=True)
     part.write_bytes(b"")
     monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "tickflow")
-    assert _catalog_file_usable("stock_daily", part) is False
+    assert _catalog_file_usable("stock_daily", part) is True
 
 
 def test_kline_ext_skips_after_custom_daily(monkeypatch, tmp_path):

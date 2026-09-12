@@ -291,9 +291,9 @@ def daily_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("daily partition probe failed %s: %s", part, exc)
-        # Empty / corrupt leftovers used to mint TickFlow / public calendars
-        # and catalog coverage. Fail-closed for leftover and custom alike.
-        return False
+        # Calendars omit these files via _parquet_probe_readable.
+        # Reads / catalog / get_minute stay fail-loud on leftover TickFlow.
+        return expected in {"tickflow", "public"}
     return daily_cache_usable(df, expected)
 
 
@@ -320,6 +320,7 @@ def prefer_tagged_route_files(files, expected):
     if token not in {"tickflow", "public"}:
         return files
     tagged = []
+    unreadable_tagged = []
     saw_tagged = False
     for path in files:
         try:
@@ -335,14 +336,16 @@ def prefer_tagged_route_files(files, expected):
             if nonempty and all(s == token for s in nonempty):
                 tagged.append(path)
         except Exception:  # noqa: BLE001
-            # Route column (or the file) is unreadable. Treat as tagged so
-            # untagged extras beside a corrupt leftover cannot silent-mix.
+            # Route column (or the file) is unreadable. Keep the file so
+            # leftover TickFlow readers can fail-loud, but do not fall back
+            # to same-day untagged extras.
             saw_tagged = True
+            unreadable_tagged.append(path)
             continue
     if tagged:
         return tagged
     if saw_tagged:
-        return []
+        return unreadable_tagged
     return files
 
 
@@ -2003,8 +2006,9 @@ def minute_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("minute partition probe failed %s: %s", part, exc)
-        # Empty / corrupt leftovers used to mint TickFlow / public calendars.
-        return False
+        # Calendars omit these files via _parquet_probe_readable.
+        # Reads / catalog / get_minute stay fail-loud on leftover TickFlow.
+        return expected in {"tickflow", "public"}
     return minute_cache_usable(df, expected)
 
 
