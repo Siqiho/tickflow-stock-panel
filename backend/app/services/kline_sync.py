@@ -398,19 +398,35 @@ def live_enriched_overlay_allowed() -> bool:
     return live_daily_persist_allowed()
 
 
+def refresh_gated_catalog_views(repo: KlineRepository) -> None:
+    """Refresh DuckDB views without an ungated leftover-visible window."""
+    store = getattr(repo, "store", None)
+    if store is None:
+        return
+
+    def _refresh() -> None:
+        refresher = getattr(store, "refresh_gated_views", None)
+        if callable(refresher):
+            refresher()
+            return
+        store.re_gate_catalog_views()
+        unified = getattr(store, "_register_unified_views", None)
+        if callable(unified):
+            unified()
+
+    lock = getattr(repo, "_lock", None)
+    try:
+        if lock is not None:
+            with lock:
+                _refresh()
+        else:
+            _refresh()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gated catalog refresh failed: %s", e)
+
+
 def _refresh_daily_view(repo: KlineRepository) -> None:
-    try:
-        d = repo.store.data_dir.as_posix()
-        repo.db.execute(
-            f"""CREATE OR REPLACE VIEW kline_daily AS
-                SELECT * FROM read_parquet('{d}/kline_daily/**/*.parquet', union_by_name=true)"""
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.warning("refresh view failed: %s", e)
-    try:
-        repo.store.re_gate_catalog_views()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("re-gate catalog views after daily refresh failed: %s", e)
+    refresh_gated_catalog_views(repo)
 
 
 def _iter_custom_daily_chunks(
@@ -2606,7 +2622,12 @@ def _cleanup_null_datetime_minute(repo: KlineRepository) -> None:
 
 
 def _migrate_symbol_to_date_partition(repo: KlineRepository) -> None:
-    """将旧版 symbol= 分区迁移为 date= 分区。迁移完成后删除旧目录。"""
+    """将旧版 symbol= 分区迁移为 date= 分区。迁移完成后删除旧目录。
+
+    Leftover TickFlow / public frames stay visible only for leftover
+    TickFlow. Custom / unresolved routes must not republish stale
+    TickFlow symbol partitions as untagged date files.
+    """
     minute_dir = repo.store.data_dir / "kline_minute"
     if not minute_dir.exists():
         return
@@ -2615,13 +2636,22 @@ def _migrate_symbol_to_date_partition(repo: KlineRepository) -> None:
     if not old_dirs:
         return
 
+    try:
+        expected = minute_route()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("minute migration skipped: %s", exc)
+        return
+    if not expected or expected == "unresolved":
+        logger.debug("minute migration skipped: route unresolved")
+        return
+
     logger.info("migrating %d symbol-partitioned minute-K dirs to date partition…", len(old_dirs))
 
     all_frames: list[pl.DataFrame] = []
     for sym_dir in old_dirs:
         for pq in sym_dir.glob("*.parquet"):
             try:
-                df = pl.read_parquet(pq)
+                df = filter_minute_cache(pl.read_parquet(pq), expected)
                 if "datetime" in df.columns:
                     df = df.filter(pl.col("datetime").is_not_null())
                 if not df.is_empty():
@@ -2636,20 +2666,18 @@ def _migrate_symbol_to_date_partition(repo: KlineRepository) -> None:
             for f in d.rglob("*"):
                 if f.is_file():
                     f.unlink()
-            d.rmdir()
+            try:
+                d.rmdir()
+            except OSError:
+                pass
         return
 
     combined = pl.concat(all_frames, how="diagonal_relaxed")
     combined = combined.unique(subset=["symbol", "datetime"], keep="last")
+    combined = _with_minute_route(combined, expected)
 
-    # 按日期写新分区
-    combined = combined.with_columns(pl.col("datetime").dt.date().alias("_trade_date"))
-    for day_df in combined.partition_by("_trade_date"):
-        trade_date = day_df["_trade_date"][0]
-        out = minute_dir / f"date={trade_date}" / "part.parquet"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        day_df = day_df.drop("_trade_date").sort("symbol", "datetime")
-        atomic_write_parquet(day_df, out)
+    # 按日期写新分区（走现有 route-aware upsert，不覆盖 leftover 成未标记）
+    _write_minute_partition(combined, minute_dir)
 
     # 删旧目录
     for d in old_dirs:

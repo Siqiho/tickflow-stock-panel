@@ -501,6 +501,19 @@ class DataStore:
             logger.warning("re-gate catalog views failed, fail-closed: %s", exc)
             self._fail_closed_route_views()
 
+    def refresh_gated_views(self) -> None:
+        """Refresh catalog views without an ungated leftover-visible window.
+
+        Callers used to ``CREATE VIEW`` from raw ``**/*.parquet`` and only
+        then re-gate. Concurrent SQL between those statements saw leftover
+        TickFlow after a custom switch.
+        """
+        self.re_gate_catalog_views()
+        try:
+            self._register_unified_views()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("unified views after gated refresh failed: %s", exc)
+
     def _register_unified_views(self) -> None:
         """Register optional all-asset views when their backing parquet exists.
 
@@ -614,6 +627,7 @@ class KlineRepository:
         self._etf_symbol_set_cache: set[str] | None = None
         self._historical_shares_cache: pl.DataFrame | None = None
         self._historical_shares_mtime_ns: int | None = None
+        self._historical_shares_route: str | None = None
 
         # parquet glob 路径
         self._enriched_glob = str(store.data_dir / "kline_daily_enriched" / "**" / "*.parquet")
@@ -672,6 +686,7 @@ class KlineRepository:
         self._etf_symbol_set_cache = None
         self._historical_shares_cache = None
         self._historical_shares_mtime_ns = None
+        self._historical_shares_route = None
 
     def _refresh_enriched(self) -> None:
         """从 parquet 加载 enriched 最新日到内存 + 构建聚合表。
@@ -1306,17 +1321,32 @@ class KlineRepository:
         return self._instruments_cache
 
     def get_historical_shares(self) -> pl.DataFrame:
-        """读取财务股本历史，并在文件更新后自动刷新缓存。
+        """读取财务股本历史，并在文件或财务 route 变化后刷新缓存。
 
         regime_builder / compute_enriched_history_window 的实际依赖;
-        无股本文件时返回空表, 不阻塞环境补算。
+        无股本文件时返回空表, 不阻塞环境补算。切源后同一 mtime 不能复用 leftover。
         """
         path = self.store.data_dir / "financials" / "shares" / "part.parquet"
         mtime_ns = path.stat().st_mtime_ns if path.exists() else None
-        if self._historical_shares_cache is None or mtime_ns != self._historical_shares_mtime_ns:
-            from app.share_capital import load_share_history
-            self._historical_shares_cache = load_share_history(self.store.data_dir)
+        try:
+            from app.services.financial_sync import financial_write_route
+
+            route_token = financial_write_route()
+        except Exception:  # noqa: BLE001
+            route_token = "unresolved"
+        if (
+            self._historical_shares_cache is None
+            or mtime_ns != self._historical_shares_mtime_ns
+            or self._historical_shares_route != route_token
+        ):
+            if route_token == "unresolved":
+                self._historical_shares_cache = pl.DataFrame()
+            else:
+                from app.share_capital import load_share_history
+
+                self._historical_shares_cache = load_share_history(self.store.data_dir)
             self._historical_shares_mtime_ns = mtime_ns
+            self._historical_shares_route = route_token
         return self._historical_shares_cache
 
     def get_index_instruments(self) -> pl.DataFrame:
@@ -1859,23 +1889,27 @@ class KlineRepository:
     # DuckDB 查询 (冷路径: 统计/元数据/自定义SQL)
     # ================================================================
 
-    def latest_minute_date(self, symbol: str) -> date | None:
+    def latest_minute_date(self, symbol: str, asset_type: str = "stock") -> date | None:
         """Newest route-usable minute date that contains ``symbol``.
 
         DuckDB ``kline_minute`` can be temporarily ungated; file provenance
         is the source of truth so a custom minute route cannot treat leftover
-        TickFlow/public parquet as current coverage.
+        TickFlow/public parquet as current coverage. ETF symbols read
+        ``kline_etf_minute``, not the stock store.
         """
         from app.services.kline_sync import safe_usable_minute_partition_dates
 
-        dates = safe_usable_minute_partition_dates(self.store.data_dir)
+        dates = safe_usable_minute_partition_dates(
+            self.store.data_dir, asset_type=asset_type,
+        )
         if not dates:
             return None
         wanted = str(symbol or "").strip()
         if not wanted:
             return dates[-1]
+        subdir = "kline_etf_minute" if asset_type == "etf" else "kline_minute"
         for day in reversed(dates):
-            part = self.store.data_dir / "kline_minute" / f"date={day.isoformat()}" / "part.parquet"
+            part = self.store.data_dir / subdir / f"date={day.isoformat()}" / "part.parquet"
             try:
                 frame = pl.read_parquet(part, columns=["symbol"])
             except Exception:  # noqa: BLE001
@@ -2111,42 +2145,17 @@ class KlineRepository:
         self._refresh_etf_instruments()
 
     def refresh_index_views(self) -> None:
-        """刷新指数相关 DuckDB 视图。"""
-        d = self.store.data_dir.as_posix()
-        statements = [
-            f"""CREATE OR REPLACE VIEW kline_index_daily AS
-                SELECT * FROM read_parquet('{d}/kline_index_daily/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW kline_index_enriched AS
-                SELECT * FROM read_parquet('{d}/kline_index_enriched/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW kline_etf_daily AS
-                SELECT * FROM read_parquet('{d}/kline_etf_daily/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW kline_etf_enriched AS
-                SELECT * FROM read_parquet('{d}/kline_etf_enriched/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW instruments_index AS
-                SELECT * FROM read_parquet('{d}/instruments_index/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW instruments_etf AS
-                SELECT * FROM read_parquet('{d}/instruments_etf/**/*.parquet', union_by_name=true)""",
-        ]
-        for sql in statements:
-            try:
-                with self._lock:
-                    self.db.execute(sql)
-            except Exception as e:  # noqa: BLE001
-                logger.debug("index/etf view refresh skipped: %s", e)
-        with self._lock:
-            self.store.re_gate_catalog_views()
-            self.store._register_unified_views()
+        """刷新指数相关 DuckDB 视图，不经过 leftover-visible 裸 glob。"""
+        from app.services.kline_sync import refresh_gated_catalog_views
+
+        refresh_gated_catalog_views(self)
 
     def refresh_minute_views(self) -> None:
-        """Refresh stock-minute and unified DuckDB views after an atomic publish."""
-        d = self.store.data_dir.as_posix()
-        sql = f"""CREATE OR REPLACE VIEW kline_minute AS
-            SELECT * FROM read_parquet('{d}/kline_minute/**/*.parquet', union_by_name=true)"""
+        """Refresh minute and unified DuckDB views after an atomic publish."""
+        from app.services.kline_sync import refresh_gated_catalog_views
+
         try:
-            with self._lock:
-                self.db.execute(sql)
-                self.store.re_gate_catalog_views()
-                self.store._register_unified_views()
+            refresh_gated_catalog_views(self)
         except Exception as exc:  # noqa: BLE001
             logger.warning("minute view refresh failed: %s", exc)
             self.store._fail_closed_route_views()
