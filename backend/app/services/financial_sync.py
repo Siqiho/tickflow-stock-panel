@@ -424,8 +424,10 @@ def get_financial_df(data_dir: Path, table: str) -> pl.DataFrame:
         return pl.DataFrame()
     if not route or route == "unresolved":
         return pl.DataFrame()
+    from app.services.kline_sync import preferred_readable_route_files
+
     frames: list[pl.DataFrame] = []
-    for path in sorted(folder.glob("*.parquet")):
+    for path in preferred_readable_route_files(sorted(folder.glob("*.parquet")), route):
         try:
             df = pl.read_parquet(path)
         except Exception as e:

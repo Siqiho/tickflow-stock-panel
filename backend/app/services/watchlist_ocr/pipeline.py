@@ -59,24 +59,14 @@ def build_instrument_lookups(data_dir: Path) -> tuple[dict[str, str], dict[str, 
     code_to_symbol: dict[str, str] = {}
     symbol_to_name: dict[str, str] = {}
 
-    paths: list[Path] = []
-    inst_dir = data_dir / "instruments"
-    if inst_dir.is_dir():
-        named = inst_dir / "instruments.parquet"
-        if named.exists():
-            paths.append(named)
-        paths.extend(p for p in sorted(inst_dir.glob("*.parquet")) if p not in paths)
-    etf_dir = data_dir / "instruments_etf"
-    if etf_dir.is_dir():
-        paths.extend(sorted(etf_dir.glob("*.parquet")))
+    from app.services.instrument_sync import read_usable_instruments
 
-    for path in paths:
-        if not path.exists():
-            continue
+    frames = [
+        read_usable_instruments(data_dir, kind="instruments"),
+        read_usable_instruments(data_dir, kind="instruments_etf"),
+    ]
+    for df in frames:
         try:
-            from app.services.instrument_sync import filter_instruments, instrument_route
-
-            df = filter_instruments(pl.read_parquet(path), instrument_route())
             if "symbol" not in df.columns or df.is_empty():
                 continue
             has_code = "code" in df.columns
@@ -97,7 +87,7 @@ def build_instrument_lookups(data_dir: Path) -> tuple[dict[str, str], dict[str, 
                     if name:
                         symbol_to_name.setdefault(symbol, name)
         except Exception as e:  # noqa: BLE001
-            logger.debug("read instruments %s failed: %s", path, e)
+            logger.debug("read usable instruments failed: %s", e)
 
     return code_to_symbol, symbol_to_name
 

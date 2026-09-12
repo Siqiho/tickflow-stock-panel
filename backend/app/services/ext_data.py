@@ -457,10 +457,13 @@ def latest_ext_parquet_files(
 
     Overview / RPS / watchlist used to leftover-union every historical
     timeseries partition. DuckDB / screener already mount the latest
-    date. Leftover later partitions must not mix after a refresh.
+    date.     Leftover later partitions must not mix after a refresh.
     Leftover ``part.parquet`` must not hide a same-date extra, and a
     later extra-only date must not lose to an older leftover part.
+    Unreadable date markers must not mint the latest partition.
     """
+    from app.services.kline_sync import _parquet_probe_readable
+
     base = Path(data_dir) / "ext_data" / config.id
     if getattr(config, "mode", "snapshot") == "timeseries":
         root = base / "timeseries"
@@ -468,26 +471,41 @@ def latest_ext_parquet_files(
             part = root / f"date={str(snapshot_date)[:10]}"
             if not part.is_dir():
                 return []
-            return [path for path in sorted(part.glob("*.parquet")) if path.is_file()]
+            return [
+                path for path in sorted(part.glob("*.parquet"))
+                if path.is_file() and _parquet_probe_readable(path)
+            ]
         if not root.is_dir():
             return []
         partitions = sorted(
             child for child in root.iterdir()
             if child.is_dir() and child.name.startswith("date=")
-            and any(child.glob("*.parquet"))
         )
-        if not partitions:
-            return []
-        return [path for path in sorted(partitions[-1].glob("*.parquet")) if path.is_file()]
-    return [path for path in sorted(base.glob("*.parquet")) if path.is_file()]
+        for child in reversed(partitions):
+            files = [
+                path for path in sorted(child.glob("*.parquet"))
+                if path.is_file() and _parquet_probe_readable(path)
+            ]
+            if files:
+                return files
+        return []
+    return [
+        path for path in sorted(base.glob("*.parquet"))
+        if path.is_file() and _parquet_probe_readable(path)
+    ]
 
 
 def usable_ext_snapshot_files(data_dir: Path, config_id: str) -> list[Path]:
     """Snapshot extras for one ext config. Leftover part must not hide extras."""
+    from app.services.kline_sync import _parquet_probe_readable
+
     root = Path(data_dir) / "ext_data" / config_id
     if not root.is_dir():
         return []
-    return [path for path in sorted(root.glob("*.parquet")) if path.is_file()]
+    return [
+        path for path in sorted(root.glob("*.parquet"))
+        if path.is_file() and _parquet_probe_readable(path)
+    ]
 
 
 def _ext_merge_keys(df: pl.DataFrame, existing: pl.DataFrame | None = None) -> list[str]:

@@ -215,8 +215,14 @@ def _latest_date_partition_glob(root: Path) -> str | None:
     )
     for child in reversed(partitions):
         files = [path for path in child.glob("*.parquet") if path.is_file()]
-        if files and any(_parquet_probe_readable(path) for path in files):
+        readable = [path for path in files if _parquet_probe_readable(path)]
+        if not readable:
+            continue
+        if set(readable) == set(files):
             return f"{child.as_posix()}/*.parquet"
+        if len(readable) == 1:
+            return readable[0].as_posix()
+        return f"{child.as_posix()}/*.parquet"
     return None
 
 
@@ -313,22 +319,31 @@ def _latest_sync_date(config: ExtConfig, data_dir: Path) -> str | None:
             return None
     if not base.exists():
         return None
-    return _latest_sync_from_partitions(base)
+    return _latest_sync_from_partitions(
+        base, leftover_tickflow=base.name == "kline_ext" and _legacy_kline_ext_visible(),
+    )
 
 
-def _latest_sync_from_partitions(base: Path) -> str | None:
+def _partition_calendar_files(part: Path, *, leftover_tickflow: bool) -> list[Path]:
+    files = [path for path in part.glob("*.parquet") if path.is_file()]
+    if leftover_tickflow:
+        from app.services.kline_sync import preferred_readable_route_files
+
+        return preferred_readable_route_files(files, "tickflow")
+    from app.services.kline_sync import _parquet_probe_readable
+
+    return [path for path in files if _parquet_probe_readable(path)]
+
+
+def _latest_sync_from_partitions(base: Path, *, leftover_tickflow: bool = False) -> str | None:
     """从 date=xxx 分区目录中找到最新分区的修改时间。"""
     from datetime import datetime
-
-    from app.services.kline_sync import _parquet_probe_readable
 
     latest_ts: float = 0
     latest_date: str | None = None
     for d in base.iterdir():
         if d.is_dir() and d.name.startswith("date="):
-            for f in d.glob("*.parquet"):
-                if not _parquet_probe_readable(f):
-                    continue
+            for f in _partition_calendar_files(d, leftover_tickflow=leftover_tickflow):
                 mtime = f.stat().st_mtime
                 if mtime > latest_ts:
                     latest_ts = mtime
@@ -351,12 +366,11 @@ def _date_range(config: ExtConfig, data_dir: Path) -> list[str] | None:
             return None
     if not base.exists():
         return None
-    from app.services.kline_sync import _parquet_probe_readable
-
+    leftover_tickflow = base.name == "kline_ext" and _legacy_kline_ext_visible()
     dates: list[str] = []
     for d in base.iterdir():
         if d.is_dir() and d.name.startswith("date="):
-            if any(_parquet_probe_readable(path) for path in d.glob("*.parquet") if path.is_file()):
+            if _partition_calendar_files(d, leftover_tickflow=leftover_tickflow):
                 dates.append(d.name[5:])
     if len(dates) < 1:
         return None

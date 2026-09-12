@@ -324,7 +324,9 @@ def _seal_fund_map(data_dir: Path, trade_date: date) -> dict[str, float]:
         route = depth_route()
     except Exception:  # noqa: BLE001
         return out
-    for path in sorted(part.glob("*.parquet")):
+    from app.services.kline_sync import preferred_readable_route_files
+
+    for path in preferred_readable_route_files(sorted(part.glob("*.parquet")), route):
         try:
             sdf = pl.read_parquet(path)
         except Exception:

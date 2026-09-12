@@ -1246,6 +1246,20 @@ def _board_daily_id(kind: Literal["board", "concept"]) -> str:
     return "ext_fund_flow_bk_daily" if kind == "board" else "ext_fund_flow_concept_daily"
 
 
+def _usable_ext_timeseries_files(root: Path) -> list[Path]:
+    """Readable leftover TickFlow extras per date; unreadable tagged leftover does not mix."""
+    if not Path(root).exists():
+        return []
+    from app.services.kline_sync import daily_route, preferred_readable_route_files_by_dir
+
+    try:
+        expected = daily_route()
+    except Exception:  # noqa: BLE001
+        expected = "unresolved"
+    files = [path for path in sorted(Path(root).rglob("*.parquet")) if path.is_file()]
+    return preferred_readable_route_files_by_dir(files, expected)
+
+
 def _industry_h5_latest_coverage(
     data_dir: Path,
     snapshot_codes: list[str],
@@ -1257,7 +1271,7 @@ def _industry_h5_latest_coverage(
     if not daily_root.exists() or not wanted:
         return None, False, 0
     frames: list[pl.DataFrame] = []
-    for path in daily_root.rglob("*.parquet"):
+    for path in _usable_ext_timeseries_files(daily_root):
         try:
             frames.append(pl.read_parquet(path))
         except Exception:
@@ -1299,7 +1313,7 @@ def _industry_local_h5_dates(
     if not daily_root.exists() or not wanted:
         return out
     frames: list[pl.DataFrame] = []
-    for path in daily_root.rglob("*.parquet"):
+    for path in _usable_ext_timeseries_files(daily_root):
         try:
             frames.append(pl.read_parquet(path))
         except Exception:
@@ -1703,7 +1717,7 @@ def load_stock_fund_flow(data_dir: Path, symbol: str, *, limit: int = 60) -> lis
     root = Path(data_dir) / "ext_data" / "ext_fund_flow_stock" / "timeseries"
     if not root.exists():
         return []
-    files = sorted(root.rglob("*.parquet"))
+    files = _usable_ext_timeseries_files(root)
     if not files:
         return []
     dfs = []
@@ -1735,7 +1749,7 @@ def load_board_daily_history(
     root = Path(data_dir) / "ext_data" / config_id / "timeseries"
     if not root.exists():
         return []
-    files = sorted(root.rglob("*.parquet"))
+    files = _usable_ext_timeseries_files(root)
     if not files:
         return []
     dfs = []
@@ -1769,7 +1783,7 @@ def load_board_intraday(
     if not root.exists():
         return []
     code_u = str(code).upper()
-    files = sorted(root.rglob("*.parquet"))
+    files = _usable_ext_timeseries_files(root)
     if trade_date:
         td = trade_date[:10]
         files = [f for f in files if f"date={td}" in str(f)]
@@ -1966,7 +1980,7 @@ def aggregate_board_window(
     except Exception:
         snapshot_rows = 0
         snapshot_items = []
-    files = sorted(daily_root.rglob("*.parquet")) if daily_root.exists() else []
+    files = _usable_ext_timeseries_files(daily_root) if daily_root.exists() else []
     daily = pl.DataFrame()
     if files:
         frames = []
