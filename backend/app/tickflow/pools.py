@@ -95,6 +95,10 @@ def pool_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
         return False
     if route in {"custom", "unresolved"}:
         return False
+    from app.services.kline_sync import leftover_tickflow_files_allowed
+
+    if not leftover_tickflow_files_allowed(route):
+        return False
     if "route" in df.columns:
         stored = str(df["route"][0] or "").strip().lower()
         return bool(stored) and stored == route

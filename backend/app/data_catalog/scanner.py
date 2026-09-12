@@ -174,9 +174,29 @@ def _catalog_file_usable(dataset_id: str, path: Path) -> bool:
     unresolved never reuse leftover TickFlow as current coverage after a
     rescan. Instruments follow the daily route. Same-directory untagged
     extras beside tagged leftover are filtered later by
-    :func:`_catalog_material_files`.
+    :func:`_catalog_material_files`. Known leftover TickFlow-routed
+    datasets do not leftover-serve after a custom or unresolved daily.
+    Ext extras stay visible.
     """
     try:
+        if dataset_id in (
+            _DAILY_DATASETS
+            | _MINUTE_DATASETS
+            | _ADJ_DATASETS
+            | _FINANCIAL_DATASETS
+            | _DEPTH_DATASETS
+            | _POOL_DATASETS
+            | _QUOTE_DATASETS
+            | _MEMBERSHIP_DATASETS
+            | _CORP_DATASETS
+            | _INSTRUMENT_DATASETS
+        ):
+            token = _catalog_route_token(dataset_id)
+            if token == "tickflow":
+                from app.services.kline_sync import leftover_tickflow_follow_daily
+
+                if not leftover_tickflow_follow_daily():
+                    return False
         if dataset_id in _DAILY_DATASETS:
             from app.services.kline_sync import daily_partition_usable
 

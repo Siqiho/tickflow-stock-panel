@@ -138,11 +138,15 @@ def test_resolve_universe_custom_pool_skips_tickflow_all_a(monkeypatch):
 def test_tickflow_all_a_allowed_only_for_leftover_tickflow(monkeypatch):
     monkeypatch.setattr(pools, "pool_route", lambda: "tickflow")
     monkeypatch.setattr(kline_sync, "daily_provider_is_custom", lambda: False)
+    monkeypatch.setattr(kline_sync, "leftover_tickflow_follow_daily", lambda: True)
     assert tickflow_all_a_expansion_allowed(_capset(Cap.KLINE_DAILY_BATCH), scope="ALL") is True
     assert tickflow_all_a_expansion_allowed(_capset(Cap.KLINE_DAILY_BATCH), scope="CSI300") is False
     monkeypatch.setattr(kline_sync, "daily_provider_is_custom", lambda: True)
     assert tickflow_all_a_expansion_allowed(_capset(Cap.KLINE_DAILY_BATCH), scope="ALL") is False
     monkeypatch.setattr(kline_sync, "daily_provider_is_custom", lambda: False)
+    monkeypatch.setattr(kline_sync, "leftover_tickflow_follow_daily", lambda: False)
+    assert tickflow_all_a_expansion_allowed(_capset(Cap.KLINE_DAILY_BATCH), scope="ALL") is False
+    monkeypatch.setattr(kline_sync, "leftover_tickflow_follow_daily", lambda: True)
     monkeypatch.setattr(pools, "pool_route", lambda: "public")
     assert tickflow_all_a_expansion_allowed(_capset(Cap.KLINE_DAILY_BATCH), scope="ALL") is False
 

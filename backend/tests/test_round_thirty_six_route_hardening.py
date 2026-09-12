@@ -276,7 +276,7 @@ def test_index_instruments_primitive_still_uses_leftover_tickflow(monkeypatch):
     items.assert_called()
 
 
-def test_financial_status_provider_local_after_custom_daily(monkeypatch, tmp_path):
+def test_financial_status_provider_none_after_custom_daily(monkeypatch, tmp_path):
     _tickflow_financial(monkeypatch)
     _patch_custom_daily(monkeypatch)
     folder = tmp_path / "financials" / "metrics"
@@ -292,8 +292,8 @@ def test_financial_status_provider_local_after_custom_daily(monkeypatch, tmp_pat
         ),
     )
     status = financials_api.financial_status(request)
-    assert status["available"] is True
-    assert status["provider"] == "local"
+    assert status["available"] is False
+    assert status["provider"] == "none"
 
 
 def test_feature_availability_does_not_advertise_tickflow_fin_after_custom_daily(
@@ -310,8 +310,8 @@ def test_feature_availability_does_not_advertise_tickflow_fin_after_custom_daily
     folder.mkdir(parents=True)
     _fin_df().write_parquet(folder / "part.parquet")
     feats = feature_availability(_capset(Cap.FINANCIAL), data_dir=tmp_path)
-    assert feats["financial"]["source"] == "local"
-    assert feats["financial"]["available"] is True
+    assert feats["financial"]["source"] == "none"
+    assert feats["financial"]["available"] is False
 
 
 def test_sector_monitor_stamp_skips_unreadable_extras(tmp_path):
