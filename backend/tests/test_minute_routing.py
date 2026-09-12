@@ -1231,8 +1231,8 @@ def test_sync_minute_batch_custom_fail_empty_capset_skips_tickflow(monkeypatch):
     tickflow.klines.batch.assert_not_called()
 
 
-def test_sync_minute_batch_custom_fail_entitled_keeps_tickflow_fallback(monkeypatch):
-    """已具 KLINE_MINUTE_BATCH 时, 自定义失败仍可回退 TickFlow。"""
+def test_sync_minute_batch_custom_fail_entitled_stays_fail_closed(monkeypatch):
+    """已声明自定义分钟源调用失败不再回退 TickFlow，即使具备 minute cap。"""
     from app.tickflow.capabilities import Cap, CapabilityLimits, CapabilitySet
 
     mock_provider = MagicMock()
@@ -1253,8 +1253,9 @@ def test_sync_minute_batch_custom_fail_entitled_keeps_tickflow_fallback(monkeypa
     )
 
     assert isinstance(df, pl.DataFrame)
-    get_client.assert_called_once()
-    tickflow.klines.batch.assert_called_once()
+    assert df.is_empty()
+    get_client.assert_not_called()
+    tickflow.klines.batch.assert_not_called()
 
 
 def test_get_minute_batch_custom_fail_missing_capset_does_not_construct_tickflow(monkeypatch, tmp_path):

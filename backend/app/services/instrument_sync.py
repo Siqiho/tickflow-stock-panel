@@ -23,6 +23,67 @@ from app.tickflow.client import get_client
 
 logger = logging.getLogger(__name__)
 
+
+def instrument_route() -> str:
+    """Instruments follow the daily route. There is no instrument_provider."""
+    try:
+        from app.services.kline_sync import daily_route
+
+        return daily_route()
+    except Exception:  # noqa: BLE001
+        return "unresolved"
+
+
+def instruments_sync_allowed() -> bool:
+    """TickFlow instrument fetch/write only for leftover TickFlow daily."""
+    return instrument_route() == "tickflow"
+
+
+def instrument_cache_usable(df: pl.DataFrame | None, route: str | None = None) -> bool:
+    """Whether on-disk instruments may be served for the current daily route.
+
+    Leftover TickFlow still sees untagged files. Custom / unresolved never
+    reuse leftover TickFlow universe as if it belonged to the current daily.
+    """
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return False
+    expected = (route if route is not None else instrument_route()).strip().lower()
+    if not expected or expected == "unresolved":
+        return False
+    if "route" not in df.columns:
+        return expected == "tickflow"
+    stored = [str(v or "").strip().lower() for v in df["route"].to_list()]
+    nonempty = [s for s in stored if s]
+    if not nonempty:
+        return expected == "tickflow"
+    if any(s != expected for s in nonempty):
+        return False
+    if len(nonempty) != len(stored):
+        return expected == "tickflow"
+    return True
+
+
+def filter_instruments(df: pl.DataFrame | None, route: str | None = None) -> pl.DataFrame:
+    """Keep current-route instrument rows. Empty on leftover-only / unresolved."""
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return df if df is not None else pl.DataFrame()
+    expected = route if route is not None else instrument_route()
+    if not instrument_cache_usable(df, expected):
+        return df.head(0)
+    return df
+
+
+def tag_instruments(df: pl.DataFrame, route: str | None = None) -> pl.DataFrame:
+    token = (route if route is not None else instrument_route()).strip().lower()
+    if df is None or getattr(df, "is_empty", lambda: True)() or not token or token == "unresolved":
+        return df
+    if "route" not in df.columns:
+        return df.with_columns(pl.lit(token).alias("route"))
+    tokens = pl.col("route").cast(pl.Utf8).fill_null("").str.strip_chars()
+    return df.with_columns(
+        pl.when(tokens == "").then(pl.lit(token)).otherwise(pl.col("route")).alias("route")
+    )
+
 _EXCHANGES = ("SH", "SZ", "BJ")
 _CHINA = ZoneInfo("Asia/Shanghai")
 
@@ -174,6 +235,15 @@ def sync_instruments_result(data_dir: Path) -> InstrumentSyncOutcome:
     out = data_dir / "instruments" / "instruments.parquet"
     prior = _read_prior(out)
     prior_counts = _market_counts(prior)
+    if not instruments_sync_allowed():
+        return _rejected(
+            prior=prior,
+            candidate=None,
+            prior_counts=prior_counts,
+            failed_exchanges=_EXCHANGES,
+            error_code="instrument_route_refused",
+            error_message="TickFlow instruments skipped after custom/unresolved daily",
+        )
 
     try:
         tf = get_client()
@@ -269,7 +339,7 @@ def sync_instruments_result(data_dir: Path) -> InstrumentSyncOutcome:
             ),
         )
 
-    atomic_write_parquet(candidate, out)
+    atomic_write_parquet(tag_instruments(candidate), out)
     run_id = f"instruments-{uuid.uuid4().hex}"
     try:
         write_lineage_record(
@@ -321,7 +391,7 @@ def enrich_names_from_quotes(
     盘后 quotes.get(universes) 返回的数据中包含 ext.name，
     用来补充 instruments 中可能缺失的 name。
     """
-    if not quotes_data:
+    if not quotes_data or not instruments_sync_allowed():
         return 0
 
     # 构建 symbol → name 映射

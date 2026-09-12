@@ -122,6 +122,12 @@ def sync_index_instruments(
     新版物理分开保存: 指数写 instruments_index, ETF 写 instruments_etf。
     读取层仍兼容旧版 instruments_index 中 asset_type='etf' 的历史数据。
     """
+    from app.services.instrument_sync import instruments_sync_allowed
+
+    if not instruments_sync_allowed():
+        logger.info("skip TickFlow index/ETF instruments after custom/unresolved daily")
+        return 0
+
     index_parts: list[pl.DataFrame] = []
     etf_parts: list[pl.DataFrame] = []
 
@@ -181,6 +187,11 @@ def sync_index_instruments(
 
 def sync_etf_instruments(repo: KlineRepository) -> int:
     """单独同步 ETF 标的维表(返回 ETF 数量)。"""
+    from app.services.instrument_sync import instruments_sync_allowed
+
+    if not instruments_sync_allowed():
+        logger.info("skip TickFlow ETF instruments after custom/unresolved daily")
+        return 0
     etf_df = _fetch_instruments_by_type("etf", "etf")
     if etf_df.is_empty():
         return 0

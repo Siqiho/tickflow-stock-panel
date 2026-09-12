@@ -52,9 +52,14 @@ router = APIRouter(prefix="/api/free", tags=["free-ext"])
 
 
 def _require_lab_public_surface(route: str, label: str) -> None:
-    """Refuse Lab public fetch/write after a custom or unresolved route switch."""
+    """Lab public fetch/write only for an explicit public route.
+
+    Leftover TickFlow used to share this surface with ``public``. That mixed
+    sina / public Lab writes onto leftover TickFlow adj / financial / pool
+    routes. Custom / unresolved stay refused.
+    """
     token = (route or "").strip().lower()
-    if token in {"tickflow", "public"}:
+    if token == "public":
         return
     raise HTTPException(
         status_code=409,

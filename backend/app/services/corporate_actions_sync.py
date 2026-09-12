@@ -911,15 +911,25 @@ def run_corporate_actions_loop(
             inst = data_dir / "instruments"
             files = list(inst.rglob("*.parquet")) if inst.exists() else []
             if files:
-                idf = pl.concat([pl.read_parquet(f) for f in files], how="diagonal_relaxed")
-                if "symbol" in idf.columns:
+                from app.services.instrument_sync import filter_instruments, instrument_route
+
+                idf = filter_instruments(
+                    pl.concat([pl.read_parquet(f) for f in files], how="diagonal_relaxed"),
+                    instrument_route(),
+                )
+                if "symbol" in idf.columns and not idf.is_empty():
                     universe = [str(s) for s in idf.get_column("symbol").unique().to_list()]
         elif asset_type == "etf":
             inst = data_dir / "instruments_etf"
             files = list(inst.rglob("*.parquet")) if inst.exists() else []
             if files:
-                idf = pl.concat([pl.read_parquet(f) for f in files], how="diagonal_relaxed")
-                if "symbol" in idf.columns:
+                from app.services.instrument_sync import filter_instruments, instrument_route
+
+                idf = filter_instruments(
+                    pl.concat([pl.read_parquet(f) for f in files], how="diagonal_relaxed"),
+                    instrument_route(),
+                )
+                if "symbol" in idf.columns and not idf.is_empty():
                     universe = [str(s) for s in idf.get_column("symbol").unique().to_list()]
 
     # Cross-check uses all actions (including verification signals and prior rows).

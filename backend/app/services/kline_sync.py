@@ -278,9 +278,37 @@ def daily_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("daily partition probe failed %s: %s", part, exc)
-        # Leftover TickFlow still sees unreadable date markers; custom does not.
-        return expected in {"tickflow", "public"}
+        # Unreadable extras never mint a calendar — leftover TickFlow included.
+        return False
     return daily_cache_usable(df, expected)
+
+
+def prefer_tagged_route_files(files, expected):
+    """Leftover TickFlow / public skip untagged extras when tagged extras exist.
+
+    Untagged-only legacy partitions still serve leftover TickFlow / public.
+    Same-day untagged extras sitting beside tagged leftover files used to
+    concat-mix unknown-origin bars into the leftover TickFlow calendar.
+    """
+    token = str(expected or "").strip().lower()
+    if token not in {"tickflow", "public"}:
+        return files
+    tagged = []
+    for path in files:
+        try:
+            names = pl.read_parquet_schema(path).names()
+            if "route" not in names:
+                continue
+            stored = [
+                str(v or "").strip().lower()
+                for v in pl.read_parquet(path, columns=["route"])["route"].to_list()
+            ]
+            nonempty = [s for s in stored if s]
+            if nonempty and all(s == token for s in nonempty):
+                tagged.append(path)
+        except Exception:  # noqa: BLE001
+            continue
+    return tagged or files
 
 
 def usable_daily_partition_dates(
@@ -390,7 +418,7 @@ def usable_daily_partition_files(part_dir, route: str | None = None):
                 files.append(path)
         except Exception:  # noqa: BLE001
             continue
-    return files
+    return prefer_tagged_route_files(files, expected)
 
 
 def read_usable_daily_partition(part_dir, route: str | None = None) -> pl.DataFrame:
@@ -1530,8 +1558,9 @@ def sync_minute_batch(
 
     优先自定义分钟源。自定义成功且传了 on_segment 时走流式落盘并返回空 df;
     未传 on_segment 时原样返回 df (实时补拉)。
-    自定义失败后，仅当 capset 具有 KLINE_MINUTE_BATCH（或内部调用 capset=None）
-    才回退 TickFlow；空 CapabilitySet / 无资格不得隐式兜底。
+    已声明自定义源调用失败 fail-closed，不再回退 TickFlow。
+    leftover TickFlow 分钟源失败后，仅当 capset 具有 KLINE_MINUTE_BATCH
+    （或内部调用 capset=None）才走 TickFlow；空 CapabilitySet / 无资格不得隐式兜底。
     """
     df, fallback = _try_custom_minute(
         symbols, start_time=start_time, end_time=end_time,
@@ -1668,9 +1697,9 @@ def fetch_intraday_monitor_batch(
 ) -> pl.DataFrame:
     """Fetch today's minute bars for monitor-signal symbols.
 
-    Custom minute (declared) is first. Call failure still falls back to TickFlow
-    when the capset entitles INTRADAY_BATCH / minute batch — existing contract.
-    Leftover TickFlow + free (no cap) returns empty; no public mix.
+    Custom minute (declared) is first. Call failure is fail-closed — no TickFlow mix.
+    Leftover TickFlow minute still uses entitled TickFlow when the capset
+    entitles INTRADAY_BATCH / minute batch. Leftover TickFlow + free returns empty.
     """
     if not symbols:
         return pl.DataFrame()
@@ -1913,8 +1942,7 @@ def minute_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("minute partition probe failed %s: %s", part, exc)
-        # Leftover TickFlow still sees unreadable date markers; custom does not.
-        return expected in {"tickflow", "public"}
+        return False
     return minute_cache_usable(df, expected)
 
 
@@ -2013,7 +2041,7 @@ def usable_minute_partition_files(part_dir, route: str | None = None):
                 files.append(path)
         except Exception:  # noqa: BLE001
             continue
-    return files
+    return prefer_tagged_route_files(files, expected)
 
 
 def scan_usable_minute(
@@ -2413,7 +2441,10 @@ def _try_custom_minute(
     freq: str = "1m",
     on_chunk_done: Callable[[int, int, str], None] | None = None,
 ) -> tuple[pl.DataFrame | None, bool]:
-    """尝试自定义分钟源。 (None, True) 回退 TickFlow；(df, False) 直接用。"""
+    """尝试自定义分钟源。 (None, True) 仅 leftover TickFlow；(df, False) 直接用。
+
+    已声明自定义源调用失败不再回退 TickFlow（静默混源）。
+    """
     try:
         provider_name = preferences.get_minute_data_provider()
     except Exception as e:  # noqa: BLE001
@@ -2455,10 +2486,10 @@ def _try_custom_minute(
                 df = provider.get_minute(symbols, **kwargs)
     except Exception as e:  # noqa: BLE001
         logger.warning(
-            "custom minute provider %s call failed, falling back to TickFlow: %s",
+            "custom minute provider %s call failed, fail-closed (no TickFlow mix): %s",
             provider_name, e,
         )
-        return (None, True)
+        return (None, False)
     return (df, False)
 
 
@@ -2496,8 +2527,9 @@ def fetch_minute_single(
     """拉取单股单日分钟 K（不写入本地）。
 
     本地签名保持 (symbol, trade_date)；asset_type / capset 为 9a4 增量可选层。
-    优先自定义分钟源。仅当 TickFlow 原生单股分钟能力存在（或未传入 capset）
-    时才回退 TickFlow；无权限或 TickFlow 失败时保留公开分时兜底。
+    优先自定义分钟源。已声明自定义源调用失败 fail-closed，不回退 TickFlow。
+    leftover TickFlow 分钟源才在具备 TickFlow 原生单股分钟能力（或未传入 capset）
+    时走 TickFlow；无权限或 TickFlow 失败时仅 leftover 可用公开分时兜底。
     """
     start_time = datetime(trade_date.year, trade_date.month, trade_date.day, 9, 25, 0, tzinfo=CN_TZ)
     end_time = datetime(trade_date.year, trade_date.month, trade_date.day, 15, 5, 0, tzinfo=CN_TZ)

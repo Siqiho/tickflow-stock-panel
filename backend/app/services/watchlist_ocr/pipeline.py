@@ -74,8 +74,10 @@ def build_instrument_lookups(data_dir: Path) -> tuple[dict[str, str], dict[str, 
         if not path.exists():
             continue
         try:
-            df = pl.read_parquet(path)
-            if "symbol" not in df.columns:
+            from app.services.instrument_sync import filter_instruments, instrument_route
+
+            df = filter_instruments(pl.read_parquet(path), instrument_route())
+            if "symbol" not in df.columns or df.is_empty():
                 continue
             has_code = "code" in df.columns
             has_name = "name" in df.columns

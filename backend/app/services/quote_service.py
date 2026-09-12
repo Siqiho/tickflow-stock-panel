@@ -102,7 +102,9 @@ def usable_quote_snapshot_files(part_dir, route: str | None = None):
                 files.append(path)
         except Exception:  # noqa: BLE001
             continue
-    return files
+    from app.services.kline_sync import prefer_tagged_route_files
+
+    return prefer_tagged_route_files(files, expected)
 
 
 def quote_snapshot_partition_usable(path, route: str | None = None) -> bool:
@@ -120,7 +122,7 @@ def quote_snapshot_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("quote snapshot probe failed %s: %s", part, exc)
-        return expected in {"tickflow", "public"}
+        return False
     return quote_snapshot_cache_usable(df, expected)
 
 

@@ -113,7 +113,7 @@ def test_register_views_skips_ungated_kline_glob(tmp_path):
     store._register_views()
     assert "gated" in sqls
     assert "unified" in sqls
-    assert any("instruments/**/*.parquet" in item for item in sqls)
+    assert not any("instruments/**/*.parquet" in item and "WHERE" not in item for item in sqls)
     assert not any(
         "kline_daily/**/*.parquet" in item and "WHERE" not in item
         for item in sqls

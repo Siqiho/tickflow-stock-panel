@@ -215,7 +215,7 @@ def test_auth_custom_success_without_tickflow_capability(minute_http, monkeypatc
     get_client.assert_not_called()
 
 
-def test_auth_entitled_custom_fail_keeps_tickflow_fallback(minute_http, monkeypatch):
+def test_auth_entitled_custom_fail_stays_fail_closed(minute_http, monkeypatch):
     _setup_failing_custom(monkeypatch)
     tickflow = MagicMock()
     tickflow.klines.batch.return_value = {}
@@ -232,5 +232,5 @@ def test_auth_entitled_custom_fail_keeps_tickflow_fallback(minute_http, monkeypa
         json={"symbols": ["600519.SH"], "date": "2026-01-15"},
     )
     assert resp.status_code == 200, resp.text
-    get_client.assert_called_once()
-    tickflow.klines.batch.assert_called_once()
+    get_client.assert_not_called()
+    tickflow.klines.batch.assert_not_called()
