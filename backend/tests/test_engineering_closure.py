@@ -9,7 +9,7 @@ from app.services.financial_analyzer import _build_user_prompt
 
 
 def test_load_recent_history_uses_local_scan_cast_options(tmp_path):
-    part = tmp_path / "date=2026-07-17"
+    part = tmp_path / "kline_daily_enriched" / "date=2026-07-17"
     part.mkdir(parents=True)
     pl.DataFrame(
         {
@@ -24,7 +24,7 @@ def test_load_recent_history_uses_local_scan_cast_options(tmp_path):
         }
     ).write_parquet(part / "part.parquet")
 
-    history = _load_recent_history(tmp_path, ["000001.SZ"], days=90)
+    history = _load_recent_history(tmp_path / "kline_daily_enriched", ["000001.SZ"], days=90)
 
     assert history.height == 1
     assert history["symbol"].item() == "000001.SZ"

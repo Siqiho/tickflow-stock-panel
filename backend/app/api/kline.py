@@ -484,14 +484,11 @@ def _attach_ext(resp: dict, repo, symbol: str, ext_columns: Optional[str]) -> di
         value = None
         try:
             cfg = configs.get(config_id)
-            if cfg:
-                ext_df, _ = _read_ext_dataframe(cfg, data_dir)
+            if not cfg:
+                # Missing ext config: do not leftover-union DuckDB ext_* views.
+                ext_df = pl.DataFrame()
             else:
-                ext_df = pl.from_arrow(
-                    repo.store.db.query(
-                        f'SELECT symbol, "{field_name}" FROM ext_{config_id}'
-                    ).arrow()
-                )
+                ext_df, _ = _read_ext_dataframe(cfg, data_dir)
             if not ext_df.is_empty() and "symbol" in ext_df.columns and field_name in ext_df.columns:
                 # 时序表取最新分区，避免一个 symbol 多行
                 row = (

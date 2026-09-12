@@ -79,20 +79,9 @@ def list_partition_dates(data_dir: Path, table: str = "kline_daily") -> list[dat
 
         asset_type = "etf" if table == "kline_etf_minute" else "stock"
         return safe_usable_minute_partition_dates(data_dir, asset_type=asset_type)
-    root = Path(data_dir) / table
-    if not root.exists():
-        return []
-    out: list[date] = []
-    for path in sorted(root.iterdir()):
-        if not path.is_dir():
-            continue
-        m = _DATE_DIR_RE.match(path.name)
-        if not m:
-            continue
-        if not any(path.glob("*.parquet")):
-            continue
-        out.append(date.fromisoformat(m.group(1)))
-    return out
+    # Unknown tables used to leftover-glob any date=* parquet. Fail-closed:
+    # only routed kline / minute tables are calendars.
+    return []
 
 
 def partition_path(data_dir: Path, day: date, table: str = "kline_daily") -> Path:

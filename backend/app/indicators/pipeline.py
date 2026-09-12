@@ -1939,7 +1939,12 @@ def _load_recent_history(enriched_base: Path, symbols: list[str], days: int) -> 
         hist_cols = [c for c in ["symbol", "date", "open", "high", "low", "close",
                                  "volume", "amount", "raw_close", "raw_high", "raw_low"]
                     if c in schema_names]
-        return lf.select(hist_cols).collect()
+        if "route" in schema_names:
+            hist_cols.append("route")
+        from app.services.kline_sync import filter_daily_cache
+
+        hist = filter_daily_cache(lf.select(hist_cols).collect())
+        return hist.drop("route") if "route" in hist.columns else hist
     except Exception as e:  # noqa: BLE001
         logger.warning("历史数据加载失败: %s", e)
         return pl.DataFrame()

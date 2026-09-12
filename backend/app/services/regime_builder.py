@@ -334,16 +334,18 @@ def _compute_batch(repo, enriched_dir, instruments, historical_shares,
     from datetime import timedelta
     from app.indicators.pipeline import compute_indicators, compute_limit_signals
     warmup_start = batch_start - timedelta(days=warmup_days)
-    from app.services.kline_sync import usable_daily_partition_paths
+    from app.services.kline_sync import filter_daily_cache, usable_daily_partition_paths
 
     paths = usable_daily_partition_paths(
         repo.store.data_dir, table="kline_daily_enriched",
     )
     if not paths:
         return pl.DataFrame()
-    df = pl.scan_parquet([p.as_posix() for p in paths]).filter(
-        (pl.col("date") >= warmup_start) & (pl.col("date") <= batch_end)
-    ).collect()
+    df = filter_daily_cache(
+        pl.scan_parquet([p.as_posix() for p in paths]).filter(
+            (pl.col("date") >= warmup_start) & (pl.col("date") <= batch_end)
+        ).collect()
+    )
     if df.is_empty():
         return pl.DataFrame()
     # 新评分模型只需 change_pct(赚钱/抗跌维) + ma20(趋势维); 不再需要 vol_ratio_5d

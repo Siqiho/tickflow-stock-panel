@@ -55,6 +55,21 @@ def enriched_dirname(asset_type: str) -> str:
     return "kline_etf_enriched" if asset_type == "etf" else "kline_daily_enriched"
 
 
+def _latest_date_partition_glob(root: Path) -> str | None:
+    """Latest ``date=*`` parquet glob. Never leftover-unions historical partitions."""
+    if not root.is_dir():
+        return None
+    partitions = sorted(
+        child for child in root.iterdir()
+        if child.is_dir()
+        and child.name.startswith("date=")
+        and any(child.glob("*.parquet"))
+    )
+    if not partitions:
+        return None
+    return f"{partitions[-1].as_posix()}/*.parquet"
+
+
 def _route_sql_predicate(route: str, *, leftover_public: bool = False) -> str | None:
     token = (route or "").strip().lower()
     if not token or token == "unresolved" or not re.fullmatch(r"[a-z0-9_.-]+", token):
@@ -190,9 +205,13 @@ class DataStore:
                 SELECT * FROM read_parquet('{d}/instruments_etf/**/*.parquet', union_by_name=true)""",
             f"""CREATE OR REPLACE VIEW instruments_ext AS
                 SELECT * FROM read_parquet('{d}/instruments_ext/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW kline_ext AS
-                SELECT * FROM read_parquet('{d}/kline_ext/**/*.parquet', union_by_name=true)""",
         ]
+        kline_ext_glob = _latest_date_partition_glob(self.data_dir / "kline_ext")
+        if kline_ext_glob:
+            statements.append(
+                f"""CREATE OR REPLACE VIEW kline_ext AS
+                    SELECT * FROM read_parquet('{kline_ext_glob}', union_by_name=true)"""
+            )
         for sql in statements:
             try:
                 self.db.execute(sql)
