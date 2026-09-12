@@ -70,12 +70,42 @@ def _normalize_symbol(symbol: str | None) -> str | None:
     return text or None
 
 
-def _scan_dataset(data_dir: Path, relpath: str) -> pl.LazyFrame | None:
+def _reference_file_usable(dataset_id: str, path: Path) -> bool:
+    """Current-route reference parquet only. Leftover TickFlow still sees untagged."""
+    try:
+        if dataset_id in {"valuation_daily", "limit_up_events"}:
+            from app.services.kline_sync import daily_partition_usable
+
+            return daily_partition_usable(path)
+        if dataset_id == "index_membership_history":
+            from app.services.reference_derived import _pool_snapshot_usable
+            from app.tickflow.pools import pool_route
+
+            return _pool_snapshot_usable(pl.read_parquet(path), pool_route())
+        if dataset_id == "corporate_actions":
+            from app.services.kline_sync import adj_cache_usable, adj_route
+
+            route = adj_route()
+            names = pl.read_parquet_schema(path).names()
+            if "route" not in names:
+                return route in {"tickflow", "public"}
+            return adj_cache_usable(pl.read_parquet(path, columns=["route"]), route)
+    except Exception:
+        return False
+    return True
+
+
+def _scan_dataset(data_dir: Path, relpath: str, dataset_id: str) -> pl.LazyFrame | None:
     target = data_dir / relpath
     if target.is_file():
+        if not _reference_file_usable(dataset_id, target):
+            return None
         return pl.scan_parquet(target)
     if target.is_dir():
-        files = sorted(target.rglob("*.parquet"))
+        files = [
+            path for path in sorted(target.rglob("*.parquet"))
+            if _reference_file_usable(dataset_id, path)
+        ]
         if not files:
             return None
         return pl.scan_parquet([str(path) for path in files])
@@ -125,7 +155,7 @@ def query_reference_dataset(
     if spec.get("symbol_required_for_unbounded") and not symbol_key and not start and not end:
         raise ValueError(f"{dataset_id} 全表查询必须提供 symbol 或日期窗口")
 
-    scan = _scan_dataset(Path(data_dir), spec["relpath"])
+    scan = _scan_dataset(Path(data_dir), spec["relpath"], dataset_id)
     if scan is None:
         return {
             "data": [],

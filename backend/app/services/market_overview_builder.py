@@ -124,7 +124,29 @@ def latest_official_enriched_date(repo) -> date | None:
 def latest_quote_snapshot_date(repo) -> date | None:
     if repo is None:
         return None
-    return _latest_partition_date(Path(repo.store.data_dir) / 'quote_snapshot' / 'asset_type=stock')
+    root = Path(repo.store.data_dir) / 'quote_snapshot' / 'asset_type=stock'
+    if not root.exists():
+        return None
+    try:
+        from app.services.quote_service import quote_snapshot_partition_usable
+    except Exception:
+        return None
+    latest: date | None = None
+    for child in root.iterdir():
+        if not child.name.startswith('date='):
+            continue
+        parsed = _as_date(child.name.removeprefix('date='))
+        part = child / 'part.parquet'
+        if parsed is None or not part.exists():
+            continue
+        try:
+            if not quote_snapshot_partition_usable(part):
+                continue
+        except Exception:
+            continue
+        if latest is None or parsed > latest:
+            latest = parsed
+    return latest
 
 
 def _live_enriched_date(repo) -> date | None:
@@ -224,6 +246,10 @@ def _snapshot_rows_for_date(repo, target: date) -> list[dict]:
     if not path.exists():
         return []
     try:
+        from app.services.quote_service import quote_snapshot_partition_usable
+
+        if not quote_snapshot_partition_usable(path):
+            return []
         df = pl.read_parquet(path)
     except Exception:
         return []

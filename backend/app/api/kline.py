@@ -384,8 +384,14 @@ def _overlay_persisted_quote_candles(
     import polars as pl
 
     overlay_rows: list[dict] = []
+    try:
+        from app.services.quote_service import quote_snapshot_partition_usable
+    except Exception:
+        return rows, overlay_meta
     for partition_date, path in sorted(parts, key=lambda item: item[0]):
         try:
+            if not quote_snapshot_partition_usable(path):
+                continue
             snapshot = pl.read_parquet(path)
             if snapshot.is_empty() or "symbol" not in snapshot.columns or "close" not in snapshot.columns:
                 continue

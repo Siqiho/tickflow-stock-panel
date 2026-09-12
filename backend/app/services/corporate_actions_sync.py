@@ -889,6 +889,15 @@ def run_corporate_actions_loop(
     prior_actions = (
         pl.read_parquet(prior_actions_path) if prior_actions_path.exists() else empty_corporate_actions()
     )
+    if lab_dir is None:
+        try:
+            from app.services.kline_sync import adj_cache_usable, adj_route
+
+            route = adj_route()
+        except Exception:
+            route = "unresolved"
+        if not prior_actions.is_empty() and not adj_cache_usable(prior_actions, route):
+            prior_actions = empty_corporate_actions()
     # Corporate actions are append-only facts. Prior rows keep their exact
     # first-published payload (including verification stamps); only NEW rows get
     # stamped by this run's cross-check. Current per-symbol verification lives in
@@ -945,7 +954,20 @@ def run_corporate_actions_loop(
     else:
         report["verification_counts"] = {}
 
-    if publish_actions and not actions.is_empty():
+    skip_formal_publish = False
+    if publish_actions and not actions.is_empty() and lab_dir is None:
+        try:
+            from app.services.kline_sync import _tag_adj_route, adj_route
+
+            route = adj_route()
+        except Exception:
+            route = "unresolved"
+        if route == "unresolved":
+            skip_formal_publish = True
+        else:
+            actions = _tag_adj_route(actions)
+
+    if publish_actions and not actions.is_empty() and not skip_formal_publish:
         if lab_dir is not None:
             lab_dir = Path(lab_dir)
             lab_dir.mkdir(parents=True, exist_ok=True)
@@ -978,7 +1000,11 @@ def run_corporate_actions_loop(
             )
             report["publish"] = pub.as_dict()
     else:
-        report["publish"] = {"ok": True, "skipped": True, "row_count": int(actions.height)}
+        payload = {"ok": True, "skipped": True, "row_count": int(actions.height)}
+        if skip_formal_publish:
+            payload["ok"] = False
+            payload["reason"] = "unresolved"
+        report["publish"] = payload
 
     report["unit_version"] = CORPORATE_ACTIONS_UNIT_VERSION
     report["schema_version"] = CORPORATE_ACTIONS_SCHEMA_VERSION
