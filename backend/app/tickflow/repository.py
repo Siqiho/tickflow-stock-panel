@@ -174,29 +174,14 @@ class DataStore:
             logger.warning("legacy data migration failed (startup continues): %s", e)
 
     def _register_views(self) -> None:
-        """把 Parquet 目录挂载为 DuckDB 视图(§7.3)。"""
+        """Mount parquet as DuckDB views without a leftover-visible raw glob.
+
+        Route-sensitive kline / adj / financial / depth views are gated
+        immediately. Instruments stay leftover TickFlow (no
+        ``instrument_provider``).
+        """
         d = self.data_dir.as_posix()
         statements = [
-            f"""CREATE OR REPLACE VIEW kline_daily AS
-                SELECT * FROM read_parquet('{d}/kline_daily/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW kline_enriched AS
-                SELECT * FROM read_parquet('{d}/kline_daily_enriched/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW kline_index_daily AS
-                SELECT * FROM read_parquet('{d}/kline_index_daily/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW kline_index_enriched AS
-                SELECT * FROM read_parquet('{d}/kline_index_enriched/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW kline_etf_daily AS
-                SELECT * FROM read_parquet('{d}/kline_etf_daily/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW kline_etf_enriched AS
-                SELECT * FROM read_parquet('{d}/kline_etf_enriched/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW kline_etf_minute AS
-                SELECT * FROM read_parquet('{d}/kline_etf_minute/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW kline_minute AS
-                SELECT * FROM read_parquet('{d}/kline_minute/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW adj_factor AS
-                SELECT * FROM read_parquet('{d}/adj_factor/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW adj_factor_etf AS
-                SELECT * FROM read_parquet('{d}/adj_factor_etf/**/*.parquet', union_by_name=true)""",
             f"""CREATE OR REPLACE VIEW instruments AS
                 SELECT * FROM read_parquet('{d}/instruments/**/*.parquet', union_by_name=true)""",
             f"""CREATE OR REPLACE VIEW instruments_index AS
@@ -207,20 +192,6 @@ class DataStore:
                 SELECT * FROM read_parquet('{d}/instruments_ext/**/*.parquet', union_by_name=true)""",
             f"""CREATE OR REPLACE VIEW kline_ext AS
                 SELECT * FROM read_parquet('{d}/kline_ext/**/*.parquet', union_by_name=true)""",
-            # 财务数据视图
-            f"""CREATE OR REPLACE VIEW financials_metrics AS
-                SELECT * FROM read_parquet('{d}/financials/metrics/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW financials_income AS
-                SELECT * FROM read_parquet('{d}/financials/income/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW financials_balance_sheet AS
-                SELECT * FROM read_parquet('{d}/financials/balance_sheet/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW financials_cash_flow AS
-                SELECT * FROM read_parquet('{d}/financials/cash_flow/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW financials_shares AS
-                SELECT * FROM read_parquet('{d}/financials/shares/*.parquet', union_by_name=true)""",
-            # 五档盘口 sealed 真假涨停(独立旁路存储,不进 enriched)
-            f"""CREATE OR REPLACE VIEW depth5 AS
-                SELECT * FROM read_parquet('{d}/depth5/**/*.parquet', union_by_name=true)""",
         ]
         for sql in statements:
             try:
@@ -231,11 +202,11 @@ class DataStore:
         self._register_unified_views()
 
     def _register_gated_catalog_views(self) -> None:
-        """Replace financial / adj DuckDB views with route-gated scans.
+        """Register route-gated kline / adj / financial / depth DuckDB views.
 
-        Raw parquet views stay as the first-pass registration (empty dirs
-        skip). After a provider switch, leftover TickFlow/public rows must
-        not be visible through SQL when the current route is custom.
+        Startup used to ``CREATE VIEW`` from raw ``**/*.parquet`` first and
+        only then gate. Concurrent SQL between those statements saw leftover
+        TickFlow after a custom switch. Instruments stay leftover TickFlow.
         """
         try:
             from app.services.financial_sync import FINANCIAL_TABLES, get_financial_df

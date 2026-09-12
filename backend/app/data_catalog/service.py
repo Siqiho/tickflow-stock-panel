@@ -250,6 +250,7 @@ class CatalogService:
             _run_status(result) == "failed" for result in scan_results.values()
         )
         meta_updates["catalog_stale"] = {"value": any_failed}
+        meta_updates["catalog_route_token"] = {"value": self._catalog_route_token()}
         if retained_failure and not persisted:
             # Nothing new to admit; keep the prior snapshot and mark it stale.
             self.control_db.set_meta("catalog_stale", {"value": True})
@@ -388,19 +389,29 @@ class CatalogService:
 
     def compatibility_status(self) -> dict[str, Any]:
         states = {state.dataset_id: state for state in self.control_db.list_dataset_states()}
+        route_fresh = self._catalog_route_fresh()
         return {
-            "daily": self._table_stats(states.get("stock_daily")),
-            "enriched": self._table_stats(states.get("stock_enriched"), enriched=True),
-            "index_daily": self._table_stats(states.get("index_daily")),
-            "index_enriched": self._table_stats(states.get("index_enriched"), enriched=True),
+            "daily": self._table_stats(states.get("stock_daily")) if route_fresh else None,
+            "enriched": (
+                self._table_stats(states.get("stock_enriched"), enriched=True)
+                if route_fresh else None
+            ),
+            "index_daily": self._table_stats(states.get("index_daily")) if route_fresh else None,
+            "index_enriched": (
+                self._table_stats(states.get("index_enriched"), enriched=True)
+                if route_fresh else None
+            ),
             "index_instruments": self._instrument_stats(states.get("index_instruments")),
-            "etf_daily": self._table_stats(states.get("etf_daily")),
-            "etf_enriched": self._table_stats(states.get("etf_enriched"), enriched=True),
+            "etf_daily": self._table_stats(states.get("etf_daily")) if route_fresh else None,
+            "etf_enriched": (
+                self._table_stats(states.get("etf_enriched"), enriched=True)
+                if route_fresh else None
+            ),
             "etf_instruments": self._instrument_stats(states.get("etf_instruments")),
-            "minute": self._table_stats(states.get("stock_minute")),
-            "adj_factor": self._table_stats(states.get("stock_adj_factor")),
+            "minute": self._table_stats(states.get("stock_minute")) if route_fresh else None,
+            "adj_factor": self._table_stats(states.get("stock_adj_factor")) if route_fresh else None,
             "instruments": self._instrument_stats(states.get("stock_instruments")),
-            "financials": self._financial_stats(states),
+            "financials": self._financial_stats(states) if route_fresh else None,
             "storage": self._legacy_storage(),
             "next_pipeline_run": None,
             "next_instruments_run": None,
@@ -408,6 +419,36 @@ class CatalogService:
             "last_instruments_run": None,
             "checked_at": _utc_now(),
         }
+
+    @staticmethod
+    def _catalog_route_token() -> str:
+        """Prefs-only token. Must not read parquet (compatibility_status is a hot path)."""
+        try:
+            from app.services.financial_sync import financial_write_route
+            from app.services.kline_sync import daily_route, minute_route
+            from app.tickflow.pools import pool_route
+
+            return "|".join((
+                daily_route() or "unresolved",
+                minute_route() or "unresolved",
+                financial_write_route() or "unresolved",
+                pool_route() or "unresolved",
+            ))
+        except Exception:
+            return "unresolved"
+
+    def _catalog_route_fresh(self) -> bool:
+        """False after a provider switch until the next catalog rescan.
+
+        Last-scan leftover TickFlow coverage must not serve as current
+        status. Missing token (pre-round-23 control DBs) stays visible so
+        existing snapshots keep working until the next rescan.
+        """
+        scanned = self.control_db.get_meta("catalog_route_token") or {}
+        stored = scanned.get("value")
+        if not stored:
+            return True
+        return stored == self._catalog_route_token()
 
     def _catalog_entry(
         self,

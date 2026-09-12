@@ -547,6 +547,16 @@ def append_shares_history(
     return merged
 
 
+def _financial_migration_usable(df: pl.DataFrame) -> bool:
+    """Refuse leftover TickFlow/public rewrite after a financial switch."""
+    try:
+        from app.services.financial_sync import financial_cache_usable, financial_write_route
+
+        return financial_cache_usable(df, financial_write_route())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def migrate_existing_financials_to_pit(data_dir: Path, *, tables: Sequence[str] | None = None) -> dict[str, Any]:
     """One-shot local migration: add PIT columns + restatement_id; retain rows.
 
@@ -562,6 +572,13 @@ def migrate_existing_financials_to_pit(data_dir: Path, *, tables: Sequence[str] 
             continue
         try:
             df = pl.read_parquet(path)
+            if not _financial_migration_usable(df):
+                out["tables"][table] = {
+                    "exists": True,
+                    "skipped": True,
+                    "reason": "stale_route",
+                }
+                continue
             # shares: ensure effective_date history from period_end
             if table == "shares" and "effective_date" not in df.columns and "period_end" in df.columns:
                 df = df.with_columns(pl.col("period_end").alias("effective_date"))
@@ -613,6 +630,13 @@ def migrate_financial_table_to_v2(data_dir: Path, table: str) -> dict[str, objec
     if not path.exists():
         return {"table": table, "ok": True, "skipped": True, "reason": "missing"}
     frame = pl.read_parquet(path)
+    if not _financial_migration_usable(frame):
+        return {
+            "table": table,
+            "ok": True,
+            "skipped": True,
+            "reason": "stale_route",
+        }
     upgraded = ensure_pit_columns(frame, table=table)
     if table == "shares" and "source" in upgraded.columns:
         upgraded = upgraded.with_columns(

@@ -488,6 +488,28 @@ def build_limit_up_events(
 # --------------------------------------------------------------- membership
 
 
+def _pool_snapshot_usable(df: pl.DataFrame, route: str) -> bool:
+    """Whether a pools parquet may seed membership for the current pool route.
+
+    Custom / unresolved never reuse leftover TickFlow or public CSI caches.
+    Leftover TickFlow / public still see untagged snapshots.
+    """
+    expected = (route or "").strip().lower()
+    if not expected or expected in {"custom", "unresolved"}:
+        if "route" not in df.columns:
+            return False
+        stored = [str(v or "").strip().lower() for v in df["route"].to_list()]
+        nonempty = [s for s in stored if s]
+        return bool(nonempty) and all(s == expected for s in nonempty)
+    if "route" not in df.columns:
+        return expected in {"tickflow", "public"}
+    stored = [str(v or "").strip().lower() for v in df["route"].to_list()]
+    nonempty = [s for s in stored if s]
+    if not nonempty:
+        return expected in {"tickflow", "public"}
+    return all(s == expected for s in nonempty)
+
+
 def build_index_membership_from_pools(
     data_dir: Path,
     *,
@@ -505,12 +527,19 @@ def build_index_membership_from_pools(
         return pl.DataFrame()
     frames: list[pl.DataFrame] = []
     seen = _utc_now()
+    try:
+        from app.tickflow.pools import pool_route
+        route = pool_route()
+    except Exception:  # noqa: BLE001
+        return pl.DataFrame()
     for path in sorted(pools_dir.glob("*.parquet")):
         try:
             df = pl.read_parquet(path)
         except Exception:
             continue
         if "symbol" not in df.columns:
+            continue
+        if not _pool_snapshot_usable(df, route):
             continue
         pool_id = path.stem
         if "pool_id" in df.columns and df.height:
