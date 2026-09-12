@@ -109,4 +109,4 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round22 \
     tests/test_minute_range_api.py
 ```
 
-云环境结果：见 `evidence/test-results.md`。
+云环境结果：backend 目标 **734 passed**。见 `evidence/test-results.md`。
