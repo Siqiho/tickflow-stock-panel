@@ -106,4 +106,4 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round23 \
     tests/data_catalog/test_service.py
 ```
 
-云环境结果：见 `evidence/test-results.md`。
+云环境结果：`766 passed, 42 warnings`（隔离 `DATA_DIR=/tmp/ot-data-source-wiring-round23`）。详见 `evidence/test-results.md`。
