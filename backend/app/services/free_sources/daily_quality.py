@@ -228,8 +228,20 @@ def run_daily_quality_check(data_dir: Path | str, date: str | None = None) -> di
 
     enriched_part = data_dir / "kline_daily_enriched" / f"date={target}" / "part.parquet"
     if enriched_part.exists():
-        enriched = pl.read_parquet(enriched_part)
-        if "turnover_rate" in enriched.columns and enriched.schema["turnover_rate"] != pl.Null:
+        try:
+            from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+
+            if daily_partition_usable(enriched_part):
+                enriched = filter_daily_cache(pl.read_parquet(enriched_part))
+            else:
+                enriched = pl.DataFrame()
+        except Exception:
+            enriched = pl.DataFrame()
+        if (
+            not enriched.is_empty()
+            and "turnover_rate" in enriched.columns
+            and enriched.schema["turnover_rate"] != pl.Null
+        ):
             extreme_turnover = enriched.filter(pl.col("turnover_rate").cast(pl.Float64) > 100).height
             metrics["turnover_rate_over_100"] = extreme_turnover
             if extreme_turnover:

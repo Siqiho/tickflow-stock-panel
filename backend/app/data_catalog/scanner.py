@@ -479,7 +479,7 @@ class CatalogScanner:
             expected_symbol_count=expected_total,
             earliest_time=min(times) if times else None,
             latest_time=max(times) if times else None,
-            managed_bytes=sum(file.bytes for file in material_files),
+            managed_bytes=sum(file.bytes for file in files),
             last_run_id=run_id,
             updated_at=refreshed_at,
             payload=payload,

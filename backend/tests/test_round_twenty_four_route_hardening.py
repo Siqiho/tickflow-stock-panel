@@ -4,10 +4,12 @@ Closes remaining except-fallback leftover globs and leftover-shadowed
 reads that round 23 left on the catalog-rescan / reference / quote-snapshot
 side:
 - catalog rescan skips leftover TickFlow calendars after a provider switch
+- catalog list/get hide leftover serving after adj/depth/realtime/daily switch
 - membership history refuses leftover rewrite after a pool switch
 - reference query skips leftover valuation / membership / actions
 - quote snapshots tag + filter by realtime route
 - corporate-actions prior merge skips leftover after an adj switch
+- daily quality skips leftover enriched turnover after a daily switch
 
 Keeps remaining TickFlow leftover contracts:
 - leftover TickFlow + free realtime stays mode=none
@@ -32,6 +34,7 @@ from app.data_catalog.service import CatalogService
 from app.services import kline_sync
 from app.services.market_overview_builder import latest_quote_snapshot_date
 from app.services.market_snapshot import _latest_quote_snapshot
+from app.services.free_sources.daily_quality import run_daily_quality_check
 from app.services.quote_service import QuoteService
 from app.services.reference_derived import rebuild_reference_derived
 from app.services.reference_query import query_reference_dataset
@@ -408,3 +411,130 @@ def test_valuation_write_tags_daily_route(monkeypatch, tmp_path):
         tmp_path / "reference" / "valuation_daily" / "date=2026-07-17" / "part.parquet"
     )
     assert saved["route"].to_list() == ["tickflow"]
+
+
+def _catalog_by_id(service: CatalogService) -> dict:
+    return {entry.descriptor.dataset_id: entry for entry in service.list_catalog().datasets}
+
+
+def _write_instruments(root) -> None:
+    path = root / "instruments" / "instruments.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame({
+        "symbol": ["000001.SZ"],
+        "name": ["pingan"],
+        "code": ["000001"],
+        "exchange": ["SZSE"],
+        "region": ["CN"],
+        "type": ["stock"],
+        "listing_date": [date(1991, 4, 3)],
+        "total_shares": [100.0],
+        "float_shares": [80.0],
+        "tick_size": [0.01],
+        "limit_up": [11.0],
+        "limit_down": [9.0],
+        "as_of": [date(2026, 7, 17)],
+    }).write_parquet(path)
+
+
+def test_catalog_list_hides_leftover_serving_after_switch(monkeypatch, tmp_path):
+    _write_part(tmp_path, "kline_daily", "2026-07-17", _daily_df(route="tickflow"))
+    _write_instruments(tmp_path)
+    monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "tickflow")
+    service = CatalogService(tmp_path, CatalogControlDB(tmp_path), manifests=())
+    service.rescan()
+    first = _catalog_by_id(service)
+    assert first["stock_daily"].descriptor.availability.serving_ready is True
+    assert first["stock_daily"].state.latest_time == "2026-07-17"
+    assert first["stock_instruments"].descriptor.availability.serving_ready is True
+    _patch_custom_daily(monkeypatch)
+    second = _catalog_by_id(service)
+    assert second["stock_daily"].descriptor.availability.serving_ready is False
+    assert second["stock_daily"].state.latest_time is None
+    assert second["stock_daily"].coverage == []
+    assert second["stock_instruments"].descriptor.availability.serving_ready is True
+    assert second["stock_instruments"].state.latest_time == "2026-07-17"
+
+
+def test_catalog_status_drops_adj_after_adj_switch(monkeypatch, tmp_path):
+    path = tmp_path / "adj_factor" / "all.parquet"
+    path.parent.mkdir(parents=True)
+    pl.DataFrame({
+        "symbol": ["000001.SZ"],
+        "trade_date": [date(2026, 7, 17)],
+        "ex_factor": [1.0],
+        "route": ["tickflow"],
+    }).write_parquet(path)
+    monkeypatch.setattr(kline_sync.preferences, "get_adj_factor_provider", lambda: "tickflow")
+    service = CatalogService(tmp_path, CatalogControlDB(tmp_path), manifests=())
+    service.rescan()
+    first = service.compatibility_status()
+    assert first["adj_factor"] is not None
+    assert first["adj_factor"]["latest_date"] == "2026-07-17"
+    monkeypatch.setattr(kline_sync.preferences, "get_adj_factor_provider", lambda: "fuyao")
+    _patch_custom_datasets(monkeypatch, "fuyao", {"adj_factor"})
+    assert service.compatibility_status()["adj_factor"] is None
+
+
+def test_catalog_list_hides_quote_snapshot_after_realtime_switch(monkeypatch, tmp_path):
+    _write_snapshot(tmp_path, "2026-07-17", _quote_df(route="tickflow"))
+    monkeypatch.setattr(
+        "app.services.preferences.get_realtime_data_provider",
+        lambda: "tickflow",
+    )
+    service = CatalogService(tmp_path, CatalogControlDB(tmp_path), manifests=())
+    service.rescan()
+    first = _catalog_by_id(service)
+    assert first["quote_snapshot"].descriptor.availability.serving_ready is True
+    monkeypatch.setattr(
+        "app.services.preferences.get_realtime_data_provider",
+        lambda: "public",
+    )
+    second = _catalog_by_id(service)
+    assert second["quote_snapshot"].descriptor.availability.serving_ready is False
+    assert second["quote_snapshot"].state.latest_time is None
+
+
+def test_financial_stats_leftover_only_after_rescan(monkeypatch, tmp_path):
+    path = tmp_path / "financials" / "metrics" / "part.parquet"
+    path.parent.mkdir(parents=True)
+    pl.DataFrame({
+        "symbol": ["000001.SZ"],
+        "period_end": [date(2026, 3, 31)],
+        "roe": [12.0],
+        "route": ["tickflow"],
+    }).write_parquet(path)
+    from app.services import preferences
+
+    monkeypatch.setattr(preferences, "get_financial_provider", lambda: "fuyao")
+    monkeypatch.setattr(preferences, "is_public_financial_provider", lambda name=None: False)
+    _patch_custom_datasets(monkeypatch, "fuyao", {"financial"})
+    service = CatalogService(tmp_path, CatalogControlDB(tmp_path), manifests=())
+    service.rescan()
+    assert service.compatibility_status()["financials"] is None
+
+
+def test_daily_quality_skips_leftover_enriched(monkeypatch, tmp_path):
+    _write_part(tmp_path, "kline_daily", "2026-07-17", _daily_df())
+    _write_part(
+        tmp_path,
+        "kline_daily_enriched",
+        "2026-07-17",
+        pl.DataFrame({
+            "symbol": ["000001.SZ"],
+            "date": [date(2026, 7, 17)],
+            "open": [10.0],
+            "high": [10.2],
+            "low": [9.9],
+            "close": [10.1],
+            "volume": [100.0],
+            "amount": [1010.0],
+            "turnover_rate": [250.0],
+            "route": ["tickflow"],
+        }),
+    )
+    monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "public")
+    report = run_daily_quality_check(tmp_path)
+    assert report["date"] == "2026-07-17"
+    assert "turnover_unit_mismatch" not in {issue["code"] for issue in report["issues"]}
+    assert "turnover_rate_over_100" not in report["metrics"]

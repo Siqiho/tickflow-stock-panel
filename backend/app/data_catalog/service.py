@@ -58,6 +58,31 @@ _OPERATIONAL_KEYS = {
     "control",
     "operational_other",
 }
+_ROUTE_SENSITIVE_CATALOG = frozenset({
+    "stock_daily",
+    "stock_enriched",
+    "index_daily",
+    "index_enriched",
+    "etf_daily",
+    "etf_enriched",
+    "valuation_daily",
+    "limit_up_events",
+    "stock_minute",
+    "etf_minute",
+    "stock_adj_factor",
+    "etf_adj_factor",
+    "financial_metrics",
+    "financial_income",
+    "financial_balance_sheet",
+    "financial_cash_flow",
+    "financial_shares",
+    "depth5",
+    "sealed_l1",
+    "pools",
+    "index_membership_history",
+    "quote_snapshot",
+    "corporate_actions",
+})
 _LEGACY_STORAGE_DATASETS = {
     "daily": ("stock_daily",),
     "enriched": ("stock_enriched",),
@@ -262,9 +287,13 @@ class CatalogService:
         states = {state.dataset_id: state for state in self.control_db.list_dataset_states()}
         refreshed_meta = self.control_db.get_meta("catalog_refreshed_at")
         refreshed_at = refreshed_meta.get("value") if refreshed_meta else None
+        route_fresh = self._catalog_route_fresh()
         entries = [
             self._catalog_entry(
-                definition, states.get(definition.descriptor.dataset_id), refreshed_at
+                definition,
+                states.get(definition.descriptor.dataset_id),
+                refreshed_at,
+                route_fresh=route_fresh,
             )
             for definition in self.definitions
         ]
@@ -298,7 +327,12 @@ class CatalogService:
         state = self.control_db.get_dataset_state(dataset_id)
         refreshed_meta = self.control_db.get_meta("catalog_refreshed_at")
         refreshed_at = refreshed_meta.get("value") if refreshed_meta else None
-        return self._catalog_entry(self._by_id[dataset_id], state, refreshed_at)
+        return self._catalog_entry(
+            self._by_id[dataset_id],
+            state,
+            refreshed_at,
+            route_fresh=self._catalog_route_fresh(),
+        )
 
     def get_schema(self, dataset_id: str) -> list[FieldContract] | None:
         definition = self._by_id.get(dataset_id)
@@ -424,15 +458,20 @@ class CatalogService:
     def _catalog_route_token() -> str:
         """Prefs-only token. Must not read parquet (compatibility_status is a hot path)."""
         try:
+            from app.services.depth_service import depth_route
             from app.services.financial_sync import financial_write_route
-            from app.services.kline_sync import daily_route, minute_route
+            from app.services.kline_sync import adj_route, daily_route, minute_route
+            from app.services.quote_service import realtime_route
             from app.tickflow.pools import pool_route
 
             return "|".join((
                 daily_route() or "unresolved",
                 minute_route() or "unresolved",
+                adj_route() or "unresolved",
                 financial_write_route() or "unresolved",
                 pool_route() or "unresolved",
+                depth_route() or "unresolved",
+                realtime_route() or "unresolved",
             ))
         except Exception:
             return "unresolved"
@@ -455,6 +494,8 @@ class CatalogService:
         definition: DatasetDefinition,
         state: DatasetState | None,
         refreshed_at: str | None,
+        *,
+        route_fresh: bool | None = None,
     ) -> DatasetCatalogEntry:
         if state is None:
             state = DatasetState(
@@ -464,6 +505,27 @@ class CatalogService:
                 updated_at=refreshed_at or "1970-01-01T00:00:00Z",
                 payload=_empty_payload(),
             )
+        if (
+            definition.descriptor.dataset_id in _ROUTE_SENSITIVE_CATALOG
+            and not (self._catalog_route_fresh() if route_fresh is None else route_fresh)
+        ):
+            # Last-scan leftover calendars stay on disk; the list/get hot path
+            # must not keep serving them as current after a provider switch.
+            payload = dict(state.payload)
+            payload.update({
+                "coverage": [],
+                "lineage": [],
+                "trading_days": 0,
+                "depth5_available": False,
+            })
+            state = state.model_copy(update={
+                "quality_status": "unknown",
+                "row_count": 0,
+                "symbol_count": 0,
+                "earliest_time": None,
+                "latest_time": None,
+                "payload": payload,
+            })
         coverage = [
             MarketCoverage.model_validate(item) for item in state.payload.get("coverage", [])
         ]
@@ -608,6 +670,10 @@ class CatalogService:
     ) -> dict[str, Any] | None:
         if state is None or not _is_materialized(state):
             return None
+        if not state.latest_time:
+            # Leftover-only files can still occupy bytes after a switch.
+            # Coverage calendars stay empty until current-route parquet exists.
+            return None
         stats: dict[str, Any] = {
             "rows": state.row_count,
             "earliest_date": state.earliest_time,
@@ -647,9 +713,8 @@ class CatalogService:
             for name, dataset_id in table_ids.items()
         }
         if not any(
-            _is_materialized(states[dataset_id])
+            dataset_id in states and states[dataset_id].row_count > 0
             for dataset_id in table_ids.values()
-            if dataset_id in states
         ):
             return None
         return {"rows": sum(item["rows"] for item in tables.values()), "tables": tables}
