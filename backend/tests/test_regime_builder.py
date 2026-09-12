@@ -193,7 +193,16 @@ def test_run_regime_batch_aggregates_fallback_per_batch(tmp_path, monkeypatch):
     for trade_date in target_dates:
         partition = enriched_dir / f"date={trade_date.isoformat()}"
         partition.mkdir(parents=True)
-        (partition / "part.parquet").write_bytes(b"")
+        pl.DataFrame({
+            "symbol": ["A"],
+            "date": [trade_date],
+            "open": [10.0],
+            "high": [10.2],
+            "low": [9.9],
+            "close": [10.1],
+            "volume": [100.0],
+            "amount": [1010.0],
+        }).write_parquet(partition / "part.parquet")
 
     class _Store:
         data_dir = tmp_path
@@ -334,7 +343,16 @@ def test_detect_stale_dates_by_mtime(tmp_path):
     for ds in ["2026-01-01", "2026-01-02"]:
         d = enriched_dir / f"date={ds}"
         d.mkdir(parents=True)
-        (d / "part.parquet").write_bytes(b"x")
+        pl.DataFrame({
+            "symbol": ["A"],
+            "date": [date.fromisoformat(ds)],
+            "open": [10.0],
+            "high": [10.2],
+            "low": [9.9],
+            "close": [10.1],
+            "volume": [100.0],
+            "amount": [1010.0],
+        }).write_parquet(d / "part.parquet")
     # 重新 upsert regime → regime mtime 更新到 T3 > enriched 的 T2
     regime_builder.upsert_regime_history(tmp_path, pl.DataFrame({
         "date": [date(2026, 1, 1), date(2026, 1, 2)],
@@ -368,7 +386,16 @@ def test_compute_incremental_missing_dates(tmp_path):
     for ds in ["2026-01-01", "2026-01-02"]:
         d = enriched_dir / f"date={ds}"
         d.mkdir(parents=True)
-        (d / "part.parquet").write_bytes(b"x")
+        pl.DataFrame({
+            "symbol": ["A"],
+            "date": [date.fromisoformat(ds)],
+            "open": [10.0],
+            "high": [10.2],
+            "low": [9.9],
+            "close": [10.1],
+            "volume": [100.0],
+            "amount": [1010.0],
+        }).write_parquet(d / "part.parquet")
 
     class _FakeRepo:
         class store:

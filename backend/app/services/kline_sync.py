@@ -291,9 +291,21 @@ def daily_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("daily partition probe failed %s: %s", part, exc)
-        # Corrupt leftovers used to mint a TickFlow / public calendar entry.
-        return False
+        # Reads / integrity / catalog stay fail-loud on leftover TickFlow.
+        # Calendars omit these files in usable_daily_partition_dates.
+        return expected in {"tickflow", "public"}
     return daily_cache_usable(df, expected)
+
+
+def _parquet_probe_readable(path) -> bool:
+    """True when a parquet file has a readable schema (not a date marker)."""
+    from pathlib import Path
+
+    try:
+        pl.read_parquet_schema(Path(path))
+    except Exception:  # noqa: BLE001
+        return False
+    return True
 
 
 def prefer_tagged_route_files(files, expected):
@@ -352,7 +364,8 @@ def usable_daily_partition_dates(
             continue
         # Probe every extra. Leftover part.parquet must not hide a current-route
         # extra, and leftover extras must not mint a current calendar.
-        if usable_daily_partition_files(child, expected):
+        files = usable_daily_partition_files(child, expected)
+        if files and any(_parquet_probe_readable(path) for path in files):
             dates.append(day)
     dates.sort()
     return dates
@@ -395,10 +408,20 @@ def usable_daily_partition_paths(
 
     root = Path(data_dir) / table
     paths = []
-    # Dates stay fail-closed when the calendar probe raises (legacy except-glob).
-    for day in safe_usable_daily_partition_dates(data_dir, route, table=table):
-        part = root / f"date={day.isoformat()}"
-        paths.extend(usable_daily_partition_files(part, route))
+    if not root.exists():
+        return paths
+    try:
+        expected = route if route is not None else daily_route()
+        # If the calendar probe raises, do not leftover-walk.
+        usable_daily_partition_dates(data_dir, expected, table=table)
+    except Exception:  # noqa: BLE001
+        return []
+    # Walk date dirs so leftover TickFlow unreadable files still reach
+    # readers (fail-loud). Calendars omit those dates separately.
+    for child in root.iterdir():
+        if not child.is_dir() or not child.name.startswith("date="):
+            continue
+        paths.extend(usable_daily_partition_files(child, expected))
     return paths
 
 
@@ -1968,8 +1991,9 @@ def minute_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("minute partition probe failed %s: %s", part, exc)
-        # Corrupt leftovers used to mint a TickFlow / public calendar entry.
-        return False
+        # Reads / integrity stay fail-loud on leftover TickFlow. Calendars
+        # omit these files in usable_minute_partition_dates.
+        return expected in {"tickflow", "public"}
     return minute_cache_usable(df, expected)
 
 
@@ -1995,7 +2019,8 @@ def usable_minute_partition_dates(data_dir, route: str | None = None, *, asset_t
             day = date.fromisoformat(child.name[5:])
         except ValueError:
             continue
-        if usable_minute_partition_files(child, expected):
+        files = usable_minute_partition_files(child, expected)
+        if files and any(_parquet_probe_readable(path) for path in files):
             dates.append(day)
     dates.sort()
     return dates
@@ -2033,9 +2058,20 @@ def usable_minute_partition_paths(
     subdir = "kline_etf_minute" if asset_type == "etf" else "kline_minute"
     root = Path(data_dir) / subdir
     paths = []
-    for day in safe_usable_minute_partition_dates(data_dir, route, asset_type=asset_type):
-        part = root / f"date={day.isoformat()}"
-        paths.extend(usable_minute_partition_files(part, route))
+    if not root.exists():
+        return paths
+    try:
+        expected = route if route is not None else minute_route()
+        # If the calendar probe raises, do not leftover-walk.
+        usable_minute_partition_dates(data_dir, expected, asset_type=asset_type)
+    except Exception:  # noqa: BLE001
+        return []
+    # Walk date dirs so leftover TickFlow unreadable files still reach
+    # readers (fail-loud). Calendars omit those dates separately.
+    for child in root.iterdir():
+        if not child.is_dir() or not child.name.startswith("date="):
+            continue
+        paths.extend(usable_minute_partition_files(child, expected))
     return paths
 
 

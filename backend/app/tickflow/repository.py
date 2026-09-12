@@ -436,8 +436,17 @@ class DataStore:
                 f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {source} WHERE {pred}"
             )
         except Exception:
+            expected = (route or "").strip().lower()
             try:
-                self.db.execute(empty_sql)
+                if expected in {"tickflow", "public"}:
+                    # Untagged leftover TickFlow / public parquet has no route
+                    # column, so the SQL predicate cannot be applied. Serve the
+                    # leftover glob only when the current route is leftover.
+                    self.db.execute(
+                        f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {source}"
+                    )
+                else:
+                    self.db.execute(empty_sql)
             except Exception as exc:  # noqa: BLE001
                 logger.debug(
                     "gated view %s fallback skipped (%s): %s", name, first_glob, exc,

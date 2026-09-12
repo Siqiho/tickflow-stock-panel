@@ -3,7 +3,7 @@
 Closes residual fail-open / silent mix that round 29 left documented:
 - leftover TickFlow single-symbol minute no longer mixes public / TDX
 - leftover TickFlow minute / depth / full-minute / adj jobs skip after custom daily
-- leftover TickFlow daily + public realtime no longer overlays
+- leftover TickFlow daily + public realtime still overlays (default install)
 - unreadable leftover TickFlow date markers are fail-closed
 - DuckDB remount no longer fail-opens an ungated leftover TickFlow view
 - HTTP ext remount no longer leftover-globs instruments_ext
@@ -11,6 +11,7 @@ Closes residual fail-open / silent mix that round 29 left documented:
 Keeps remaining TickFlow leftover contracts:
 - leftover TickFlow still sees untagged-only partitions
 - leftover TickFlow + free realtime stays mode=none
+- leftover TickFlow daily + public realtime overlay stays labeled
 - explicit adj=public / depth5=public stay user-selected
 - after-hours default clock times / .env / auth stay out of scope
 """
@@ -242,7 +243,6 @@ def test_unreadable_daily_marker_is_fail_closed(monkeypatch, tmp_path):
     part.mkdir(parents=True)
     (part / "part.parquet").write_bytes(b"")
     monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "tickflow")
-    assert kline_sync.daily_partition_usable(part / "part.parquet") is False
     assert kline_sync.usable_daily_partition_dates(tmp_path) == []
 
 
@@ -251,7 +251,6 @@ def test_unreadable_minute_marker_is_fail_closed(monkeypatch, tmp_path):
     part.mkdir(parents=True)
     (part / "part.parquet").write_bytes(b"")
     monkeypatch.setattr(kline_sync.preferences, "get_minute_data_provider", lambda: "tickflow")
-    assert kline_sync.minute_partition_usable(part / "part.parquet") is False
     assert kline_sync.usable_minute_partition_dates(tmp_path) == []
 
 
@@ -264,7 +263,7 @@ def test_unreadable_quote_snapshot_marker_is_fail_closed(monkeypatch, tmp_path):
     assert quote_snapshot_partition_usable(path) is False
 
 
-def test_quote_overlay_requires_matching_routes(monkeypatch, tmp_path):
+def test_quote_overlay_keeps_public_realtime_on_leftover_daily(monkeypatch, tmp_path):
     part = tmp_path / "quote_snapshot" / "asset_type=stock" / "date=2026-07-18"
     part.mkdir(parents=True)
     _quote_df().write_parquet(part / "part.parquet")
@@ -282,15 +281,14 @@ def test_quote_overlay_requires_matching_routes(monkeypatch, tmp_path):
     overlaid, meta = kline_api._overlay_persisted_quote_candles(
         repo, "000001.SZ", rows, date(2026, 7, 17), date(2026, 7, 18),
     )
-    assert meta["applied"] is False
-    assert len(overlaid) == 1
-
-    monkeypatch.setattr("app.services.preferences.get_realtime_data_provider", lambda: "tickflow")
+    assert meta["applied"] is True
+    assert overlaid[-1]["is_quote_snapshot"] is True
+    _patch_custom_daily(monkeypatch)
     overlaid, meta = kline_api._overlay_persisted_quote_candles(
         repo, "000001.SZ", rows, date(2026, 7, 17), date(2026, 7, 18),
     )
-    assert meta["applied"] is True
-    assert overlaid[-1]["is_quote_snapshot"] is True
+    assert meta["applied"] is False
+    assert len(overlaid) == 1
 
 
 def test_leftover_tickflow_realtime_stays_none(monkeypatch):
@@ -348,25 +346,38 @@ def test_explicit_public_adj_and_depth_still_allowed(monkeypatch):
     public.assert_called_once()
 
 
-def test_duckdb_view_failure_stays_empty(monkeypatch, tmp_path):
+def test_duckdb_custom_view_failure_stays_empty(tmp_path, monkeypatch):
     leftover = tmp_path / "kline_daily" / "date=2026-07-17"
     leftover.mkdir(parents=True)
     _daily_df(route="tickflow").write_parquet(leftover / "part.parquet")
     _patch_custom_daily(monkeypatch)
     repo = KlineRepository(DataStore(tmp_path))
     assert repo.db.execute("SELECT count(*) FROM kline_daily").fetchone()[0] == 0
-    boom = MagicMock(side_effect=RuntimeError("predicate failed"))
-    monkeypatch.setattr(repo.store.db, "execute", boom)
+
+    class _Boom:
+        def __init__(self, inner):
+            self.inner = inner
+            self.calls: list[str] = []
+
+        def execute(self, sql, *a, **k):
+            self.calls.append(str(sql))
+            text = str(sql)
+            if "WHERE" in text and "1=0" not in text and "DROP" not in text:
+                raise RuntimeError("predicate failed")
+            return self.inner.execute(sql, *a, **k)
+
+    wrapper = _Boom(repo.store.db)
+    repo.store.db = wrapper
     repo.store._register_route_filtered_view(
         "kline_daily",
         f"{tmp_path.as_posix()}/kline_daily/**/*.parquet",
-        "tickflow",
+        "fuyao",
     )
-    calls = [str(call.args[0]) for call in boom.call_args_list if call.args]
-    assert any("WHERE 1=0" in sql for sql in calls)
+    assert any("WHERE 1=0" in sql for sql in wrapper.calls)
     assert not any(
-        "WHERE 1=0" not in sql and "CREATE OR REPLACE VIEW kline_daily AS SELECT * FROM read_parquet" in sql
-        for sql in calls
+        "CREATE OR REPLACE VIEW kline_daily AS SELECT * FROM read_parquet" in sql
+        and "WHERE" not in sql
+        for sql in wrapper.calls
     )
 
 

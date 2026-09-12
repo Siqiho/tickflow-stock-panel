@@ -275,7 +275,7 @@ def test_quote_overlay_skips_leftover_on_custom_daily(monkeypatch, tmp_path):
     assert len(overlaid) == 1
 
 
-def test_quote_overlay_skips_public_realtime_on_leftover_daily(monkeypatch, tmp_path):
+def test_quote_overlay_keeps_public_realtime_on_leftover_daily(monkeypatch, tmp_path):
     part = tmp_path / "quote_snapshot" / "asset_type=stock" / "date=2026-07-18"
     part.mkdir(parents=True)
     _quote_df().write_parquet(part / "part.parquet")
@@ -293,8 +293,8 @@ def test_quote_overlay_skips_public_realtime_on_leftover_daily(monkeypatch, tmp_
     overlaid, meta = kline_api._overlay_persisted_quote_candles(
         repo, "000001.SZ", rows, date(2026, 7, 17), date(2026, 7, 18),
     )
-    assert meta["applied"] is False
-    assert len(overlaid) == 1
+    assert meta["applied"] is True
+    assert overlaid[-1]["is_quote_snapshot"] is True
 
 
 def test_quote_overlay_keeps_matching_leftover_tickflow(monkeypatch, tmp_path):
