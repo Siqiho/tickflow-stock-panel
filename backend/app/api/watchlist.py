@@ -683,12 +683,8 @@ def watchlist_enriched(
                     else:
                         join_df = _direct_ext_join(config_id, ext_df, field_names)
                 else:
-                    db = repo.store.db
-                    selected = ", ".join(f'"{field}"' for field in field_names)
-                    ext_df = pl.from_arrow(
-                        db.query(f"SELECT symbol, {selected} FROM ext_{config_id}").arrow()
-                    )
-                    join_df = _direct_ext_join(config_id, ext_df, field_names)
+                    # Missing ext config: do not leftover-union DuckDB ext_* views.
+                    continue
                 if not join_df.is_empty():
                     df = df.join(join_df, on="symbol", how="left")
             except Exception as exc:

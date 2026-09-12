@@ -58,6 +58,7 @@ _OPERATIONAL_KEYS = {
     "control",
     "operational_other",
 }
+_LEFTOVER_COMPATIBLE_ROUTES = frozenset({"tickflow", "public"})
 _ROUTE_SENSITIVE_CATALOG = frozenset({
     "stock_daily",
     "stock_enriched",
@@ -476,18 +477,33 @@ class CatalogService:
         except Exception:
             return "unresolved"
 
+    @staticmethod
+    def _catalog_token_leftover_compatible(token: str) -> bool:
+        """True only when every route is leftover TickFlow / public.
+
+        Pre-round-23 control DBs have no stored token. Leftover TickFlow
+        still serves until rescan; a custom / unresolved switch must not
+        inherit last-scan leftover calendars.
+        """
+        if not token or token == "unresolved":
+            return False
+        return all(part in _LEFTOVER_COMPATIBLE_ROUTES for part in token.split("|"))
+
     def _catalog_route_fresh(self) -> bool:
         """False after a provider switch until the next catalog rescan.
 
         Last-scan leftover TickFlow coverage must not serve as current
-        status. Missing token (pre-round-23 control DBs) stays visible so
-        existing snapshots keep working until the next rescan.
+        status. Missing token (pre-round-23 control DBs) stays visible
+        only while every current route is leftover TickFlow / public.
         """
         scanned = self.control_db.get_meta("catalog_route_token") or {}
         stored = scanned.get("value")
+        current = self._catalog_route_token()
+        if current == "unresolved":
+            return False
         if not stored:
-            return True
-        return stored == self._catalog_route_token()
+            return self._catalog_token_leftover_compatible(current)
+        return stored == current
 
     def _catalog_entry(
         self,

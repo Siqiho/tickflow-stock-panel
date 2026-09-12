@@ -903,9 +903,9 @@ def limit_ladder(
                 cfg = configs.get(config_id)
                 if cfg:
                     try:
-                        from app.api.ext_data import _parquet_glob
-                        glob = _parquet_glob(cfg, data_dir)
-                        ext_df = pl.read_parquet(glob)
+                        from app.api.ext_data import _read_ext_dataframe
+
+                        ext_df, _ = _read_ext_dataframe(cfg, data_dir)
                         if not ext_df.is_empty() and "symbol" in ext_df.columns and field_name in ext_df.columns:
                             ext_df = ext_df.select(["symbol", field_name]).rename({field_name: ext_col_name})
                             df = df.join(ext_df, on="symbol", how="left")

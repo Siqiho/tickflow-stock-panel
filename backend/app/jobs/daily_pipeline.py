@@ -118,6 +118,32 @@ def _invalidate(table: str | None = None) -> None:
     invalidate_data_cache(table)
 
 
+def _public_financial_income_median_periods(
+    data_dir: Path,
+    symbols: list[str] | None = None,
+) -> float:
+    """Current-route income depth. Leftover TickFlow must not pick light mode.
+
+    Prefs / reader failures return 0 (full deepen) instead of leftover-globbing
+    ``financials/income/part.parquet``.
+    """
+    try:
+        from app.services.financial_sync import get_financial_df
+
+        idf = get_financial_df(Path(data_dir), "income")
+        if idf is None or idf.is_empty() or "symbol" not in idf.columns:
+            return 0.0
+        g = idf.group_by("symbol").len()
+        if symbols:
+            g = g.filter(pl.col("symbol").is_in(list(symbols)))
+        if not g.height:
+            return 0.0
+        return float(g["len"].median())
+    except Exception as e:  # noqa: BLE001
+        logger.debug("financial depth probe failed: %s", e)
+        return 0.0
+
+
 def _partition_row_count(part_dir: Path) -> int | None:
     files = [p for p in part_dir.glob("*.parquet") if p.is_file()]
     if not files:
@@ -685,19 +711,10 @@ def run_now(
 
             # Light vs full: statement body is expensive (EM ~5 periods/call).
             # Full deepen only when local depth is below target; otherwise metrics+shares.
-            median_periods = 0.0
-            try:
-                inc_path = repo.store.data_dir / "financials" / "income" / "part.parquet"
-                if inc_path.exists():
-                    idf = pl.read_parquet(inc_path)
-                    if not idf.is_empty() and "symbol" in idf.columns:
-                        g = idf.group_by("symbol").len()
-                        # restrict to current scope when possible
-                        g = g.filter(pl.col("symbol").is_in(fin_syms)) if fin_syms else g
-                        if g.height:
-                            median_periods = float(g["len"].median())
-            except Exception as e:
-                logger.debug("financial depth probe failed: %s", e)
+            # Gated reader only — leftover TickFlow income must not pick light mode.
+            median_periods = _public_financial_income_median_periods(
+                repo.store.data_dir, fin_syms,
+            )
 
             full = median_periods < max(4.0, float(mp) * 0.8)
             tables = FINANCIAL_TABLES if full else ("metrics", "shares")

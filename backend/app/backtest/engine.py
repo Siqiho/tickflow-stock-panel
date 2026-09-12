@@ -194,6 +194,18 @@ class PanelCache:
             self._cache.clear()
 
     @staticmethod
+    def _route_token() -> str:
+        """Daily route belongs in the cache key so leftover TickFlow panels
+        cannot be reused after a custom switch (or when prefs are unreadable).
+        """
+        try:
+            from app.services.kline_sync import daily_route
+
+            return daily_route() or "unresolved"
+        except Exception:  # noqa: BLE001
+            return "unresolved"
+
+    @staticmethod
     def _make_key(
         symbols: list[str] | None,
         start: date,
@@ -206,7 +218,7 @@ class PanelCache:
         else:
             h = hashlib.md5(",".join(sorted(symbols)).encode()).hexdigest()[:12]
         cols = "all" if columns is None else hashlib.md5(",".join(sorted(columns)).encode()).hexdigest()[:8]
-        return f"{asset_type}:{h}:{start}:{end}:{cols}"
+        return f"{asset_type}:{h}:{start}:{end}:{cols}:{PanelCache._route_token()}"
 
 
 # 等待进行中 enriched 发布的上限与轮询间隔。孤儿标记由 get_enriched_generation

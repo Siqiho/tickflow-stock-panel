@@ -119,11 +119,12 @@ def _load_concept_map_df(repo, kind: str = "concept") -> tuple[pl.DataFrame, int
         无数据时返回空 DataFrame。
       - member_count: 去重维度成员总数。
 
-    缓存: 维度成分股是 snapshot, 进程内不变, 按 kind 分别缓存 600s。
+    缓存: 维度成分股是 snapshot, 进程内按 (kind, daily_route) 缓存 600s。
     """
     now = time.time()
-    cached = _map_cache.get(kind)
-    if cached is not None and (now - _map_ts.get(kind, 0)) < 600:
+    cache_key = _map_cache_token(kind)
+    cached = _map_cache.get(cache_key)
+    if cached is not None and (now - _map_ts.get(cache_key, 0)) < 600:
         return cached
 
     data_dir = repo.store.data_dir
@@ -155,12 +156,22 @@ def _load_concept_map_df(repo, kind: str = "concept") -> tuple[pl.DataFrame, int
     else:
         map_df = pl.DataFrame(schema={"_sym_up": pl.Utf8, kind: pl.Utf8})
     result = (map_df, len(members_seen))
-    _map_cache[kind] = result
-    _map_ts[kind] = now
+    _map_cache[cache_key] = result
+    _map_ts[cache_key] = now
     return result
 
 
-# 维度映射缓存: {kind: (map_df, count)}。按 kind 隔离(概念/行业分别缓存)。
+def _map_cache_token(kind: str) -> str:
+    """Isolate concept/industry maps by daily route after a provider switch."""
+    try:
+        from app.services.kline_sync import daily_route
+
+        return f"{kind}|{daily_route() or 'unresolved'}"
+    except Exception:  # noqa: BLE001
+        return f"{kind}|unresolved"
+
+
+# 维度映射缓存: {kind|route: (map_df, count)}。按 kind + daily route 隔离。
 _map_cache: dict[str, tuple[pl.DataFrame, int]] = {}
 _map_ts: dict[str, float] = {}
 

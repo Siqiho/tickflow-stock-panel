@@ -192,16 +192,34 @@ def _ext_data_dir(config: ExtConfig, data_dir: Path) -> Path:
     return cfg_dir
 
 
+def _latest_date_partition_glob(root: Path) -> str | None:
+    """Latest ``date=*`` partition glob, or None. Never leftover-unions history."""
+    if not root.is_dir():
+        return None
+    partitions = sorted(
+        child for child in root.iterdir()
+        if child.is_dir()
+        and child.name.startswith("date=")
+        and any(child.glob("*.parquet"))
+    )
+    if not partitions:
+        return None
+    return f"{partitions[-1].as_posix()}/*.parquet"
+
+
 def _parquet_glob(config: ExtConfig, data_dir: Path) -> str:
     """返回该扩展配置下所有 parquet 文件的 glob 模式。
 
     snapshot: 'data/ext_data/{id}/*.parquet'（只有 part.parquet）
-    timeseries: 'data/ext_data/{id}/timeseries/**/*.parquet'
+    timeseries: latest ``date=*`` partition only (schema discovery still
+    unions via this helper's snapshot path; timeseries serving must not
+    leftover-union every historical partition).
     """
     cfg_dir = data_dir / "ext_data" / config.id
     if config.mode == "snapshot":
         return str(cfg_dir / "*.parquet")
-    return str(cfg_dir / "timeseries" / "**" / "*.parquet")
+    latest = _latest_date_partition_glob(cfg_dir / "timeseries")
+    return latest or str(cfg_dir / "timeseries" / "date=__none__" / "*.parquet")
 
 
 def _safe_json_value(value):
@@ -930,19 +948,25 @@ def _refresh_views(request: Request) -> None:
     db = repo.store.db
     d = repo.store.data_dir.as_posix()
 
-    # 注册旧路径视图（兼容）
+    # 注册旧路径视图（兼容）。kline_ext 只挂最新 date=* 分区, 不 leftover-union 历史。
     for name, subdir in [("instruments_ext", "instruments_ext"), ("kline_ext", "kline_ext")]:
-        old_glob = f"{d}/{subdir}/**/*.parquet"
         old_dir = Path(d) / subdir
-        if old_dir.exists():
-            sql = (
-                f"CREATE OR REPLACE VIEW {name} AS "
-                f"SELECT * FROM read_parquet('{old_glob}', union_by_name=true)"
-            )
-            try:
-                db.execute(sql)
-            except Exception:
-                pass
+        if not old_dir.exists():
+            continue
+        if name == "kline_ext":
+            old_glob = _latest_date_partition_glob(old_dir)
+            if not old_glob:
+                continue
+        else:
+            old_glob = f"{d}/{subdir}/**/*.parquet"
+        sql = (
+            f"CREATE OR REPLACE VIEW {name} AS "
+            f"SELECT * FROM read_parquet('{old_glob}', union_by_name=true)"
+        )
+        try:
+            db.execute(sql)
+        except Exception:
+            pass
 
     # 注册新路径视图：每个扩展表一个视图 ext_{config_id}
     ext_base = Path(d) / "ext_data"
@@ -965,7 +989,9 @@ def _refresh_views(request: Request) -> None:
                     if mode == "snapshot":
                         glob_pattern = f"{cfg_dir.as_posix()}/*.parquet"
                     else:
-                        glob_pattern = f"{cfg_dir.as_posix()}/timeseries/**/*.parquet"
+                        glob_pattern = _latest_date_partition_glob(cfg_dir / "timeseries")
+                        if not glob_pattern:
+                            continue
                     sql = (
                         f"CREATE OR REPLACE VIEW {view_name} AS "
                         f"SELECT * FROM read_parquet('{glob_pattern}', union_by_name=true)"
