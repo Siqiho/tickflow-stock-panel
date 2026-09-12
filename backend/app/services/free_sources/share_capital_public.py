@@ -216,10 +216,10 @@ def sync_share_capital_public(
         if existing is not None and existing.is_empty():
             existing = None
     except Exception:  # noqa: BLE001
+        # Prefs / reader throw must not leftover-part-only mix TickFlow shares
+        # into a public write. extras-only leftover is already served by
+        # get_financial_df; this fallback used to fail-open part.parquet.
         existing = None
-    if existing is None:
-        shares_path = data_dir / "financials" / "shares" / "part.parquet"
-        existing = pl.read_parquet(shares_path) if shares_path.exists() else None
     if (
         existing is not None
         and financial_cache_usable is not None

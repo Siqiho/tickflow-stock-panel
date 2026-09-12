@@ -81,6 +81,14 @@ def _fetch_instruments_by_type(instrument_type: str, asset_type_label: str) -> p
     instrument_type: 'index' / 'etf'
     asset_type_label: 写入 instruments 表的 asset_type 标记('index' / 'etf')
     """
+    from app.services.instrument_sync import instruments_sync_allowed
+
+    if not instruments_sync_allowed():
+        logger.info(
+            "skip TickFlow %s instruments after custom/unresolved daily",
+            instrument_type,
+        )
+        return pl.DataFrame()
     tf = get_client()
     rows: list[dict] = []
     for ex in _EXCHANGES:

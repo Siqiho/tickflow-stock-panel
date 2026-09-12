@@ -1206,8 +1206,9 @@ def sync_financials_public(
                 frame = get_financial_df(Path(data_dir), t)
                 rows_out[t] = int(frame.height) if frame is not None else 0
             except Exception:  # noqa: BLE001
-                path = Path(data_dir) / "financials" / t / "part.parquet"
-                rows_out[t] = pl.read_parquet(path).height if path.exists() else 0
+                # Reader / prefs throw must not leftover-part-only fail-open
+                # row counts from a stale TickFlow part.parquet.
+                rows_out[t] = 0
 
     try:
         if "shares" in table_list:

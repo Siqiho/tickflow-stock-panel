@@ -240,16 +240,25 @@ def _duckdb_read_parquet_source(glob_or_list: str) -> str:
 
 
 def _parquet_glob(config: ExtConfig, data_dir: Path) -> str:
-    """返回该扩展配置下所有 parquet 文件的 glob 模式。
+    """返回该扩展配置下可读 parquet 的 glob / 文件列表。
 
-    snapshot: 'data/ext_data/{id}/*.parquet'（只有 part.parquet）
+    snapshot: readable extras only (leftover part must not hide extras;
+    unreadable extras must not leftover-union into DESCRIBE / remount).
     timeseries: latest ``date=*`` partition only (schema discovery still
     unions via this helper's snapshot path; timeseries serving must not
     leftover-union every historical partition).
     """
     cfg_dir = data_dir / "ext_data" / config.id
     if config.mode == "snapshot":
-        return str(cfg_dir / "*.parquet")
+        from app.services.ext_data import usable_ext_snapshot_files
+
+        files = usable_ext_snapshot_files(data_dir, config.id)
+        if not files:
+            return str(cfg_dir / "__none__.parquet")
+        if len(files) == 1:
+            return files[0].as_posix()
+        joined = ", ".join(f"'{path.as_posix()}'" for path in files)
+        return f"[{joined}]"
     latest = _latest_date_partition_glob(cfg_dir / "timeseries")
     return latest or str(cfg_dir / "timeseries" / "date=__none__" / "*.parquet")
 
@@ -986,6 +995,37 @@ def discover_all_schemas(request: Request):
 # 视图刷新
 # ---------------------------------------------------------------------------
 
+def _empty_named_view(db, name: str) -> None:
+    """Fail-closed empty view. Never leave a stale leftover-union remount."""
+    try:
+        db.execute(
+            f"CREATE OR REPLACE VIEW {name} AS "
+            f"SELECT * FROM (SELECT 1 AS _empty) WHERE 1=0"
+        )
+    except Exception:
+        try:
+            db.execute(f"DROP VIEW IF EXISTS {name}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("failed to empty leftover view %s: %s", name, exc)
+
+
+def _remount_or_empty(db, name: str, glob_pattern: str | None) -> None:
+    if not glob_pattern:
+        _empty_named_view(db, name)
+        return
+    sql = (
+        f"CREATE OR REPLACE VIEW {name} AS "
+        f"SELECT * FROM {_duckdb_read_parquet_source(glob_pattern)}"
+    )
+    try:
+        db.execute(sql)
+    except Exception:
+        try:
+            db.execute(f"{sql} WHERE 1=0")
+        except Exception:
+            _empty_named_view(db, name)
+
+
 def _refresh_views(request: Request) -> None:
     """重新注册 DuckDB 视图以包含新的扩展数据。"""
     repo = request.app.state.repo
@@ -1002,22 +1042,9 @@ def _refresh_views(request: Request) -> None:
     else:
         old_dir = Path(d) / "kline_ext"
         if old_dir.exists() and _legacy_kline_ext_visible():
-            old_glob = _latest_date_partition_glob(old_dir)
-            if old_glob:
-                sql = (
-                    f"CREATE OR REPLACE VIEW kline_ext AS "
-                    f"SELECT * FROM {_duckdb_read_parquet_source(old_glob)}"
-                )
-                try:
-                    db.execute(sql)
-                except Exception:
-                    try:
-                        db.execute(
-                            f"CREATE OR REPLACE VIEW kline_ext AS "
-                            f"SELECT * FROM {_duckdb_read_parquet_source(old_glob)} WHERE 1=0"
-                        )
-                    except Exception:
-                        pass
+            _remount_or_empty(db, "kline_ext", _latest_date_partition_glob(old_dir))
+        else:
+            _empty_named_view(db, "kline_ext")
 
     # 注册新路径视图：每个扩展表一个视图 ext_{config_id}
     ext_base = Path(d) / "ext_data"
@@ -1028,43 +1055,33 @@ def _refresh_views(request: Request) -> None:
             cp = cfg_dir / "config.json"
             if not cp.exists():
                 continue
+            cfg_id = cfg_dir.name
             try:
                 raw = json.loads(cp.read_text(encoding="utf-8"))
-                cfg_id = raw["id"]
-                # 检查是否有数据文件（snapshot: extras, timeseries: timeseries/ 目录）
-                has_data = any(cfg_dir.glob("*.parquet")) or (cfg_dir / "timeseries").exists()
-                if has_data:
-                    view_name = f"ext_{cfg_id}"
-                    # snapshot: extras 在 cfg_dir/ 根下; timeseries: 在 timeseries/ 子目录
-                    mode = raw.get("mode", "snapshot")
-                    if mode == "snapshot":
-                        from app.services.ext_data import usable_ext_snapshot_files
+                cfg_id = raw.get("id") or cfg_id
+                view_name = f"ext_{cfg_id}"
+                mode = raw.get("mode", "snapshot")
+                if mode == "snapshot":
+                    from app.services.ext_data import usable_ext_snapshot_files
 
-                        files = usable_ext_snapshot_files(Path(d), cfg_id)
-                        if not files:
-                            continue
-                        if len(files) == 1:
-                            glob_pattern = files[0].as_posix()
-                        else:
-                            joined = ", ".join(f"'{path.as_posix()}'" for path in files)
-                            glob_pattern = f"[{joined}]"
+                    files = usable_ext_snapshot_files(Path(d), cfg_id)
+                    if not files:
+                        _empty_named_view(db, view_name)
+                        continue
+                    if len(files) == 1:
+                        glob_pattern = files[0].as_posix()
                     else:
-                        glob_pattern = _latest_date_partition_glob(cfg_dir / "timeseries")
-                        if not glob_pattern:
-                            continue
-                    sql = (
-                        f"CREATE OR REPLACE VIEW {view_name} AS "
-                        f"SELECT * FROM {_duckdb_read_parquet_source(glob_pattern)}"
-                    )
-                    try:
-                        db.execute(sql)
-                    except Exception:
-                        db.execute(
-                            f"CREATE OR REPLACE VIEW {view_name} AS "
-                            f"SELECT * FROM {_duckdb_read_parquet_source(glob_pattern)} WHERE 1=0"
-                        )
-            except Exception:
-                pass
+                        joined = ", ".join(f"'{path.as_posix()}'" for path in files)
+                        glob_pattern = f"[{joined}]"
+                else:
+                    glob_pattern = _latest_date_partition_glob(cfg_dir / "timeseries")
+                    if not glob_pattern:
+                        _empty_named_view(db, view_name)
+                        continue
+                _remount_or_empty(db, view_name, glob_pattern)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ext remount failed for %s: %s", cfg_id, exc)
+                _empty_named_view(db, f"ext_{cfg_id}")
 
     # 扩展列已接入 enriched 帧 (compute_signals/compute_enriched_today 注入):
     # repo 内存 enriched 缓存 (_enriched_cache/_etf_/_index_) 持有含旧扩展列的

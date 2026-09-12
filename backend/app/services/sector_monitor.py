@@ -204,12 +204,16 @@ class SectorMonitorService:
     def _data_signature(self) -> tuple[tuple[str, int, int], ...]:
         base = self._data_dir / "ext_data"
         paths: list[Path] = []
+        from app.services.ext_data import latest_ext_parquet_files
+
         for config in ExtConfigStore(self._data_dir).load_all():
             if not any(_dimension_kind(field.name, field.label) for field in config.fields):
                 continue
             config_dir = base / config.id
-            paths.extend(config_dir.rglob("config.json"))
-            paths.extend(config_dir.rglob("*.parquet"))
+            cfg = config_dir / "config.json"
+            if cfg.is_file():
+                paths.append(cfg)
+            paths.extend(latest_ext_parquet_files(self._data_dir, config))
         signature = [
             (str(path), path.stat().st_mtime_ns, path.stat().st_size)
             for path in sorted(paths)
