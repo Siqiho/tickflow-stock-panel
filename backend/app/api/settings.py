@@ -187,11 +187,12 @@ def _sync_financial_scheduler_caps(app_state, capset) -> None:
 
 
 def _stop_leftover_tickflow_loops(app_state) -> None:
-    """Stop leftover TickFlow depth / quote loops after a custom daily switch.
+    """Stop leftover TickFlow depth / quote / full-minute loops after a custom daily.
 
-    Body gates already skip leftover TickFlow depth / watchlist / full-market
-    fetches. Lifecycle used to stay ``_running`` after a custom or unresolved
-    daily. Explicit public / custom realtime and depth stay running.
+    Body gates already skip leftover TickFlow depth / watchlist / full-market /
+    full-minute fetches. Lifecycle used to stay ``_running`` after a custom or
+    unresolved daily. Explicit public / custom realtime, depth, and full-minute
+    stay running.
     """
     try:
         from app.services.kline_sync import leftover_tickflow_follow_daily
@@ -224,6 +225,18 @@ def _stop_leftover_tickflow_loops(app_state) -> None:
             ds.stop_polling()
         except Exception as exc:  # noqa: BLE001
             logger.warning("stop leftover TickFlow depth loop failed: %s", exc)
+    try:
+        from app.services import preferences as _prefs_fm
+
+        full_minute = _prefs_fm.get_full_minute_data_provider()
+    except Exception:  # noqa: BLE001
+        full_minute = "tickflow"
+    mrs = getattr(app_state, "minute_refresh", None)
+    if mrs is not None and full_minute == "tickflow":
+        try:
+            mrs.stop()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("stop leftover TickFlow minute refresh loop failed: %s", exc)
 
 
 class TickflowKeyIn(BaseModel):

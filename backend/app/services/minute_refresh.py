@@ -145,7 +145,14 @@ class MinuteRefreshService:
         try:
             from app.tickflow.capabilities import Cap
 
-            return capset.has(Cap.INTRADAY_UNIVERSE)
+            if not capset.has(Cap.INTRADAY_UNIVERSE):
+                return False
+            provider = self.active_provider()
+            if provider == "tickflow":
+                from app.services import kline_sync
+
+                return kline_sync.leftover_tickflow_follow_daily()
+            return bool(provider)
         except Exception:
             return False
 

@@ -74,6 +74,10 @@ def depth_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
     expected = (route or "").strip().lower()
     if not expected or expected == "unresolved":
         return False
+    from app.services.kline_sync import leftover_tickflow_files_allowed
+
+    if not leftover_tickflow_files_allowed(expected):
+        return False
     if "route" not in df.columns:
         return expected in {"tickflow", "public"}
     stored = [str(v or "").strip().lower() for v in df["route"].to_list()]
@@ -92,6 +96,10 @@ def depth_stored_usable(stored: str | None, route: str) -> bool:
     """In-memory sealed cache route vs current depth route."""
     expected = (route or "").strip().lower()
     if not expected or expected == "unresolved":
+        return False
+    from app.services.kline_sync import leftover_tickflow_files_allowed
+
+    if not leftover_tickflow_files_allowed(expected):
         return False
     token = (stored or "").strip().lower()
     if not token:

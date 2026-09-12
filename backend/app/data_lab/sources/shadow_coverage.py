@@ -137,7 +137,8 @@ def _iter_daily_partitions(kline_root: Path) -> list[tuple[date, list[Path]]]:
             except Exception:
                 files = []
         else:
-            files = sorted(part.glob("*.parquet"))
+            # Import failed: fail-closed, do not leftover-glob untagged extras.
+            files = []
         files = [path for path in files if path.is_file()]
         if not files:
             continue

@@ -481,6 +481,10 @@ def _pool_snapshot_usable(df: pl.DataFrame, route: str) -> bool:
     Leftover TickFlow / public still see untagged snapshots.
     """
     expected = (route or "").strip().lower()
+    from app.services.kline_sync import leftover_tickflow_files_allowed
+
+    if not leftover_tickflow_files_allowed(expected):
+        return False
     if not expected or expected in {"custom", "unresolved"}:
         if "route" not in df.columns:
             return False

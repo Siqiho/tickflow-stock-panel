@@ -121,11 +121,12 @@ def tickflow_all_a_expansion_allowed(capset, *, scope: str | None = None) -> boo
         return False
     try:
         from app.services import kline_sync
+
         if kline_sync.daily_provider_is_custom():
             return False
+        return kline_sync.leftover_tickflow_follow_daily()
     except Exception:
         return False
-    return True
 
 
 def _ensure_csi_pool(pool_id: str, data_dir: Path, *, refresh_if_missing: bool = True) -> list[str]:

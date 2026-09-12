@@ -50,6 +50,10 @@ def instrument_cache_usable(df: pl.DataFrame | None, route: str | None = None) -
     expected = (route if route is not None else instrument_route()).strip().lower()
     if not expected or expected == "unresolved":
         return False
+    from app.services.kline_sync import leftover_tickflow_files_allowed
+
+    if not leftover_tickflow_files_allowed(expected):
+        return False
     if "route" not in df.columns:
         return expected == "tickflow"
     stored = [str(v or "").strip().lower() for v in df["route"].to_list()]

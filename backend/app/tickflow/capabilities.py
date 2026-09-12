@@ -581,6 +581,7 @@ def feature_availability(
     minute_info = minute_availability(capset, user_enabled=minute_user_enabled)
     # Do not rewrite leftover TickFlow / public_fallback labels to a stored
     # custom name. minute_availability already sets source when resolve succeeded.
+    ws_live = bool(capset.has(Cap.WEBSOCKET) and _leftover_tickflow_live())
 
     return {
         "daily": daily_availability(capset),
@@ -635,10 +636,10 @@ def feature_availability(
             },
         },
         "websocket": {
-            "available": capset.has(Cap.WEBSOCKET),
-            "status": "available" if capset.has(Cap.WEBSOCKET) else "unavailable",
-            "reason": None if capset.has(Cap.WEBSOCKET) else "WebSocket 需 TickFlow Expert，暂无公开源替代",
-            "reason_code": "ok" if capset.has(Cap.WEBSOCKET) else "no_capability",
-            "source": "tickflow" if capset.has(Cap.WEBSOCKET) else "none",
+            "available": ws_live,
+            "status": "available" if ws_live else "unavailable",
+            "reason": None if ws_live else "WebSocket 需 TickFlow Expert，暂无公开源替代",
+            "reason_code": "ok" if ws_live else "no_capability",
+            "source": "tickflow" if ws_live else "none",
         },
     }

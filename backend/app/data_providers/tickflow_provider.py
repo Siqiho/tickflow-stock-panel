@@ -20,6 +20,16 @@ logger = logging.getLogger(__name__)
 _EXCHANGES = ["SH", "SZ", "BJ"]
 
 
+def _leftover_tickflow_live() -> bool:
+    """TickFlow provider primitives follow leftover TickFlow daily."""
+    try:
+        from app.services.kline_sync import leftover_tickflow_follow_daily
+
+        return leftover_tickflow_follow_daily()
+    except Exception:
+        return False
+
+
 _CN_BAR_UNITS = {
     "volume": "lot",
     "amount": "CNY",
@@ -175,6 +185,8 @@ class TickFlowProvider:
         )
 
     def get_instruments(self, asset_type: AssetType) -> pl.DataFrame:
+        if not _leftover_tickflow_live():
+            return pl.DataFrame()
         tf = get_client()
         instrument_type = "stock" if asset_type == "stock" else asset_type
         rows: list[dict] = []
@@ -194,6 +206,8 @@ class TickFlowProvider:
         asset_type: AssetType,
     ) -> pl.DataFrame:
         if not symbols:
+            return pl.DataFrame()
+        if not _leftover_tickflow_live():
             return pl.DataFrame()
         manifest = self._daily_manifest(asset_type)
         # This must precede get_client(): M3 has no verified TickFlow units yet.
@@ -243,6 +257,8 @@ class TickFlowProvider:
     ) -> pl.DataFrame:
         if not symbols:
             return pl.DataFrame()
+        if not _leftover_tickflow_live():
+            return pl.DataFrame()
         tf = get_client()
         kwargs = {"as_dataframe": False}
         if start_time or end_time:
@@ -271,6 +287,8 @@ class TickFlowProvider:
         universes: list[str] | None = None,
         symbols: list[str] | None = None,
     ) -> pl.DataFrame:
+        if not _leftover_tickflow_live():
+            return pl.DataFrame()
         tf = get_client()
         if universes and symbols:
             raise ValueError("TickFlow realtime accepts either universes or symbols, not both")
@@ -284,6 +302,8 @@ class TickFlowProvider:
 
     def get_depth_batch(self, symbols: list[str]) -> dict[str, dict]:
         if not symbols:
+            return {}
+        if not _leftover_tickflow_live():
             return {}
         data = get_client().depth.batch(symbols)
         return data if isinstance(data, dict) else {}

@@ -161,8 +161,9 @@ def leftover_tickflow_follow_daily() -> bool:
 
     After a custom or unresolved daily switch, leftover TickFlow minute /
     depth / full-minute / adj / financial / pool / trading-day-probe /
-    watchlist-quote / full-market-quote jobs, DepthService / QuoteService
-    leftover loops, and live-TickFlow capability labels must not mix
+    watchlist-quote / full-market-quote jobs, DepthService / QuoteService /
+    MinuteRefresh leftover loops, live-TickFlow capability labels, leftover
+    TickFlow file serving, and TickFlow provider primitives must not mix
     TickFlow onto the custom daily surface. After-hours clock times stay
     ops schedule.
     """
@@ -170,6 +171,21 @@ def leftover_tickflow_follow_daily() -> bool:
         return daily_route() == "tickflow"
     except Exception:  # noqa: BLE001
         return False
+
+
+def leftover_tickflow_files_allowed(route: str | None) -> bool:
+    """Whether leftover TickFlow parquet may still serve for ``route``.
+
+    Leftover TickFlow still sees untagged-only partitions when daily is
+    leftover TickFlow. After a custom or unresolved daily, leftover TickFlow
+    jobs already skip and capability labels already refuse live TickFlow —
+    leftover TickFlow files must not leftover-serve as current. Explicit
+    public / custom stay. Unreadable prefs fail-closed.
+    """
+    expected = (route or "").strip().lower()
+    if expected != "tickflow":
+        return True
+    return leftover_tickflow_follow_daily()
 
 
 def daily_provider_is_custom() -> bool:
@@ -242,6 +258,8 @@ def daily_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
         return False
     expected = (route or "").strip().lower()
     if not expected or expected == "unresolved":
+        return False
+    if not leftover_tickflow_files_allowed(expected):
         return False
     if "route" not in df.columns:
         return expected in {"tickflow", "public"}
@@ -1243,6 +1261,8 @@ def adj_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
     expected = (route or "").strip().lower()
     if not expected or expected == "unresolved":
         return False
+    if not leftover_tickflow_files_allowed(expected):
+        return False
     if "route" not in df.columns:
         return expected in {"tickflow", "public"}
     stored = [str(v or "").strip().lower() for v in df["route"].to_list()]
@@ -1607,6 +1627,8 @@ def filter_daily_cache(df: pl.DataFrame | None, route: str | None = None) -> pl.
         return df if df is not None else pl.DataFrame()
     expected = (route if route is not None else daily_route()).strip().lower()
     if not expected or expected == "unresolved":
+        return df.head(0)
+    if not leftover_tickflow_files_allowed(expected):
         return df.head(0)
     if "route" not in df.columns:
         return df if expected in {"tickflow", "public"} else df.head(0)
@@ -2059,6 +2081,8 @@ def minute_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
         return False
     expected = (route or "").strip().lower()
     if not expected or expected == "unresolved":
+        return False
+    if not leftover_tickflow_files_allowed(expected):
         return False
     if "route" not in df.columns:
         return expected in {"tickflow", "public"}
