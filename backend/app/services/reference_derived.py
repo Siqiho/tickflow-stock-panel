@@ -90,16 +90,12 @@ def partition_path(data_dir: Path, day: date, table: str = "kline_daily") -> Pat
 
 def _read_usable_daily(data_dir: Path, trade_date: date) -> pl.DataFrame:
     """Read one kline_daily partition only when it matches the current route."""
-    daily_path = partition_path(data_dir, trade_date, table="kline_daily")
-    if not daily_path.exists():
-        return pl.DataFrame()
     try:
-        from app.services.kline_sync import daily_cache_usable, daily_route
+        from app.services.kline_sync import read_usable_daily_partition
 
-        daily = pl.read_parquet(daily_path)
-        if not daily_cache_usable(daily, daily_route()):
-            return pl.DataFrame()
-        return daily
+        return read_usable_daily_partition(
+            Path(data_dir) / "kline_daily" / f"date={trade_date.isoformat()}",
+        )
     except Exception:  # noqa: BLE001
         return pl.DataFrame()
 

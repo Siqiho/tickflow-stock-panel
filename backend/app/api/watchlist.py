@@ -358,16 +358,15 @@ def _latest_realtime_snapshot(
     if data_dir is None:
         return pl.DataFrame(), None
     base = data_dir / "quote_snapshot" / "asset_type=stock"
-    parts = sorted(base.glob("date=*/part.parquet"), key=lambda path: path.parent.name)
-    if not parts:
-        return pl.DataFrame(), None
     try:
-        from app.services.quote_service import quote_snapshot_partition_usable
+        from app.services.quote_service import usable_quote_snapshot_files
 
-        usable = [path for path in reversed(parts) if quote_snapshot_partition_usable(path)]
-        if not usable:
+        parts = []
+        for child in sorted(base.glob("date=*"), key=lambda path: path.name):
+            parts.extend(usable_quote_snapshot_files(child))
+        if not parts:
             return pl.DataFrame(), None
-        snapshot = pl.read_parquet(usable[0])
+        snapshot = pl.read_parquet(parts[-1])
     except Exception as exc:
         logger.debug("read watchlist realtime snapshot failed: %s", exc)
         return pl.DataFrame(), None

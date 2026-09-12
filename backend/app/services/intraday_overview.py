@@ -102,28 +102,27 @@ def load_official_trend_overlay(data_dir: Path, official_as_of: date) -> dict[st
     """昨日正式日的均线/60 日高低/连板高度。不含今日快照，避免写成正式日。"""
     global _overlay_cache
     root = Path(data_dir) / "kline_daily_enriched"
-    official_path = root / f"date={official_as_of.isoformat()}" / "part.parquet"
+    official_dir = root / f"date={official_as_of.isoformat()}"
     try:
-        from app.services.kline_sync import daily_route
+        from app.services.kline_sync import daily_route, read_usable_daily_partition
 
         route_token = daily_route()
     except Exception:
         route_token = "unresolved"
+        read_usable_daily_partition = None
     cache_key = f"{Path(data_dir).resolve()}|{official_as_of.isoformat()}|{route_token}"
-    stamp = _partition_mtime_ns(official_path)
+    stamp = max(
+        (_partition_mtime_ns(path) for path in official_dir.glob("*.parquet")),
+        default=0,
+    )
     if _overlay_cache and _overlay_cache[0] == cache_key and _overlay_cache[1] == stamp:
         return _overlay_cache[2]
-    if not official_path.exists():
+    if read_usable_daily_partition is None:
         _overlay_cache = (cache_key, stamp, {})
         return {}
 
-    from app.services.kline_sync import daily_partition_usable, filter_daily_cache
-
-    try:
-        usable = daily_partition_usable(official_path)
-    except Exception:
-        usable = False
-    if not usable:
+    official = read_usable_daily_partition(official_dir)
+    if official.is_empty():
         _overlay_cache = (cache_key, stamp, {})
         return {}
 
@@ -131,13 +130,10 @@ def load_official_trend_overlay(data_dir: Path, official_as_of: date) -> dict[st
     frames: list[pl.DataFrame] = []
     for child in root.glob("date=*"):
         day = _as_date(child.name.removeprefix("date="))
-        part = child / "part.parquet"
-        if day is None or day < start or day > official_as_of or not part.exists():
+        if day is None or day < start or day > official_as_of:
             continue
         try:
-            if not daily_partition_usable(part):
-                continue
-            frame = filter_daily_cache(pl.read_parquet(part))
+            frame = read_usable_daily_partition(child)
         except Exception:
             continue
         keep = [col for col in ("symbol", "date", "close", "consecutive_limit_ups") if col in frame.columns]

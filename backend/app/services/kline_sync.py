@@ -309,8 +309,9 @@ def usable_daily_partition_dates(
             day = date.fromisoformat(child.name[5:])
         except ValueError:
             continue
-        files = [child / "part.parquet"] if (child / "part.parquet").is_file() else sorted(child.glob("*.parquet"))
-        if any(daily_partition_usable(part, expected) for part in files):
+        # Probe every extra. Leftover part.parquet must not hide a current-route
+        # extra, and leftover extras must not mint a current calendar.
+        if usable_daily_partition_files(child, expected):
             dates.append(day)
     dates.sort()
     return dates
@@ -353,15 +354,10 @@ def usable_daily_partition_paths(
 
     root = Path(data_dir) / table
     paths = []
+    # Dates stay fail-closed when the calendar probe raises (legacy except-glob).
     for day in safe_usable_daily_partition_dates(data_dir, route, table=table):
         part = root / f"date={day.isoformat()}"
-        preferred = part / "part.parquet"
-        if preferred.is_file():
-            paths.append(preferred)
-            continue
-        extras = sorted(part.glob("*.parquet"))
-        if extras:
-            paths.append(extras[0])
+        paths.extend(usable_daily_partition_files(part, route))
     return paths
 
 
@@ -395,6 +391,29 @@ def usable_daily_partition_files(part_dir, route: str | None = None):
         except Exception:  # noqa: BLE001
             continue
     return files
+
+
+def read_usable_daily_partition(part_dir, route: str | None = None) -> pl.DataFrame:
+    """Current-route rows in one date directory. Empty on leftover-only / probe."""
+    files = usable_daily_partition_files(part_dir, route)
+    if not files:
+        return pl.DataFrame()
+    frames = []
+    for path in files:
+        try:
+            frames.append(pl.read_parquet(path))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("usable daily extra read failed %s: %s", path, exc)
+    if not frames:
+        return pl.DataFrame()
+    try:
+        return filter_daily_cache(
+            pl.concat(frames, how="diagonal_relaxed") if len(frames) > 1 else frames[0],
+            route,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("usable daily concat failed %s: %s", part_dir, exc)
+        return pl.DataFrame()
 
 
 def scan_usable_daily(
@@ -494,6 +513,26 @@ def refresh_route_surfaces(repo=None) -> None:
         intraday_overview._overlay_cache = None
     except Exception:  # noqa: BLE001
         pass
+    data_dir = None
+    if repo is not None:
+        store = getattr(repo, "store", None)
+        data_dir = getattr(store, "data_dir", None)
+    if data_dir is not None:
+        from pathlib import Path
+
+        root = Path(data_dir)
+        try:
+            from app.services import strategy_cache
+
+            strategy_cache.clear_cache(root)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from app.factors.ext_factors import invalidate_ext_caches
+
+            invalidate_ext_caches(root)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def refresh_gated_catalog_views(repo: KlineRepository) -> None:
@@ -1901,8 +1940,7 @@ def usable_minute_partition_dates(data_dir, route: str | None = None, *, asset_t
             day = date.fromisoformat(child.name[5:])
         except ValueError:
             continue
-        part = child / "part.parquet"
-        if minute_partition_usable(part, expected):
+        if usable_minute_partition_files(child, expected):
             dates.append(day)
     dates.sort()
     return dates
@@ -1942,14 +1980,40 @@ def usable_minute_partition_paths(
     paths = []
     for day in safe_usable_minute_partition_dates(data_dir, route, asset_type=asset_type):
         part = root / f"date={day.isoformat()}"
-        preferred = part / "part.parquet"
-        if preferred.is_file():
-            paths.append(preferred)
-            continue
-        extras = sorted(part.glob("*.parquet"))
-        if extras:
-            paths.append(extras[0])
+        paths.extend(usable_minute_partition_files(part, route))
     return paths
+
+
+def usable_minute_partition_files(part_dir, route: str | None = None):
+    """Current-route minute parquet files in one date directory.
+
+    Dates / paths used to prefer leftover ``part.parquet`` and otherwise
+    take extras[0] without a usability probe. Tagged leftover TickFlow
+    extras must not mint a current calendar or empty a custom scan.
+    Probe / unresolved stays fail-closed. Leftover TickFlow still sees
+    untagged files through :func:`minute_partition_usable`.
+    """
+    from pathlib import Path
+
+    root = Path(part_dir)
+    if not root.is_dir():
+        return []
+    try:
+        expected = route if route is not None else minute_route()
+    except Exception:  # noqa: BLE001
+        return []
+    if not expected or str(expected).strip().lower() == "unresolved":
+        return []
+    files: list[Path] = []
+    for path in sorted(root.glob("*.parquet")):
+        if not path.is_file():
+            continue
+        try:
+            if minute_partition_usable(path, expected):
+                files.append(path)
+        except Exception:  # noqa: BLE001
+            continue
+    return files
 
 
 def scan_usable_minute(
@@ -2025,23 +2089,30 @@ def latest_usable_minute_datetime(data_dir, route: str | None = None, *, asset_t
     if not dates:
         return None
     subdir = "kline_etf_minute" if asset_type == "etf" else "kline_minute"
-    part = Path(data_dir) / subdir / f"date={dates[-1].isoformat()}" / "part.parquet"
-    try:
-        df = pl.read_parquet(part, columns=["datetime"])
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("usable minute datetime read failed %s: %s", part, exc)
-        return None
-    if df.is_empty() or "datetime" not in df.columns:
-        return None
-    mx = df["datetime"].max()
-    if mx is None:
-        return None
-    if isinstance(mx, datetime):
-        return mx
-    try:
-        return datetime.fromisoformat(str(mx))
-    except ValueError:
-        return None
+    files = usable_minute_partition_files(
+        Path(data_dir) / subdir / f"date={dates[-1].isoformat()}",
+        expected,
+    )
+    latest = None
+    for part in files:
+        try:
+            df = pl.read_parquet(part, columns=["datetime"])
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("usable minute datetime read failed %s: %s", part, exc)
+            continue
+        if df.is_empty() or "datetime" not in df.columns:
+            continue
+        mx = df["datetime"].max()
+        if mx is None:
+            continue
+        if not isinstance(mx, datetime):
+            try:
+                mx = datetime.fromisoformat(str(mx))
+            except ValueError:
+                continue
+        if latest is None or mx > latest:
+            latest = mx
+    return latest
 
 
 def persist_routed_minute_bars(

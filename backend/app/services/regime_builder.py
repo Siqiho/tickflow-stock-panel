@@ -644,23 +644,21 @@ def detect_stale_dates(data_dir: Path, repo) -> list[date]:
     if existing.is_empty():
         return []
     existing_dates = set(existing["date"].to_list())
-    from app.services.kline_sync import daily_partition_usable
+    from app.services.kline_sync import usable_daily_partition_files
 
-    for part in enriched_dir.glob("date=*/part.parquet"):
+    for child in enriched_dir.glob("date=*"):
         try:
-            ds = part.parent.name.replace("date=", "")
-            d = date.fromisoformat(ds)
+            d = date.fromisoformat(child.name.replace("date=", ""))
         except (ValueError, OSError):
             continue
         try:
-            if not daily_partition_usable(part):
-                continue
+            files = usable_daily_partition_files(child)
         except Exception:
             continue
-        if d not in existing_dates:
+        if not files or d not in existing_dates:
             continue
         try:
-            if part.stat().st_mtime > regime_mtime:
+            if any(path.stat().st_mtime > regime_mtime for path in files):
                 stale.append(d)
         except OSError:
             continue

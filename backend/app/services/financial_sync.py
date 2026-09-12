@@ -407,21 +407,32 @@ def _refresh_financials_views(data_dir: Path) -> None:
 
 def get_financial_df(data_dir: Path, table: str) -> pl.DataFrame:
     """读取本地财务 Parquet。"""
-    path = data_dir / "financials" / table / "part.parquet"
-    if not path.exists():
+    folder = data_dir / "financials" / table
+    if not folder.exists():
         return pl.DataFrame()
     try:
-        df = pl.read_parquet(path)
-    except Exception as e:
-        logger.warning("读取 financials/%s 失败: %s", table, e)
+        route = financial_write_route()
+    except Exception:  # noqa: BLE001
         return pl.DataFrame()
-    route = financial_write_route()
-    if not financial_cache_usable(df, route):
-        logger.info("skip stale financials/%s for route=%s", table, route)
+    if not route or route == "unresolved":
         return pl.DataFrame()
-    if "route" in df.columns:
-        return df.drop("route")
-    return df
+    frames: list[pl.DataFrame] = []
+    for path in sorted(folder.glob("*.parquet")):
+        try:
+            df = pl.read_parquet(path)
+        except Exception as e:
+            logger.warning("读取 financials/%s extra %s 失败: %s", table, path.name, e)
+            continue
+        if not financial_cache_usable(df, route):
+            logger.info("skip stale financials/%s extra %s for route=%s", table, path.name, route)
+            continue
+        if "route" in df.columns:
+            df = df.drop("route")
+        if not df.is_empty():
+            frames.append(df)
+    if not frames:
+        return pl.DataFrame()
+    return frames[0] if len(frames) == 1 else pl.concat(frames, how="diagonal_relaxed")
 
 
 # ================================================================

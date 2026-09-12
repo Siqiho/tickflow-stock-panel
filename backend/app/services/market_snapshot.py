@@ -60,19 +60,19 @@ def _finite(value: Any) -> float | None:
 def _latest_quote_snapshot(data_dir: Path) -> tuple[date | None, pl.DataFrame]:
     base = data_dir / "quote_snapshot" / "asset_type=stock"
     candidates: list[tuple[date, Path]] = []
-    for path in base.glob("date=*/part.parquet"):
-        partition_date = _as_date(path.parent.name.removeprefix("date="))
-        if partition_date is not None:
-            candidates.append((partition_date, path))
-
     try:
-        from app.services.quote_service import quote_snapshot_partition_usable
+        from app.services.quote_service import usable_quote_snapshot_files
     except Exception:
         return None, pl.DataFrame()
+    for child in base.glob("date=*"):
+        partition_date = _as_date(child.name.removeprefix("date="))
+        if partition_date is None:
+            continue
+        for path in usable_quote_snapshot_files(child):
+            candidates.append((partition_date, path))
+
     for partition_date, path in sorted(candidates, reverse=True):
         try:
-            if not quote_snapshot_partition_usable(path):
-                continue
             frame = pl.read_parquet(path)
         except Exception:
             continue
@@ -90,21 +90,21 @@ def _quote_volume_baselines(
     """Return prior positive-volume means from canonical quote snapshots."""
     base = data_dir / "quote_snapshot" / "asset_type=stock"
     candidates: list[tuple[date, Path]] = []
-    for path in base.glob("date=*/part.parquet"):
-        partition_date = _as_date(path.parent.name.removeprefix("date="))
-        if partition_date is not None and partition_date < as_of:
+    try:
+        from app.services.quote_service import usable_quote_snapshot_files
+    except Exception:
+        return {}
+    for child in base.glob("date=*"):
+        partition_date = _as_date(child.name.removeprefix("date="))
+        if partition_date is None or partition_date >= as_of:
+            continue
+        for path in usable_quote_snapshot_files(child):
             candidates.append((partition_date, path))
 
     totals: dict[str, float] = {}
     counts: dict[str, int] = {}
-    try:
-        from app.services.quote_service import quote_snapshot_partition_usable
-    except Exception:
-        return {}
     for _, path in sorted(candidates, reverse=True)[:lookback]:
         try:
-            if not quote_snapshot_partition_usable(path):
-                continue
             frame = pl.read_parquet(path)
         except Exception:
             continue

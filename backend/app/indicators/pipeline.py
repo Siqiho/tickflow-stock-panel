@@ -1287,17 +1287,14 @@ def fill_enriched_coverage_gap(
     else:
         ds = _partition_date_str(target_date)
 
-    daily_path = daily_dir / f"date={ds}" / "part.parquet"
-    from app.services.kline_sync import daily_partition_usable
-    if not daily_partition_usable(daily_path):
-        return 0
+    from app.services.kline_sync import read_usable_daily_partition
 
-    daily = pl.read_parquet(daily_path)
+    daily = read_usable_daily_partition(daily_dir / f"date={ds}")
     if daily.is_empty() or "symbol" not in daily.columns:
         return 0
 
     out = enriched_base / f"date={ds}" / "part.parquet"
-    existing = pl.read_parquet(out) if out.exists() else pl.DataFrame()
+    existing = read_usable_daily_partition(enriched_base / f"date={ds}")
     existing = _existing_enriched_for_merge(existing, daily)
     daily_syms = {str(symbol) for symbol in daily["symbol"].to_list() if symbol}
     enr_syms = (
@@ -1391,14 +1388,13 @@ def _reconcile_enriched_lineage(
     known = _known_enriched_lineage_artifacts(data_dir)
     reconciled = 0
     unreadable_dates: set[str] = set()
-    from app.services.kline_sync import daily_partition_usable
+    from app.services.kline_sync import usable_daily_partition_files
 
-    for out in sorted(enriched_base.glob("date=*/part.parquet")):
-        try:
-            if not daily_partition_usable(out):
-                continue
-        except Exception:
+    for child in sorted(p for p in enriched_base.glob("date=*") if p.is_dir()):
+        files = usable_daily_partition_files(child)
+        if not files:
             continue
+        out = next((path for path in files if path.name == "part.parquet"), files[0])
         artifact = str(out.relative_to(data_dir))
         try:
             metadata = pq.read_metadata(out)

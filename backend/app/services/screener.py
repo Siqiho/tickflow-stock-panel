@@ -228,17 +228,10 @@ class ScreenerService:
         # 历史日期: 从 parquet 读取 14 列, 即时计算指标 (慢路径)
         enriched_dir = self.repo.store.data_dir / "kline_daily_enriched"
         ds = target_date.isoformat()
-        target_parquet = enriched_dir / f"date={ds}" / "part.parquet"
-
-        if not target_parquet.exists():
-            return pl.DataFrame()
-
         try:
-            from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+            from app.services.kline_sync import read_usable_daily_partition
 
-            if not daily_partition_usable(target_parquet):
-                return pl.DataFrame()
-            df = filter_daily_cache(pl.read_parquet(target_parquet))
+            df = read_usable_daily_partition(enriched_dir / f"date={ds}")
         except Exception as e:  # noqa: BLE001
             logger.warning("load_enriched_for_date failed: %s", e)
             return pl.DataFrame()
