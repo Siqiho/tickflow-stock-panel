@@ -172,15 +172,28 @@ def ensure_synced(data_dir: Path | None = None) -> None:
     _sync_state = key
 
 
+def _readable_ext_files(part_dir: Path) -> list[Path]:
+    """Readable extras in one ext partition. Leftover part must not hide extras."""
+    from app.services.kline_sync import _parquet_probe_readable
+
+    if not part_dir.is_dir():
+        return []
+    return [
+        path for path in sorted(part_dir.glob("*.parquet"))
+        if path.is_file() and _parquet_probe_readable(path)
+    ]
+
+
 def _timeseries_signature(ts_dir: Path) -> tuple | None:
-    """时序分区签名: (分区目录名, part.parquet mtime_ns, size)。"""
+    """时序分区签名: (分区目录名, 文件名, mtime_ns, size)。含 extras。"""
     try:
         sig = []
         for d in sorted(ts_dir.glob("date=*")):
-            part = d / "part.parquet"
-            if d.is_dir() and part.exists():
-                st = part.stat()
-                sig.append((d.name, st.st_mtime_ns, st.st_size))
+            if not d.is_dir():
+                continue
+            for path in _readable_ext_files(d):
+                st = path.stat()
+                sig.append((d.name, path.name, st.st_mtime_ns, st.st_size))
         return tuple(sig)
     except OSError:
         return None
@@ -221,17 +234,20 @@ def _timeseries_frame(root: Path, config, fields: list) -> pl.DataFrame:
     parts: list[pl.DataFrame] = []
     if sig is not None:
         for d in sorted(ts_dir.glob("date=*")):
-            part = d / "part.parquet"
-            if not (d.is_dir() and part.exists()):
+            if not d.is_dir():
                 continue
-            try:
-                raw = pl.read_parquet(part)
-            except Exception as e:
-                logger.warning("扩展表 %s 分区 %s 读取失败, 跳过: %s", config.id, d.name, e)
-                continue
-            frag = _select_fields(raw, config, fields, with_date=d.name[5:])
-            if not frag.is_empty():
-                parts.append(frag)
+            for path in _readable_ext_files(d):
+                try:
+                    raw = pl.read_parquet(path)
+                except Exception as e:
+                    logger.warning(
+                        "扩展表 %s 分区 %s extra %s 读取失败, 跳过: %s",
+                        config.id, d.name, path.name, e,
+                    )
+                    continue
+                frag = _select_fields(raw, config, fields, with_date=d.name[5:])
+                if not frag.is_empty():
+                    parts.append(frag)
     frame = (
         pl.concat(parts, how="diagonal").unique(subset=["symbol", "_ext_date"], keep="last")
         if parts else pl.DataFrame()
@@ -242,22 +258,32 @@ def _timeseries_frame(root: Path, config, fields: list) -> pl.DataFrame:
 
 
 def _snapshot_frame(root: Path, config, fields: list) -> pl.DataFrame:
-    """快照扩展帧 (symbol, ext 列); 按 part.parquet (mtime, size) 签名缓存。"""
-    path = root / "ext_data" / config.id / "part.parquet"
+    """快照扩展帧 (symbol, ext 列); leftover part 不得挡住 extras。"""
+    from app.services.ext_data import usable_ext_snapshot_files
+
     try:
-        sig = None
-        if path.exists():
-            st = path.stat()
-            sig = (st.st_mtime_ns, st.st_size)
-        if sig is None:
+        files = usable_ext_snapshot_files(root, config.id)
+        if not files:
             return pl.DataFrame()
+        sig = tuple((path.name, path.stat().st_mtime_ns, path.stat().st_size) for path in files)
         key = (str(root), config.id, "snapshot")
         cached = _frame_cache.get(key)
         if cached is not None and cached[0] == sig:
             return cached[1]
-        frame = _select_fields(pl.read_parquet(path), config, fields, with_date=None)
-        if not frame.is_empty():
-            frame = frame.unique(subset=["symbol"], keep="last")
+        frames: list[pl.DataFrame] = []
+        for path in files:
+            try:
+                raw = pl.read_parquet(path)
+            except Exception as e:
+                logger.warning("扩展表 %s extra %s 读取失败, 跳过: %s", config.id, path.name, e)
+                continue
+            frag = _select_fields(raw, config, fields, with_date=None)
+            if not frag.is_empty():
+                frames.append(frag)
+        frame = (
+            pl.concat(frames, how="diagonal").unique(subset=["symbol"], keep="last")
+            if frames else pl.DataFrame()
+        )
         _frame_cache[key] = (sig, frame)
         return frame
     except Exception as e:

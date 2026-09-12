@@ -274,8 +274,10 @@ class DataStore:
             get_financial_df = None
         d = self.data_dir.as_posix()
         for table in FINANCIAL_TABLES:
-            path = self.data_dir / "financials" / table / "part.parquet"
-            if not path.exists() or get_financial_df is None:
+            folder = self.data_dir / "financials" / table
+            if get_financial_df is None or not folder.exists():
+                continue
+            if not any(folder.glob("*.parquet")):
                 continue
             name = f"financials_{table}"
             glob = f"{d}/financials/{table}/*.parquet"
@@ -306,8 +308,8 @@ class DataStore:
                 ("stock", "adj_factor", "adj_factor"),
                 ("etf", "adj_factor_etf", "adj_factor_etf"),
             ):
-                path = self.data_dir / subdir / "all.parquet"
-                if not path.exists():
+                adj_root = self.data_dir / subdir
+                if not adj_root.exists() or not any(adj_root.glob("*.parquet")):
                     continue
                 glob = f"{d}/{subdir}/**/*.parquet"
                 try:
@@ -725,9 +727,6 @@ class KlineRepository:
         self._etf_enriched_glob = str(store.data_dir / "kline_etf_enriched" / "**" / "*.parquet")
         self._minute_glob = str(store.data_dir / "kline_minute" / "**" / "*.parquet")
         self._etf_minute_glob = str(store.data_dir / "kline_etf_minute" / "**" / "*.parquet")
-        self._inst_glob = str(store.data_dir / "instruments" / "**" / "*.parquet")
-        self._index_inst_glob = str(store.data_dir / "instruments_index" / "**" / "*.parquet")
-        self._etf_inst_glob = str(store.data_dir / "instruments_etf" / "**" / "*.parquet")
 
     def execute_all(self, sql: str, params: list | None = None) -> list[tuple]:
         """线程安全的 SELECT → fetchall。DuckDB 单 connection 非线程安全，所有读路径须走此方法。"""
@@ -790,7 +789,11 @@ class KlineRepository:
         优化: 扩大历史读取范围, 同时缓存完整历史 (含指标), 供 filter_history 策略直接复用。
         """
         try:
-            from app.services.kline_sync import filter_daily_cache, scan_usable_daily
+            from app.services.kline_sync import (
+                filter_daily_cache,
+                read_usable_daily_partition,
+                scan_usable_daily,
+            )
 
             latest = self.latest_enriched_date("stock")
             if not latest:
@@ -799,16 +802,11 @@ class KlineRepository:
                 self.clear_cache()
                 return
 
-            # Step 1: 直接读最新日期的分区文件 (仅 14 列)
+            # Step 1: 当前 route 可用 extras (leftover TickFlow extras-only
+            # 仍服务; leftover part.parquet 不得独占最新日).
             enriched_dir = self.store.data_dir / "kline_daily_enriched"
             ds = latest.isoformat() if hasattr(latest, "isoformat") else str(latest)
-            target_parquet = enriched_dir / f"date={ds}" / "part.parquet"
-
-            if not target_parquet.exists():
-                self.clear_cache()
-                return
-
-            df_latest = filter_daily_cache(pl.read_parquet(target_parquet))
+            df_latest = read_usable_daily_partition(enriched_dir / f"date={ds}")
             if df_latest.is_empty():
                 # Route switch left only leftover TickFlow in the "latest"
                 # file: drop pre-switch in-memory enriched instead of serving it.
@@ -993,26 +991,23 @@ class KlineRepository:
         ])
         agg_a = agg_a.join(df_vol, on="symbol", how="left")
 
-        # 昨日连板数: 从当前 route 可用 enriched 取 (用于增量计算同向 +1)
-        from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+        # 昨日连板数: 从当前 route 可用 enriched extras 取 (用于增量计算同向 +1)
+        from app.services.kline_sync import read_usable_daily_partition
 
-        consec_part = (
-            self.store.data_dir / "kline_daily_enriched"
-            / f"date={latest.isoformat()}" / "part.parquet"
+        consec_df = read_usable_daily_partition(
+            self.store.data_dir / "kline_daily_enriched" / f"date={latest.isoformat()}",
         )
-        if consec_part.exists() and daily_partition_usable(consec_part):
-            consec_df = filter_daily_cache(pl.read_parquet(consec_part))
-            consec_cols = [
-                c for c in ["symbol", "consecutive_limit_ups", "consecutive_limit_downs"]
-                if c in consec_df.columns
-            ]
-            if len(consec_cols) == 3 and not consec_df.is_empty():
-                consec = consec_df.select(
-                    "symbol",
-                    pl.col("consecutive_limit_ups").alias("_prev_consec_up"),
-                    pl.col("consecutive_limit_downs").alias("_prev_consec_down"),
-                )
-                agg_a = agg_a.join(consec, on="symbol", how="left")
+        consec_cols = [
+            c for c in ["symbol", "consecutive_limit_ups", "consecutive_limit_downs"]
+            if c in consec_df.columns
+        ]
+        if len(consec_cols) == 3 and not consec_df.is_empty():
+            consec = consec_df.select(
+                "symbol",
+                pl.col("consecutive_limit_ups").alias("_prev_consec_up"),
+                pl.col("consecutive_limit_downs").alias("_prev_consec_down"),
+            )
+            agg_a = agg_a.join(consec, on="symbol", how="left")
 
         # B类: 按 symbol 分组聚合 — 窗口统计
         agg_b = (
@@ -1114,6 +1109,7 @@ class KlineRepository:
         try:
             from app.services.kline_sync import (
                 filter_daily_cache,
+                read_usable_daily_partition,
                 safe_usable_daily_partition_dates,
                 scan_usable_daily,
             )
@@ -1128,8 +1124,9 @@ class KlineRepository:
                 self._etf_enriched_cache_live = False
                 return
             latest = dates[-1]
-            target_parquet = enriched_dir / f"date={latest.isoformat()}" / "part.parquet"
-            df_latest = filter_daily_cache(pl.read_parquet(target_parquet))
+            df_latest = read_usable_daily_partition(
+                enriched_dir / f"date={latest.isoformat()}",
+            )
             if df_latest.is_empty():
                 self._etf_enriched_cache = None
                 self._etf_enriched_cache_date = None
@@ -1170,11 +1167,10 @@ class KlineRepository:
     def _refresh_instruments(self) -> None:
         """加载当前 daily route 的 instruments。切源后不复用 leftover TickFlow。"""
         try:
-            from app.services.instrument_sync import filter_instruments, instrument_route
+            from app.services.instrument_sync import instrument_route, read_usable_instruments
 
             route = instrument_route()
-            df = guarded_collect(pl.scan_parquet(self._inst_glob), priority="background")
-            df = filter_instruments(df, route)
+            df = read_usable_instruments(self.store.data_dir, route, kind="instruments")
             self._instruments_cache = df if df is not None and not df.is_empty() else pl.DataFrame()
             self._instruments_route = route
             if not self._instruments_cache.is_empty():
@@ -1187,11 +1183,10 @@ class KlineRepository:
     def _refresh_index_instruments(self) -> None:
         """加载当前 daily route 的指数 instruments。"""
         try:
-            from app.services.instrument_sync import filter_instruments, instrument_route
+            from app.services.instrument_sync import instrument_route, read_usable_instruments
 
             route = instrument_route()
-            df = guarded_collect(pl.scan_parquet(self._index_inst_glob), priority="background")
-            df = filter_instruments(df, route)
+            df = read_usable_instruments(self.store.data_dir, route, kind="instruments_index")
             self._index_instruments_cache = df if df is not None and not df.is_empty() else pl.DataFrame()
             self._index_instruments_route = route
             if not self._index_instruments_cache.is_empty():
@@ -1205,7 +1200,9 @@ class KlineRepository:
         """加载 ETF instruments 到内存；兼容旧版 instruments_index 中的 ETF。"""
         parts: list[pl.DataFrame] = []
         try:
-            df = guarded_collect(pl.scan_parquet(self._etf_inst_glob), priority="background")
+            from app.services.instrument_sync import read_usable_instruments
+
+            df = read_usable_instruments(self.store.data_dir, kind="instruments_etf")
             if not df.is_empty():
                 parts.append(df)
         except Exception as e:  # noqa: BLE001
@@ -1450,8 +1447,15 @@ class KlineRepository:
         regime_builder / compute_enriched_history_window 的实际依赖;
         无股本文件时返回空表, 不阻塞环境补算。切源后同一 mtime 不能复用 leftover。
         """
-        path = self.store.data_dir / "financials" / "shares" / "part.parquet"
-        mtime_ns = path.stat().st_mtime_ns if path.exists() else None
+        folder = self.store.data_dir / "financials" / "shares"
+        stamps: list[int] = []
+        if folder.is_dir():
+            for extra in folder.glob("*.parquet"):
+                try:
+                    stamps.append(extra.stat().st_mtime_ns)
+                except OSError:
+                    continue
+        mtime_ns = max(stamps) if stamps else None
         try:
             from app.services.financial_sync import financial_write_route
 
@@ -2033,7 +2037,10 @@ class KlineRepository:
         TickFlow/public parquet as current coverage. ETF symbols read
         ``kline_etf_minute``, not the stock store.
         """
-        from app.services.kline_sync import safe_usable_minute_partition_dates
+        from app.services.kline_sync import (
+            safe_usable_minute_partition_dates,
+            usable_minute_partition_files,
+        )
 
         dates = safe_usable_minute_partition_dates(
             self.store.data_dir, asset_type=asset_type,
@@ -2045,15 +2052,16 @@ class KlineRepository:
             return dates[-1]
         subdir = "kline_etf_minute" if asset_type == "etf" else "kline_minute"
         for day in reversed(dates):
-            part = self.store.data_dir / subdir / f"date={day.isoformat()}" / "part.parquet"
-            try:
-                frame = pl.read_parquet(part, columns=["symbol"])
-            except Exception:  # noqa: BLE001
-                continue
-            if "symbol" not in frame.columns:
-                continue
-            if frame.filter(pl.col("symbol") == wanted).height:
-                return day
+            part_dir = self.store.data_dir / subdir / f"date={day.isoformat()}"
+            for path in usable_minute_partition_files(part_dir):
+                try:
+                    frame = pl.read_parquet(path, columns=["symbol"])
+                except Exception:  # noqa: BLE001
+                    continue
+                if "symbol" not in frame.columns:
+                    continue
+                if frame.filter(pl.col("symbol") == wanted).height:
+                    return day
         return None
 
     def earliest_daily_date(self) -> date | None:

@@ -831,7 +831,7 @@ def run_corporate_actions_loop(
             from app.services.kline_sync import adj_route
 
             route = adj_route()
-            if route not in {"public", "tickflow"}:
+            if route != "public":
                 report["adj_sync"] = {
                     "ok": False,
                     "skipped": True,

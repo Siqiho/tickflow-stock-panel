@@ -85,8 +85,11 @@ def _probe_tickflow(now: datetime) -> bool | None:
     无实时权限 / 网络失败 / 无有效戳 → None。
     """
     try:
+        from app.services.kline_sync import leftover_tickflow_follow_daily
         from app.tickflow.client import get_client
 
+        if not leftover_tickflow_follow_daily():
+            return None
         rows = get_client().quotes.get(symbols=list(_BASKET)) or []
         stamps = [r.get("timestamp") for r in rows if isinstance(r, dict)]
         valid = [int(t) for t in stamps if isinstance(t, (int, float)) and t]

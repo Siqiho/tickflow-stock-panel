@@ -160,8 +160,9 @@ def leftover_tickflow_follow_daily() -> bool:
     """Leftover TickFlow live/jobs only when daily is leftover TickFlow.
 
     After a custom or unresolved daily switch, leftover TickFlow minute /
-    depth / full-minute / adj / financial / pool jobs must not mix TickFlow
-    onto the custom daily surface. After-hours clock times stay ops schedule.
+    depth / full-minute / adj / financial / pool / trading-day-probe jobs
+    must not mix TickFlow onto the custom daily surface. After-hours clock
+    times stay ops schedule.
     """
     try:
         return daily_route() == "tickflow"
@@ -564,6 +565,10 @@ def scan_usable_daily(
     partitions via :func:`usable_daily_partition_paths`.
     """
     paths = usable_daily_partition_paths(data_dir, route, table=table)
+    # Unreadable leftover files stay on the fail-loud path list for catalog /
+    # get_minute. History scans must not let one bad leftover poison every
+    # readable leftover date (screener / backtest / enriched / mainline).
+    paths = [path for path in paths if _parquet_probe_readable(path)]
     if not paths:
         return None
     return pl.scan_parquet([p.as_posix() for p in paths])
@@ -1288,30 +1293,46 @@ def adj_coverage_start(data_dir, asset_type: str, fallback: datetime) -> datetim
 
 
 def get_adj_factor_df(data_dir, asset_type: str = "stock") -> pl.DataFrame:
-    """Read local adj parquet, refusing stale files after an adj-source switch."""
+    """Read local adj parquet, refusing stale files after an adj-source switch.
+
+    Leftover TickFlow / public still see extras-only untagged files.
+    Same-directory untagged extras beside tagged leftover stay out.
+    Unreadable tagged leftover does not fall back to those extras.
+    """
     from pathlib import Path
 
     factor_dir = "adj_factor_etf" if asset_type == "etf" else "adj_factor"
-    path = Path(data_dir) / factor_dir / "all.parquet"
     empty = pl.DataFrame(
         schema={"symbol": pl.Utf8, "trade_date": pl.Date, "ex_factor": pl.Float64}
     )
-    if not path.exists():
+    root = Path(data_dir) / factor_dir
+    if not root.exists():
         return empty
     try:
-        df = pl.read_parquet(path)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("读取 %s 失败: %s", factor_dir, e)
+        route = adj_route()
+    except Exception:  # noqa: BLE001
         return empty
-    if "trade_date" in df.columns and df.schema["trade_date"] != pl.Date:
-        df = df.with_columns(pl.col("trade_date").cast(pl.Date, strict=False))
-    route = adj_route()
-    if not adj_cache_usable(df, route):
-        logger.info("skip stale %s for route=%s", factor_dir, route)
+    if not route or route == "unresolved":
         return empty
-    if "route" in df.columns:
-        return df.drop("route")
-    return df
+    frames: list[pl.DataFrame] = []
+    for path in preferred_readable_route_files(sorted(root.glob("*.parquet")), route):
+        try:
+            df = pl.read_parquet(path)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("读取 %s extra %s 失败: %s", factor_dir, path.name, e)
+            continue
+        if "trade_date" in df.columns and df.schema["trade_date"] != pl.Date:
+            df = df.with_columns(pl.col("trade_date").cast(pl.Date, strict=False))
+        if not adj_cache_usable(df, route):
+            logger.info("skip stale %s extra %s for route=%s", factor_dir, path.name, route)
+            continue
+        if "route" in df.columns:
+            df = df.drop("route")
+        if not df.is_empty():
+            frames.append(df)
+    if not frames:
+        return empty
+    return frames[0] if len(frames) == 1 else pl.concat(frames, how="diagonal_relaxed")
 
 
 def _persist_adj_factor_df(
@@ -2198,6 +2219,7 @@ def scan_usable_minute(
     via :func:`usable_minute_partition_paths`.
     """
     paths = usable_minute_partition_paths(data_dir, route, asset_type=asset_type)
+    paths = [path for path in paths if _parquet_probe_readable(path)]
     if not paths:
         return None
     return pl.scan_parquet([p.as_posix() for p in paths])

@@ -290,6 +290,26 @@ def _artifact(root: Path, partition_name: str, partition_value: date) -> Path:
     return root / f"{partition_name}={partition_value.isoformat()}" / "part.parquet"
 
 
+def _latest_readable_partition_date(root: Path, prefix: str = "date=") -> date | None:
+    """Newest date whose part.parquet is readable. Unreadable markers do not mint."""
+    from app.services.kline_sync import _parquet_probe_readable
+
+    latest: date | None = None
+    if not Path(root).exists():
+        return None
+    for path in root.glob(f"{prefix}*"):
+        part = path / "part.parquet"
+        if not (part.is_file() and _parquet_probe_readable(part)):
+            continue
+        try:
+            day = date.fromisoformat(path.name.removeprefix(prefix))
+        except ValueError:
+            continue
+        if latest is None or day > latest:
+            latest = day
+    return latest
+
+
 def _validate_unique(frame: pl.DataFrame, keys: list[str], label: str) -> None:
     if frame.is_empty():
         return
@@ -893,12 +913,7 @@ def query_limit_pool(
     root = Path(data_dir) / LIMIT_POOL_ROOT
     resolved = trade_date
     if resolved is None:
-        dates = sorted(
-            date.fromisoformat(path.name.removeprefix("date="))
-            for path in root.glob("date=*")
-            if (path / "part.parquet").exists()
-        )
-        resolved = dates[-1] if dates else None
+        resolved = _latest_readable_partition_date(root)
         if resolved is None:
             return None, _empty(LIMIT_POOL_SCHEMA)
     frame = _read_partition(root / f"date={resolved.isoformat()}" / "part.parquet", LIMIT_POOL_SCHEMA)
@@ -970,12 +985,7 @@ def query_dragon_tiger(
     root = Path(data_dir) / DRAGON_TIGER_ROOT
     resolved = trade_date
     if resolved is None:
-        dates = sorted(
-            date.fromisoformat(path.name.removeprefix("date="))
-            for path in root.glob("date=*")
-            if (path / "part.parquet").exists()
-        )
-        resolved = dates[-1] if dates else None
+        resolved = _latest_readable_partition_date(root)
         if resolved is None:
             return None, _empty(DRAGON_TIGER_SCHEMA)
     frame = _read_partition(
@@ -997,12 +1007,7 @@ def query_auction_snapshot(
     root = Path(data_dir) / AUCTION_ROOT
     resolved = trade_date
     if resolved is None:
-        dates = sorted(
-            date.fromisoformat(path.name.removeprefix("date="))
-            for path in root.glob("date=*")
-            if (path / "part.parquet").exists()
-        )
-        resolved = dates[-1] if dates else None
+        resolved = _latest_readable_partition_date(root)
         if resolved is None:
             return None, _empty(AUCTION_SCHEMA)
     frame = _read_partition(root / f"date={resolved.isoformat()}" / "part.parquet", AUCTION_SCHEMA)
@@ -1021,12 +1026,7 @@ def query_valuation_snapshot(
     root = Path(data_dir) / VALUATION_ROOT
     resolved = as_of
     if resolved is None:
-        dates = sorted(
-            date.fromisoformat(path.name.removeprefix("as_of="))
-            for path in root.glob("as_of=*")
-            if (path / "part.parquet").exists()
-        )
-        resolved = dates[-1] if dates else None
+        resolved = _latest_readable_partition_date(root, prefix="as_of=")
         if resolved is None:
             return None, _empty(VALUATION_SCHEMA)
     frame = _read_partition(

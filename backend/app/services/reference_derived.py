@@ -394,24 +394,21 @@ def build_limit_up_events(
                         prev_map[str(row["symbol"]).upper()] = float(row[pc])
 
     height_map: dict[str, int] = {}
-    enr_path = partition_path(data_dir, trade_date, table="kline_daily_enriched")
-    if enr_path.exists():
-        try:
-            from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+    try:
+        from app.services.kline_sync import read_usable_daily_partition
 
-            if daily_partition_usable(enr_path):
-                enr = filter_daily_cache(pl.read_parquet(enr_path))
-            else:
-                enr = pl.DataFrame()
-        except Exception:  # noqa: BLE001
-            enr = pl.DataFrame()
-        if not enr.is_empty() and "consecutive_limit_ups" in enr.columns:
-            for row in enr.select(["symbol", "consecutive_limit_ups"]).to_dicts():
-                try:
-                    if row["consecutive_limit_ups"] is not None:
-                        height_map[str(row["symbol"]).upper()] = int(row["consecutive_limit_ups"])
-                except (TypeError, ValueError):
-                    pass
+        enr = read_usable_daily_partition(
+            data_dir / "kline_daily_enriched" / f"date={trade_date.isoformat()}",
+        )
+    except Exception:  # noqa: BLE001
+        enr = pl.DataFrame()
+    if not enr.is_empty() and "consecutive_limit_ups" in enr.columns:
+        for row in enr.select(["symbol", "consecutive_limit_ups"]).to_dicts():
+            try:
+                if row["consecutive_limit_ups"] is not None:
+                    height_map[str(row["symbol"]).upper()] = int(row["consecutive_limit_ups"])
+            except (TypeError, ValueError):
+                pass
 
     seal_map = _seal_fund_map(data_dir, trade_date)
 
