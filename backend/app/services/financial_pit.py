@@ -569,6 +569,8 @@ def migrate_existing_financials_to_pit(data_dir: Path, *, tables: Sequence[str] 
     from app.services.financial_sync import get_financial_df
 
     for table in tables:
+        folder = data_dir / "financials" / table
+        has_files = folder.exists() and any(folder.glob("*.parquet"))
         try:
             df = get_financial_df(data_dir, table)
         except Exception as exc:  # noqa: BLE001
@@ -577,7 +579,11 @@ def migrate_existing_financials_to_pit(data_dir: Path, *, tables: Sequence[str] 
             logger.exception("migrate financials/%s failed", table)
             continue
         if df is None or df.is_empty():
-            out["tables"][table] = {"exists": False}
+            out["tables"][table] = (
+                {"exists": True, "skipped": True, "reason": "stale_route"}
+                if has_files
+                else {"exists": False}
+            )
             continue
         try:
             if not _financial_migration_usable(df):
@@ -636,9 +642,16 @@ def migrate_financial_table_to_v2(data_dir: Path, table: str) -> dict[str, objec
         raise ValueError(table)
     from app.services.financial_sync import get_financial_df
 
+    folder = Path(data_dir) / "financials" / table
+    has_files = folder.exists() and any(folder.glob("*.parquet"))
     frame = get_financial_df(Path(data_dir), table)
     if frame is None or frame.is_empty():
-        return {"table": table, "ok": True, "skipped": True, "reason": "missing"}
+        return {
+            "table": table,
+            "ok": True,
+            "skipped": True,
+            "reason": "stale_route" if has_files else "missing",
+        }
     if not _financial_migration_usable(frame):
         return {
             "table": table,

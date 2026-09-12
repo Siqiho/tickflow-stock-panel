@@ -26,7 +26,7 @@ import polars as pl
 from app.api import ext_data as ext_api
 from app.api import free_ext as free_ext_api
 from app.api import kline as kline_api
-from app.data_catalog.provenance import ProvenanceService
+from app.data_catalog.provenance import SourceProvenanceModule
 from app.data_catalog.scanner import CatalogScanner, _catalog_file_usable
 from app.services import kline_sync, preferences
 from app.services.ext_data import ExtConfig, ExtField
@@ -128,6 +128,12 @@ def _capset(*caps: Cap) -> CapabilitySet:
     return CapabilitySet({cap: CapabilityLimits() for cap in caps})
 
 
+def _provenance(data_dir):
+    return SourceProvenanceModule(
+        SimpleNamespace(data_dir=data_dir, control_db=SimpleNamespace(), definitions=()),
+    )
+
+
 def test_catalog_does_not_mix_untagged_extras_beside_tagged(monkeypatch, tmp_path):
     part = tmp_path / "kline_daily" / "date=2026-07-17"
     part.mkdir(parents=True)
@@ -225,7 +231,7 @@ def test_ext_snapshot_keeps_extras_beside_leftover_part(tmp_path):
         fields=[ExtField(name="v", label="v", dtype="float")],
     )
     assert ext_api._latest_sync_date(config, tmp_path) is not None
-    assert ProvenanceService(tmp_path)._extension_materialized("ext_demo") is True
+    assert _provenance(tmp_path)._extension_materialized("ext_demo") is True
 
 
 def test_ext_snapshot_extras_only_still_materialized(tmp_path):
@@ -239,7 +245,7 @@ def test_ext_snapshot_extras_only_still_materialized(tmp_path):
         fields=[ExtField(name="v", label="v", dtype="float")],
     )
     assert ext_api._latest_sync_date(config, tmp_path) is not None
-    assert ProvenanceService(tmp_path)._extension_materialized("ext_demo") is True
+    assert _provenance(tmp_path)._extension_materialized("ext_demo") is True
 
 
 def test_ext_latest_glob_does_not_leftover_union_unreadable(tmp_path):
