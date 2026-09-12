@@ -452,8 +452,9 @@ def test_catalog_list_hides_leftover_serving_after_switch(monkeypatch, tmp_path)
     assert second["stock_daily"].descriptor.availability.serving_ready is False
     assert second["stock_daily"].state.latest_time is None
     assert second["stock_daily"].coverage == []
-    assert second["stock_instruments"].state.latest_time == "2026-07-17"
-    assert second["stock_instruments"].descriptor.availability.serving_ready is instrument_ready
+    assert second["stock_instruments"].state.latest_time is None
+    assert second["stock_instruments"].descriptor.availability.serving_ready is False
+    assert instrument_ready is True
 
 
 def test_catalog_status_drops_adj_after_adj_switch(monkeypatch, tmp_path):

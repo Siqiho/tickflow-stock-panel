@@ -100,6 +100,7 @@ def _refresh_route_surfaces(request: Request | None = None) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("route surface refresh after provider switch failed: %s", exc)
     _sync_financial_scheduler_caps(app_state, capset)
+    _stop_leftover_tickflow_loops(app_state)
 
 
 def _accept_routed_provider(raw: object, *, default: str) -> str:
@@ -183,6 +184,46 @@ def _sync_financial_scheduler_caps(app_state, capset) -> None:
                 fs.stop()
         except Exception:  # noqa: BLE001
             pass
+
+
+def _stop_leftover_tickflow_loops(app_state) -> None:
+    """Stop leftover TickFlow depth / quote loops after a custom daily switch.
+
+    Body gates already skip leftover TickFlow depth / watchlist / full-market
+    fetches. Lifecycle used to stay ``_running`` after a custom or unresolved
+    daily. Explicit public / custom realtime and depth stay running.
+    """
+    try:
+        from app.services.kline_sync import leftover_tickflow_follow_daily
+
+        if leftover_tickflow_follow_daily():
+            return
+    except Exception:  # noqa: BLE001
+        pass
+    if app_state is None:
+        return
+    try:
+        from app.services import preferences
+
+        realtime = preferences.get_realtime_data_provider()
+    except Exception:  # noqa: BLE001
+        realtime = "tickflow"
+    try:
+        depth = preferences.get_depth5_data_provider()
+    except Exception:  # noqa: BLE001
+        depth = "tickflow"
+    qs = getattr(app_state, "quote_service", None)
+    if qs is not None and realtime == "tickflow" and getattr(qs, "_running", False):
+        try:
+            qs.stop(persist=False)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("stop leftover TickFlow quote loop failed: %s", exc)
+    ds = getattr(app_state, "depth_service", None)
+    if ds is not None and depth == "tickflow" and getattr(ds, "_running", False):
+        try:
+            ds.stop_polling()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("stop leftover TickFlow depth loop failed: %s", exc)
 
 
 class TickflowKeyIn(BaseModel):

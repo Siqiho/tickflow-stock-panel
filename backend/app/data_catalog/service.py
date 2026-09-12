@@ -83,6 +83,9 @@ _ROUTE_SENSITIVE_CATALOG = frozenset({
     "index_membership_history",
     "quote_snapshot",
     "corporate_actions",
+    "stock_instruments",
+    "etf_instruments",
+    "index_instruments",
 })
 _LEGACY_STORAGE_DATASETS = {
     "daily": ("stock_daily",),

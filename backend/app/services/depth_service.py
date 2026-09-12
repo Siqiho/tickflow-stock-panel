@@ -864,8 +864,15 @@ class DepthService:
             name = preferences.get_depth5_data_provider()
         except Exception:  # noqa: BLE001
             return False
-        if name in {"public", "tickflow"}:
+        if name == "public":
             return True
+        if name == "tickflow":
+            try:
+                from app.services.kline_sync import leftover_tickflow_follow_daily
+
+                return leftover_tickflow_follow_daily()
+            except Exception:  # noqa: BLE001
+                return False
         from app.data_providers import custom as custom_sources
 
         try:
@@ -888,6 +895,13 @@ class DepthService:
             return provider
         if provider == "public":
             return "local_public"
+        try:
+            from app.services.kline_sync import leftover_tickflow_follow_daily
+
+            if not leftover_tickflow_follow_daily():
+                return "none"
+        except Exception:  # noqa: BLE001
+            return "none"
         return "tickflow" if self._has_tickflow_depth() else "local_public"
 
     def _get_capset(self):

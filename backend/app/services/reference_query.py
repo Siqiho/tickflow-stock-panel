@@ -87,7 +87,7 @@ def _reference_route_token(dataset_id: str) -> str:
             return adj_route()
     except Exception:
         return "unresolved"
-    return "tickflow"
+    return "unresolved"
 
 
 def _reference_file_usable(dataset_id: str, path: Path) -> bool:
@@ -112,7 +112,7 @@ def _reference_file_usable(dataset_id: str, path: Path) -> bool:
             return adj_cache_usable(pl.read_parquet(path, columns=["route"]), route)
     except Exception:
         return False
-    return True
+    return False
 
 
 def _scan_dataset(data_dir: Path, relpath: str, dataset_id: str) -> pl.LazyFrame | None:

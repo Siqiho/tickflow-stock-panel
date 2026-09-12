@@ -94,6 +94,16 @@ def _has_any(capset: CapabilitySet, caps: tuple[Cap, ...]) -> bool:
     return any(capset.has(c) for c in caps)
 
 
+def _leftover_tickflow_live() -> bool:
+    """True only when leftover TickFlow daily may still advertise live TickFlow."""
+    try:
+        from app.services.kline_sync import leftover_tickflow_follow_daily
+
+        return leftover_tickflow_follow_daily()
+    except Exception:
+        return False
+
+
 def minute_availability(
     capset: CapabilitySet,
     *,
@@ -192,10 +202,12 @@ def minute_availability(
             "source": minute_custom_name,
         }
 
-    if not has_any:
+    if not has_any or not _leftover_tickflow_live():
         return {
             # view_available unlocks UI charts; available stays False so pipeline
-            # does not claim full-market minute sync.
+            # does not claim full-market minute sync. Leftover TickFlow minute
+            # after a custom / unresolved daily also stays this leftover view
+            # contract — do not advertise live TickFlow full-market sync.
             "available": False,
             "view_available": True,
             "status": "public_fallback",
@@ -410,10 +422,22 @@ def feature_availability(
             adj_source = adj_provider
             adj_status = "available" if adj_ok else "unavailable"
     elif capset.has(Cap.ADJ_FACTOR):
-        adj_reason = None
-        adj_code = "ok"
-        adj_source = "tickflow"
-        adj_status = "available"
+        if _leftover_tickflow_live():
+            adj_reason = None
+            adj_code = "ok"
+            adj_source = "tickflow"
+            adj_status = "available"
+        elif local_adj:
+            adj_reason = None
+            adj_code = "ok"
+            adj_source = "local"
+            adj_status = "available"
+        else:
+            adj_ok = False
+            adj_reason = "当前档位无复权因子权限，且本地尚未同步复权因子"
+            adj_code = "no_capability"
+            adj_source = "none"
+            adj_status = "unavailable"
     elif local_adj:
         adj_reason = None
         adj_code = "ok"
@@ -465,11 +489,18 @@ def feature_availability(
         depth_source = "local_public"
         depth_status = "public_fallback"
     elif has_depth_batch or has_depth_single:
-        depth_ok = True
-        depth_reason = None
-        depth_code = "ok"
-        depth_source = "tickflow"
-        depth_status = "available"
+        if _leftover_tickflow_live():
+            depth_ok = True
+            depth_reason = None
+            depth_code = "ok"
+            depth_source = "tickflow"
+            depth_status = "available"
+        else:
+            depth_ok = False
+            depth_reason = "当前档位无五档权限，且未选择公开五档源"
+            depth_code = "no_capability"
+            depth_source = "none"
+            depth_status = "unavailable"
     else:
         depth_ok = False
         depth_reason = "当前档位无五档权限，且未选择公开五档源"
@@ -525,12 +556,20 @@ def feature_availability(
             quote_status = "unavailable"
             quote_mode = "none"
     elif has_quote:
-        quote_ok = True
-        quote_reason = None
-        quote_code = "ok"
-        quote_source = "tickflow"
-        quote_status = "available"
-        quote_mode = "full_or_watchlist"
+        if _leftover_tickflow_live():
+            quote_ok = True
+            quote_reason = None
+            quote_code = "ok"
+            quote_source = "tickflow"
+            quote_status = "available"
+            quote_mode = "full_or_watchlist"
+        else:
+            quote_ok = False
+            quote_reason = "当前档位无实时行情权限，且未选择公开源"
+            quote_code = "no_capability"
+            quote_source = "none"
+            quote_status = "unavailable"
+            quote_mode = "none"
     else:
         quote_ok = False
         quote_reason = "当前档位无实时行情权限，且未选择公开源"
@@ -575,6 +614,7 @@ def feature_availability(
                 if depth_provider != "tickflow"
                 or has_depth_batch
                 or has_depth_single
+                or not _leftover_tickflow_live()
                 else "public_l1"
             ),
             "operation": "depth5" if has_depth_batch or has_depth_single else "sealed_l1",
