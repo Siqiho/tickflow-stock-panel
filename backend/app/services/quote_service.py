@@ -93,18 +93,18 @@ def usable_quote_snapshot_files(part_dir, route: str | None = None):
         return []
     if not expected or str(expected).strip().lower() == "unresolved":
         return []
-    files = []
-    for path in sorted(root.glob("*.parquet")):
-        if not path.is_file():
-            continue
-        try:
-            if quote_snapshot_partition_usable(path, expected):
-                files.append(path)
-        except Exception:  # noqa: BLE001
-            continue
+    files = [path for path in sorted(root.glob("*.parquet")) if path.is_file()]
     from app.services.kline_sync import prefer_tagged_route_files
 
-    return prefer_tagged_route_files(files, expected)
+    preferred = prefer_tagged_route_files(files, expected)
+    usable = []
+    for path in preferred:
+        try:
+            if quote_snapshot_partition_usable(path, expected):
+                usable.append(path)
+        except Exception:  # noqa: BLE001
+            continue
+    return usable
 
 
 def quote_snapshot_partition_usable(path, route: str | None = None) -> bool:

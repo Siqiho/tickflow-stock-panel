@@ -291,9 +291,9 @@ def daily_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("daily partition probe failed %s: %s", part, exc)
-        # Reads / integrity / catalog stay fail-loud on leftover TickFlow.
-        # Calendars omit these files in usable_daily_partition_dates.
-        return expected in {"tickflow", "public"}
+        # Empty / corrupt leftovers used to mint TickFlow / public calendars
+        # and catalog coverage. Fail-closed for leftover and custom alike.
+        return False
     return daily_cache_usable(df, expected)
 
 
@@ -314,16 +314,19 @@ def prefer_tagged_route_files(files, expected):
     Untagged-only legacy partitions still serve leftover TickFlow / public.
     Same-day untagged extras sitting beside tagged leftover files used to
     concat-mix unknown-origin bars into the leftover TickFlow calendar.
+    Unreadable tagged leftovers must not fall back to those untagged extras.
     """
     token = str(expected or "").strip().lower()
     if token not in {"tickflow", "public"}:
         return files
     tagged = []
+    saw_tagged = False
     for path in files:
         try:
             names = pl.read_parquet_schema(path).names()
             if "route" not in names:
                 continue
+            saw_tagged = True
             stored = [
                 str(v or "").strip().lower()
                 for v in pl.read_parquet(path, columns=["route"])["route"].to_list()
@@ -332,8 +335,15 @@ def prefer_tagged_route_files(files, expected):
             if nonempty and all(s == token for s in nonempty):
                 tagged.append(path)
         except Exception:  # noqa: BLE001
+            # Route column (or the file) is unreadable. Treat as tagged so
+            # untagged extras beside a corrupt leftover cannot silent-mix.
+            saw_tagged = True
             continue
-    return tagged or files
+    if tagged:
+        return tagged
+    if saw_tagged:
+        return []
+    return files
 
 
 def usable_daily_partition_dates(
@@ -445,16 +455,18 @@ def usable_daily_partition_files(part_dir, route: str | None = None):
         return []
     if not expected or str(expected).strip().lower() == "unresolved":
         return []
-    files: list[Path] = []
-    for path in sorted(root.glob("*.parquet")):
-        if not path.is_file():
-            continue
+    files = [path for path in sorted(root.glob("*.parquet")) if path.is_file()]
+    # Prefer tagged leftovers first so an unreadable tagged file cannot
+    # fall back to same-day untagged extras.
+    preferred = prefer_tagged_route_files(files, expected)
+    usable: list[Path] = []
+    for path in preferred:
         try:
             if daily_partition_usable(path, expected):
-                files.append(path)
+                usable.append(path)
         except Exception:  # noqa: BLE001
             continue
-    return prefer_tagged_route_files(files, expected)
+    return usable
 
 
 def read_usable_daily_partition(part_dir, route: str | None = None) -> pl.DataFrame:
@@ -1991,9 +2003,8 @@ def minute_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("minute partition probe failed %s: %s", part, exc)
-        # Reads / integrity stay fail-loud on leftover TickFlow. Calendars
-        # omit these files in usable_minute_partition_dates.
-        return expected in {"tickflow", "public"}
+        # Empty / corrupt leftovers used to mint TickFlow / public calendars.
+        return False
     return minute_cache_usable(df, expected)
 
 
@@ -2095,16 +2106,16 @@ def usable_minute_partition_files(part_dir, route: str | None = None):
         return []
     if not expected or str(expected).strip().lower() == "unresolved":
         return []
-    files: list[Path] = []
-    for path in sorted(root.glob("*.parquet")):
-        if not path.is_file():
-            continue
+    files = [path for path in sorted(root.glob("*.parquet")) if path.is_file()]
+    preferred = prefer_tagged_route_files(files, expected)
+    usable: list[Path] = []
+    for path in preferred:
         try:
             if minute_partition_usable(path, expected):
-                files.append(path)
+                usable.append(path)
         except Exception:  # noqa: BLE001
             continue
-    return prefer_tagged_route_files(files, expected)
+    return usable
 
 
 def scan_usable_minute(

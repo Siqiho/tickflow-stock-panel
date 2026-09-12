@@ -140,6 +140,15 @@ def _ensure_csi_pool(pool_id: str, data_dir: Path, *, refresh_if_missing: bool =
             route, pool_id,
         )
         return []
+    if route == "tickflow":
+        try:
+            from app.services.kline_sync import leftover_tickflow_follow_daily
+
+            if not leftover_tickflow_follow_daily():
+                logger.info("skip leftover TickFlow CSI pool %s after custom/unresolved daily", pool_id)
+                return []
+        except Exception:  # noqa: BLE001
+            return []
 
     # Prefer on-disk cache only when provenance matches the current route.
     path = data_dir / "pools" / f"{pool_id}.parquet"

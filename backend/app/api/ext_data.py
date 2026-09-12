@@ -193,19 +193,31 @@ def _ext_data_dir(config: ExtConfig, data_dir: Path) -> Path:
     return cfg_dir
 
 
+def _legacy_kline_ext_visible() -> bool:
+    """Leftover TickFlow ``kline_ext`` only when daily is leftover TickFlow."""
+    try:
+        from app.services.kline_sync import leftover_tickflow_follow_daily
+
+        return leftover_tickflow_follow_daily()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _latest_date_partition_glob(root: Path) -> str | None:
-    """Latest ``date=*`` partition glob, or None. Never leftover-unions history."""
+    """Latest readable ``date=*`` partition glob. Never leftover-unions history."""
     if not root.is_dir():
         return None
+    from app.services.kline_sync import _parquet_probe_readable
+
     partitions = sorted(
         child for child in root.iterdir()
-        if child.is_dir()
-        and child.name.startswith("date=")
-        and any(child.glob("*.parquet"))
+        if child.is_dir() and child.name.startswith("date=")
     )
-    if not partitions:
-        return None
-    return f"{partitions[-1].as_posix()}/*.parquet"
+    for child in reversed(partitions):
+        files = [path for path in child.glob("*.parquet") if path.is_file()]
+        if files and any(_parquet_probe_readable(path) for path in files):
+            return f"{child.as_posix()}/*.parquet"
+    return None
 
 
 def _parquet_glob(config: ExtConfig, data_dir: Path) -> str:
@@ -294,8 +306,11 @@ def _latest_sync_date(config: ExtConfig, data_dir: Path) -> str | None:
     # 时序: 扫描 timeseries/date=xxx
     base = _ext_data_dir(config, data_dir)
     if not base.exists():
-        # 兼容旧路径
-        base = data_dir / "kline_ext"
+        # leftover TickFlow kline_ext only when daily is leftover TickFlow
+        if _legacy_kline_ext_visible():
+            base = data_dir / "kline_ext"
+        else:
+            return None
     if not base.exists():
         return None
     return _latest_sync_from_partitions(base)
@@ -304,11 +319,16 @@ def _latest_sync_date(config: ExtConfig, data_dir: Path) -> str | None:
 def _latest_sync_from_partitions(base: Path) -> str | None:
     """从 date=xxx 分区目录中找到最新分区的修改时间。"""
     from datetime import datetime
+
+    from app.services.kline_sync import _parquet_probe_readable
+
     latest_ts: float = 0
     latest_date: str | None = None
     for d in base.iterdir():
         if d.is_dir() and d.name.startswith("date="):
             for f in d.glob("*.parquet"):
+                if not _parquet_probe_readable(f):
+                    continue
                 mtime = f.stat().st_mtime
                 if mtime > latest_ts:
                     latest_ts = mtime
@@ -325,14 +345,19 @@ def _date_range(config: ExtConfig, data_dir: Path) -> list[str] | None:
         return None
     base = _ext_data_dir(config, data_dir)
     if not base.exists():
-        # 兼容旧路径
-        base = data_dir / "kline_ext"
+        if _legacy_kline_ext_visible():
+            base = data_dir / "kline_ext"
+        else:
+            return None
     if not base.exists():
         return None
+    from app.services.kline_sync import _parquet_probe_readable
+
     dates: list[str] = []
     for d in base.iterdir():
         if d.is_dir() and d.name.startswith("date="):
-            dates.append(d.name[5:])
+            if any(_parquet_probe_readable(path) for path in d.glob("*.parquet") if path.is_file()):
+                dates.append(d.name[5:])
     if len(dates) < 1:
         return None
     dates.sort()
@@ -942,20 +967,22 @@ def _refresh_views(request: Request) -> None:
     store = getattr(repo, "store", None)
     if store is not None and hasattr(store, "re_gate_catalog_views"):
         store.re_gate_catalog_views()
-
-    # kline_ext 只挂最新 date=* 分区, 不 leftover-union 历史。
-    old_dir = Path(d) / "kline_ext"
-    if old_dir.exists():
-        old_glob = _latest_date_partition_glob(old_dir)
-        if old_glob:
-            sql = (
-                f"CREATE OR REPLACE VIEW kline_ext AS "
-                f"SELECT * FROM read_parquet('{old_glob}', union_by_name=true)"
-            )
-            try:
-                db.execute(sql)
-            except Exception:
-                pass
+    # leftover TickFlow kline_ext only when daily is leftover TickFlow.
+    if store is not None and hasattr(store, "_register_kline_ext_view"):
+        store._register_kline_ext_view()
+    else:
+        old_dir = Path(d) / "kline_ext"
+        if old_dir.exists() and _legacy_kline_ext_visible():
+            old_glob = _latest_date_partition_glob(old_dir)
+            if old_glob:
+                sql = (
+                    f"CREATE OR REPLACE VIEW kline_ext AS "
+                    f"SELECT * FROM read_parquet('{old_glob}', union_by_name=true)"
+                )
+                try:
+                    db.execute(sql)
+                except Exception:
+                    pass
 
     # 注册新路径视图：每个扩展表一个视图 ext_{config_id}
     ext_base = Path(d) / "ext_data"

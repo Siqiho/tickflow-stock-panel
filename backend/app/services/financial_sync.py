@@ -55,6 +55,13 @@ def financials_live_allowed(capset: CapabilitySet | None) -> bool:
         return False
     if route in {"public", "custom"}:
         return True
+    try:
+        from app.services.kline_sync import leftover_tickflow_follow_daily
+
+        if not leftover_tickflow_follow_daily():
+            return False
+    except Exception:  # noqa: BLE001
+        return False
     return capset is not None and capset.has(Cap.FINANCIAL)
 
 
