@@ -128,22 +128,29 @@ def _sealed_df(*, route: str | None = None, symbol: str = "000001.SZ") -> pl.Dat
     return pl.DataFrame(data)
 
 
-def _patch_custom_daily(monkeypatch, name: str = "fuyao") -> None:
-    monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: name)
+def _patch_custom_datasets(monkeypatch, name: str = "fuyao", datasets: set[str] | None = None) -> None:
+    wanted = datasets or {"daily", "minute"}
     monkeypatch.setattr(
         "app.data_providers.custom.provider_has_dataset",
-        lambda n, dataset: n == name and dataset == "daily",
+        lambda n, dataset, wanted=wanted, name=name: n == name and dataset in wanted,
     )
     monkeypatch.setattr("app.data_providers.custom.get_provider", lambda n: SimpleNamespace())
+
+
+def _patch_custom_daily(monkeypatch, name: str = "fuyao") -> None:
+    monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: name)
+    _patch_custom_datasets(monkeypatch, name, {"daily"})
 
 
 def _patch_custom_minute(monkeypatch, name: str = "fuyao") -> None:
     monkeypatch.setattr(kline_sync.preferences, "get_minute_data_provider", lambda: name)
-    monkeypatch.setattr(
-        "app.data_providers.custom.provider_has_dataset",
-        lambda n, dataset: n == name and dataset == "minute",
-    )
-    monkeypatch.setattr("app.data_providers.custom.get_provider", lambda n: SimpleNamespace())
+    _patch_custom_datasets(monkeypatch, name, {"minute"})
+
+
+def _patch_custom_daily_and_minute(monkeypatch, name: str = "fuyao") -> None:
+    monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: name)
+    monkeypatch.setattr(kline_sync.preferences, "get_minute_data_provider", lambda: name)
+    _patch_custom_datasets(monkeypatch, name, {"daily", "minute"})
 
 
 def _patch_custom_financial(monkeypatch, name: str = "fuyao") -> None:
@@ -220,8 +227,7 @@ def test_minute_range_http_uses_etf_store(monkeypatch, tmp_path):
         "2026-07-16",
         _daily_df("510300.SH", route="tickflow", day=date(2026, 7, 16), close=999.0),
     )
-    _patch_custom_minute(monkeypatch)
-    _patch_custom_daily(monkeypatch)
+    _patch_custom_daily_and_minute(monkeypatch)
     monkeypatch.setattr(kline_api, "cn_today", lambda: date(2026, 7, 17))
     repo = SimpleNamespace(
         store=SimpleNamespace(data_dir=tmp_path),
@@ -359,8 +365,8 @@ def test_migrate_symbol_partition_never_fail_open(monkeypatch, tmp_path):
     old = tmp_path / "kline_minute" / "symbol=000001.SZ"
     old.mkdir(parents=True)
     _minute_df(route="tickflow").write_parquet(old / "part.parquet")
-    monkeypatch.setattr(kline_sync, "minute_route", _prefs_boom)
     repo = KlineRepository(DataStore(tmp_path))
+    monkeypatch.setattr(kline_sync, "minute_route", _prefs_boom)
     kline_sync._migrate_symbol_to_date_partition(repo)
     assert old.exists()
     assert not list((tmp_path / "kline_minute").glob("date=*"))
@@ -458,8 +464,7 @@ def test_list_partition_dates_skips_leftover_index_and_minute(monkeypatch, tmp_p
         "2026-07-17",
         _minute_df("510300.SH", route="tickflow"),
     )
-    _patch_custom_daily(monkeypatch)
-    _patch_custom_minute(monkeypatch)
+    _patch_custom_daily_and_minute(monkeypatch)
     assert list_partition_dates(tmp_path, "kline_index_daily") == []
     assert list_partition_dates(tmp_path, "kline_minute") == []
     assert list_partition_dates(tmp_path, "kline_etf_minute") == []
