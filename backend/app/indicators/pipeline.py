@@ -1551,8 +1551,10 @@ def run_pipeline(data_dir: Path | None = None,
     daily_dir = d / "kline_daily"
     enriched_base = d / "kline_daily_enriched"
     factor_path = d / "adj_factor" / "all.parquet"
-    if not daily_dir.exists() or not any(daily_dir.rglob("*.parquet")):
-        logger.info("无日K数据, 跳过管道")
+    from app.services.kline_sync import safe_usable_daily_partition_dates
+
+    if not daily_dir.exists() or not safe_usable_daily_partition_dates(d, table="kline_daily"):
+        logger.info("无当前 route 可用日K, 跳过管道")
         return 0
 
     from app.services import preferences as prefs_mod

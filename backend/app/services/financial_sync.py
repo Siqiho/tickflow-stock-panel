@@ -265,6 +265,15 @@ def _sync_table(
     if _use_custom_financials():
         return _sync_custom_financial_table(table, symbols, data_dir, latest_only)
 
+    from app.services.kline_sync import leftover_tickflow_follow_daily
+
+    if not leftover_tickflow_follow_daily():
+        logger.info(
+            "sync_%s skipped: leftover TickFlow financial after custom/unresolved daily",
+            table,
+        )
+        return 0
+
     if not capset.has(Cap.FINANCIAL):
         logger.info("sync_%s skipped: no FINANCIAL capability", table)
         return 0
@@ -405,12 +414,21 @@ def _refresh_financials_views(data_dir: Path) -> None:
         "financials_cash_flow": f"{d}/financials/cash_flow/*.parquet",
         "financials_shares": f"{d}/financials/shares/*.parquet",
     }
-    for name, path in views.items():
-        out = data_dir / "financials" / name.replace("financials_", "") / "part.parquet"
-        if not out.exists():
+    for name in views:
+        folder = data_dir / "financials" / name.replace("financials_", "")
+        try:
+            route = financial_write_route()
+            from app.services.kline_sync import preferred_readable_route_files
+
+            extras = preferred_readable_route_files(
+                sorted(folder.glob("*.parquet")), route,
+            )
+        except Exception:  # noqa: BLE001
+            extras = []
+        if not extras:
             continue
         # 视图注册需要由 DataStore 完成,这里只做日志
-        logger.debug("financial parquet ready: %s (%d rows)", name, out.stat().st_size)
+        logger.debug("financial parquet ready: %s (%d extras)", name, len(extras))
 
 
 def get_financial_df(data_dir: Path, table: str) -> pl.DataFrame:
@@ -574,13 +592,18 @@ class FinancialScheduler:
                 if not self._running:
                     break
 
-                # 每周: 只同步 metrics
-                try:
-                    rows = sync_metrics(self._data_dir, self._capset)
-                    self._record_sync("metrics")
-                    logger.info("FinancialScheduler: metrics synced, %d rows", rows)
-                except Exception as e:
-                    logger.warning("FinancialScheduler: metrics sync failed: %s", e)
+                # 每周: 只同步 metrics。自定义 / unresolved 日 K 后不得打 TickFlow。
+                if not financials_live_allowed(self._capset):
+                    logger.info(
+                        "FinancialScheduler: leftover TickFlow financial skipped after custom/unresolved daily"
+                    )
+                else:
+                    try:
+                        rows = sync_metrics(self._data_dir, self._capset)
+                        self._record_sync("metrics")
+                        logger.info("FinancialScheduler: metrics synced, %d rows", rows)
+                    except Exception as e:
+                        logger.warning("FinancialScheduler: metrics sync failed: %s", e)
 
                 # 等待下一次 (7天)
                 for _ in range(7 * 24 * 60):  # 每分钟检查一次 _running
@@ -597,6 +620,8 @@ class FinancialScheduler:
         table=None 同步全部 4 张表;否则只同步指定表。
         每张表完成立即更新 last_sync,让前端轮询 /status 能看到进度递增。
         """
+        if not financials_live_allowed(self._capset):
+            return {}
         if table:
             fn = {
                 "metrics": sync_metrics,

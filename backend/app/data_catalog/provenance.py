@@ -453,17 +453,22 @@ class SourceProvenanceModule:
         return items
 
     def _extension_materialized(self, config_id: str) -> bool:
-        root = self.data_dir / "ext_data" / config_id
+        from app.services.ext_data import usable_ext_snapshot_files
+        from app.services.kline_sync import _parquet_probe_readable
+
         try:
-            if any(path.is_file() for path in root.glob("*.parquet")):
+            if usable_ext_snapshot_files(self.data_dir, config_id):
                 return True
         except OSError:
             return False
-        timeseries = root / "timeseries"
+        timeseries = self.data_dir / "ext_data" / config_id / "timeseries"
         if not timeseries.is_dir() or timeseries.is_symlink():
             return False
         try:
-            return any(path.suffix == ".parquet" and path.is_file() for path in timeseries.rglob("*.parquet"))
+            return any(
+                path.suffix == ".parquet" and path.is_file() and _parquet_probe_readable(path)
+                for path in timeseries.rglob("*.parquet")
+            )
         except OSError:
             return False
 

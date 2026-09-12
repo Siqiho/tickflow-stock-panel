@@ -1011,7 +1011,13 @@ def _refresh_views(request: Request) -> None:
                 try:
                     db.execute(sql)
                 except Exception:
-                    pass
+                    try:
+                        db.execute(
+                            f"CREATE OR REPLACE VIEW kline_ext AS "
+                            f"SELECT * FROM {_duckdb_read_parquet_source(old_glob)} WHERE 1=0"
+                        )
+                    except Exception:
+                        pass
 
     # 注册新路径视图：每个扩展表一个视图 ext_{config_id}
     ext_base = Path(d) / "ext_data"
@@ -1032,7 +1038,16 @@ def _refresh_views(request: Request) -> None:
                     # snapshot: extras 在 cfg_dir/ 根下; timeseries: 在 timeseries/ 子目录
                     mode = raw.get("mode", "snapshot")
                     if mode == "snapshot":
-                        glob_pattern = f"{cfg_dir.as_posix()}/*.parquet"
+                        from app.services.ext_data import usable_ext_snapshot_files
+
+                        files = usable_ext_snapshot_files(Path(d), cfg_id)
+                        if not files:
+                            continue
+                        if len(files) == 1:
+                            glob_pattern = files[0].as_posix()
+                        else:
+                            joined = ", ".join(f"'{path.as_posix()}'" for path in files)
+                            glob_pattern = f"[{joined}]"
                     else:
                         glob_pattern = _latest_date_partition_glob(cfg_dir / "timeseries")
                         if not glob_pattern:
@@ -1041,7 +1056,13 @@ def _refresh_views(request: Request) -> None:
                         f"CREATE OR REPLACE VIEW {view_name} AS "
                         f"SELECT * FROM {_duckdb_read_parquet_source(glob_pattern)}"
                     )
-                    db.execute(sql)
+                    try:
+                        db.execute(sql)
+                    except Exception:
+                        db.execute(
+                            f"CREATE OR REPLACE VIEW {view_name} AS "
+                            f"SELECT * FROM {_duckdb_read_parquet_source(glob_pattern)} WHERE 1=0"
+                        )
             except Exception:
                 pass
 

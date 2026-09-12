@@ -104,15 +104,21 @@ def load_official_trend_overlay(data_dir: Path, official_as_of: date) -> dict[st
     root = Path(data_dir) / "kline_daily_enriched"
     official_dir = root / f"date={official_as_of.isoformat()}"
     try:
-        from app.services.kline_sync import daily_route, read_usable_daily_partition
+        from app.services.kline_sync import (
+            daily_route,
+            read_usable_daily_partition,
+            usable_daily_partition_files,
+        )
 
         route_token = daily_route()
+        stamp_files = usable_daily_partition_files(official_dir)
     except Exception:
         route_token = "unresolved"
         read_usable_daily_partition = None
+        stamp_files = []
     cache_key = f"{Path(data_dir).resolve()}|{official_as_of.isoformat()}|{route_token}"
     stamp = max(
-        (_partition_mtime_ns(path) for path in official_dir.glob("*.parquet")),
+        (_partition_mtime_ns(path) for path in stamp_files),
         default=0,
     )
     if _overlay_cache and _overlay_cache[0] == cache_key and _overlay_cache[1] == stamp:

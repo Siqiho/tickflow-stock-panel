@@ -486,12 +486,7 @@ class DataStore:
             )
         except Exception:
             try:
-                if leftover_public and expected == "tickflow":
-                    self.db.execute(
-                        f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {source}"
-                    )
-                else:
-                    self.db.execute(empty_sql)
+                self.db.execute(empty_sql)
             except Exception as exc:  # noqa: BLE001
                 logger.debug(
                     "gated view %s fallback skipped (%s): %s", name, first_glob, exc,

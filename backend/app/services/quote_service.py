@@ -925,7 +925,14 @@ class QuoteService:
         all_etf_symbols: set,
     ) -> list[dict]:
         from app.services import preferences
+        from app.services.kline_sync import leftover_tickflow_follow_daily
         from app.tickflow.client import get_paid_realtime_client
+
+        if not leftover_tickflow_follow_daily():
+            logger.info(
+                "TickFlow full-market skipped: leftover TickFlow after custom/unresolved daily"
+            )
+            return []
 
         tf = get_paid_realtime_client()
         if tf is None:
@@ -1109,6 +1116,14 @@ class QuoteService:
                 realtime_provider,
             )
             return
+        if realtime_provider == "tickflow":
+            from app.services.kline_sync import leftover_tickflow_follow_daily
+
+            if not leftover_tickflow_follow_daily():
+                logger.info(
+                    "watchlist quotes skipped: leftover TickFlow after custom/unresolved daily"
+                )
+                return
 
         tf = get_paid_realtime_client() if realtime_provider == "tickflow" else None
         if tf is not None:

@@ -55,8 +55,6 @@ def _fin_available(capset, request: Request | None = None) -> bool:
         if financials_live_allowed(capset):
             return True
     except Exception:
-        if capset is not None and capset.has(Cap.FINANCIAL):
-            return True
         if _public_fin() or _custom_fin():
             return True
     return _local_fin_ready(request)

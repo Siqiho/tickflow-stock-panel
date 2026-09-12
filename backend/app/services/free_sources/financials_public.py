@@ -626,8 +626,19 @@ def merge_write_financial_table(
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "part.parquet"
 
-    if new_data is None or new_data.is_empty():
+    def _existing_height() -> int:
+        try:
+            from app.services.financial_sync import get_financial_df
+
+            existing = get_financial_df(Path(data_dir), table)
+        except Exception:  # noqa: BLE001
+            existing = None
+        if existing is not None and not existing.is_empty():
+            return int(existing.height)
         return pl.read_parquet(out).height if out.exists() else 0
+
+    if new_data is None or new_data.is_empty():
+        return _existing_height()
 
     df = new_data
     if "symbol" not in df.columns or "period_end" not in df.columns:
@@ -650,27 +661,33 @@ def merge_write_financial_table(
                 "financials/%s public merge skipped for route=%s (no custom mix)",
                 table, route,
             )
-            return pl.read_parquet(out).height if out.exists() else 0
+            return _existing_height()
         df = _tag_financial_route(df)
-        if out.exists():
-            existing = pl.read_parquet(out)
-            if not financial_cache_usable(existing, route):
-                logger.info("financials/%s replace stale file for route=%s", table, route)
+        existing = None
+        try:
+            from app.services.financial_sync import get_financial_df
+
+            existing = get_financial_df(Path(data_dir), table)
+        except Exception:  # noqa: BLE001
+            existing = None
+        if existing is None or existing.is_empty():
+            if out.exists():
+                existing = pl.read_parquet(out)
+                if not financial_cache_usable(existing, route):
+                    logger.info("financials/%s replace stale file for route=%s", table, route)
+                    existing = df.head(0)
+            else:
                 existing = df.head(0)
-            merged = pl.concat([existing, df], how="diagonal_relaxed")
-            merged = merged.unique(subset=["symbol", "period_end"], keep="last").sort(
-                ["symbol", "period_end"]
-            )
-        else:
-            merged = df.unique(subset=["symbol", "period_end"], keep="last").sort(
-                ["symbol", "period_end"]
-            )
+        merged = pl.concat([existing, df], how="diagonal_relaxed")
+        merged = merged.unique(subset=["symbol", "period_end"], keep="last").sort(
+            ["symbol", "period_end"]
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "financials/%s public merge refused (route gate unavailable): %s",
             table, exc,
         )
-        return pl.read_parquet(out).height if out.exists() else 0
+        return _existing_height()
     atomic_write_parquet(merged, out)
     logger.info("financials/%s wrote %d rows -> %s", table, merged.height, out)
     return int(merged.height)
@@ -743,8 +760,8 @@ def sync_shares_snapshot(data_dir: Path, symbols: Sequence[str] | None = None) -
 
 def _period_stats_by_symbol(data_dir: Path, table: str) -> dict[str, dict[str, Any]]:
     """Return {symbol: {count, newest}} for a financials table parquet."""
-    path = Path(data_dir) / "financials" / table / "part.parquet"
-    if not path.exists():
+    folder = Path(data_dir) / "financials" / table
+    if not folder.exists():
         return {}
     try:
         from app.services.financial_sync import get_financial_df
@@ -1183,8 +1200,14 @@ def sync_financials_public(
         if t == "shares":
             continue
         if t not in rows_out:
-            path = Path(data_dir) / "financials" / t / "part.parquet"
-            rows_out[t] = pl.read_parquet(path).height if path.exists() else 0
+            try:
+                from app.services.financial_sync import get_financial_df
+
+                frame = get_financial_df(Path(data_dir), t)
+                rows_out[t] = int(frame.height) if frame is not None else 0
+            except Exception:  # noqa: BLE001
+                path = Path(data_dir) / "financials" / t / "part.parquet"
+                rows_out[t] = pl.read_parquet(path).height if path.exists() else 0
 
     try:
         if "shares" in table_list:

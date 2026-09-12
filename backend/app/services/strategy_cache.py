@@ -40,17 +40,20 @@ def _cache_path(data_dir: Path) -> Path:
     return user_data_dir(data_dir) / _CACHE_FILENAME
 
 
-def _enriched_parquet_path(data_dir: Path, as_of: str) -> Path:
-    """返回 enriched parquet 文件路径。"""
-    return data_dir / "kline_daily_enriched" / f"date={as_of}" / "part.parquet"
-
-
 def _get_enriched_mtime(data_dir: Path, as_of: str) -> float | None:
-    """返回 enriched parquet 文件的 mtime (秒)。文件不存在返回 None。"""
-    p = _enriched_parquet_path(data_dir, as_of)
+    """返回当前 route 可用 enriched parquet 的 mtime (秒)。"""
+    part = data_dir / "kline_daily_enriched" / f"date={as_of}"
     try:
-        return p.stat().st_mtime
-    except FileNotFoundError:
+        from app.services.kline_sync import usable_daily_partition_files
+
+        files = usable_daily_partition_files(part)
+    except Exception:  # noqa: BLE001
+        files = []
+    if not files:
+        return None
+    try:
+        return max(path.stat().st_mtime for path in files)
+    except OSError:
         return None
 
 
