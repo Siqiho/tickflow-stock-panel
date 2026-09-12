@@ -535,10 +535,20 @@ def refresh_route_surfaces(repo=None) -> None:
         _pipeline._benchmark_cache.clear()
     except Exception:  # noqa: BLE001
         pass
-    try:
-        from app.services import intraday_overview
+        try:
+            from app.services import intraday_overview
 
-        intraday_overview._overlay_cache = None
+            intraday_overview._overlay_cache = None
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        from app.services import market_mainline
+
+        invalidator = getattr(market_mainline, "invalidate_st_symbols_cache", None)
+        if callable(invalidator):
+            invalidator()
+        else:
+            market_mainline._ST_SYMBOLS_CACHE = None
     except Exception:  # noqa: BLE001
         pass
     data_dir = None

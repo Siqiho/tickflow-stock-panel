@@ -687,11 +687,10 @@ def build_shares_from_instruments(
     cross-section as period_end=as_of so API/UI shape matches SharesRecord:
       symbol, period_end, total_shares, float_shares, announce_date, source
     """
-    inst_path = Path(data_dir) / "instruments" / "instruments.parquet"
-    if not inst_path.exists():
-        return pl.DataFrame()
     try:
-        df = pl.read_parquet(inst_path)
+        from app.services.instrument_sync import read_usable_instruments
+
+        df = read_usable_instruments(data_dir)
     except Exception as e:
         logger.warning("read instruments for shares failed: %s", e)
         return pl.DataFrame()

@@ -1231,15 +1231,14 @@ def _resolve_minute_symbols(capset: CapabilitySet) -> list[str]:
 
 
 def _refresh_instruments_view(repo: KlineRepository) -> None:
-    """单独刷新 instruments 视图。"""
-    d = repo.store.data_dir.as_posix()
-    try:
-        repo.db.execute(
-            f"CREATE OR REPLACE VIEW instruments AS "
-            f"SELECT * FROM read_parquet('{d}/instruments/**/*.parquet', union_by_name=true)"
-        )
-    except Exception as e:
-        logger.warning("refresh instruments view failed: %s", e)
+    """Re-gate catalog views. Do not remount leftover TickFlow via raw glob."""
+    kline_sync.refresh_gated_catalog_views(repo)
+    refresher = getattr(repo, "_refresh_instruments", None)
+    if callable(refresher):
+        try:
+            refresher()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("instruments cache refresh after view gate failed: %s", exc)
 
 
 def _run_tracked(fn, job_label: str) -> None:

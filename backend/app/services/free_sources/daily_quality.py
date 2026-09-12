@@ -200,21 +200,27 @@ def run_daily_quality_check(data_dir: Path | str, date: str | None = None) -> di
                     }
                 )
 
-    # Coverage vs instruments
-    inst = data_dir / "instruments" / "instruments.parquet"
-    if inst.exists() and "symbol" in df.columns:
-        idf = pl.read_parquet(inst)
-        metrics["instruments"] = idf.height
-        missing = set(idf["symbol"].to_list()) - set(df["symbol"].to_list())
-        metrics["missing_vs_instruments"] = len(missing)
-        if idf.height and len(missing) / idf.height > 0.05:
-            issues.append(
-                {
-                    "code": "low_coverage",
-                    "count": len(missing),
-                    "message": f"missing {len(missing)}/{idf.height} instruments on {target}",
-                }
-            )
+    # Coverage vs current-route instruments. Leftover TickFlow universe
+    # must not mint a false low_coverage after a custom daily switch.
+    if "symbol" in df.columns:
+        try:
+            from app.services.instrument_sync import read_usable_instruments
+
+            idf = read_usable_instruments(data_dir)
+        except Exception:  # noqa: BLE001
+            idf = pl.DataFrame()
+        if not idf.is_empty() and "symbol" in idf.columns:
+            metrics["instruments"] = idf.height
+            missing = set(idf["symbol"].to_list()) - set(df["symbol"].to_list())
+            metrics["missing_vs_instruments"] = len(missing)
+            if idf.height and len(missing) / idf.height > 0.05:
+                issues.append(
+                    {
+                        "code": "low_coverage",
+                        "count": len(missing),
+                        "message": f"missing {len(missing)}/{idf.height} instruments on {target}",
+                    }
+                )
 
     # Unit heuristic sample
     if all(c in df.columns for c in ("symbol", "high", "low", "volume", "amount")):

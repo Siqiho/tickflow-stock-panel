@@ -975,11 +975,13 @@ def load_board_snapshot_items(
     kind: Literal["board", "concept"] = "board",
 ) -> list[dict]:
     snapshot_id = "ext_fund_flow_bk" if kind == "board" else "ext_fund_flow_concept"
-    path = Path(data_dir) / "ext_data" / snapshot_id / "part.parquet"
-    if not path.exists():
-        return []
     try:
-        return pl.read_parquet(path).to_dicts()
+        from app.services.ext_data import usable_ext_snapshot_files
+
+        files = usable_ext_snapshot_files(data_dir, snapshot_id)
+        if not files:
+            return []
+        return pl.read_parquet(files).to_dicts()
     except Exception:  # noqa: BLE001
         return []
 
@@ -1950,14 +1952,20 @@ def aggregate_board_window(
     """
     snapshot_id = "ext_fund_flow_bk" if kind == "board" else "ext_fund_flow_concept"
     daily_id = "ext_fund_flow_bk_daily" if kind == "board" else "ext_fund_flow_concept_daily"
-    snap_path = Path(data_dir) / "ext_data" / snapshot_id / "part.parquet"
     daily_root = Path(data_dir) / "ext_data" / daily_id / "timeseries"
     snapshot_rows = 0
     snapshot_items: list[dict] = []
-    if snap_path.exists():
-        snap = pl.read_parquet(snap_path)
-        snapshot_rows = snap.height
-        snapshot_items = snap.to_dicts()
+    try:
+        from app.services.ext_data import usable_ext_snapshot_files
+
+        snap_files = usable_ext_snapshot_files(data_dir, snapshot_id)
+        if snap_files:
+            snap = pl.read_parquet(snap_files)
+            snapshot_rows = snap.height
+            snapshot_items = snap.to_dicts()
+    except Exception:
+        snapshot_rows = 0
+        snapshot_items = []
     files = sorted(daily_root.rglob("*.parquet")) if daily_root.exists() else []
     daily = pl.DataFrame()
     if files:

@@ -69,7 +69,13 @@ def mainline_path(data_dir: Path) -> Path:
     return data_dir / MAINLINE_DIR / "part.parquet"
 
 
-_ST_SYMBOLS_CACHE: tuple[float, frozenset[str]] | None = None
+_ST_SYMBOLS_CACHE: tuple[float, str, frozenset[str]] | None = None
+
+
+def invalidate_st_symbols_cache() -> None:
+    """Drop leftover TickFlow ST cache after a daily / instrument route switch."""
+    global _ST_SYMBOLS_CACHE
+    _ST_SYMBOLS_CACHE = None
 
 
 def load_risk_warning_symbols(data_dir: Path) -> frozenset[str]:
@@ -77,30 +83,32 @@ def load_risk_warning_symbols(data_dir: Path) -> frozenset[str]:
 
     判定与 indicators 涨跌停口径共用同一权威实现(price_limits.polars_is_risk_warning_name,
     即名称含 "ST", 覆盖 ST/*ST/S*ST)。维表是快照无历史版本, 与概念成分同样的
-    回看限制。600s 进程内缓存(维表 snapshot 进程内不变)。
+    回看限制。600s 进程内缓存按 instrument route 隔离, 切源后不复用 leftover。
     """
     global _ST_SYMBOLS_CACHE
     now = time.time()
-    if _ST_SYMBOLS_CACHE is not None and now - _ST_SYMBOLS_CACHE[0] < 600:
-        return _ST_SYMBOLS_CACHE[1]
+    try:
+        from app.services.instrument_sync import instrument_route
+
+        route = instrument_route()
+    except Exception:  # noqa: BLE001
+        route = "unresolved"
+    cached = _ST_SYMBOLS_CACHE
+    if cached is not None and cached[1] == route and now - cached[0] < 600:
+        return cached[2]
     from app.price_limits import polars_is_risk_warning_name
 
     syms: frozenset[str] = frozenset()
-    inst_dir = data_dir / "instruments"
-    if inst_dir.exists():
-        try:
-            from app.services.instrument_sync import filter_instruments, instrument_route
+    try:
+        from app.services.instrument_sync import read_usable_instruments
 
-            df = filter_instruments(
-                pl.read_parquet(inst_dir / "**" / "*.parquet"),
-                instrument_route(),
-            )
-            if not df.is_empty() and {"symbol", "name"}.issubset(df.columns):
-                st = df.select(["symbol", "name"]).filter(polars_is_risk_warning_name(pl.col("name")))
-                syms = frozenset(s.upper() for s in st["symbol"].to_list())
-        except Exception as e:
-            logger.warning("load risk-warning symbols failed: %s", e)
-    _ST_SYMBOLS_CACHE = (now, syms)
+        df = read_usable_instruments(data_dir, route)
+        if not df.is_empty() and {"symbol", "name"}.issubset(df.columns):
+            st = df.select(["symbol", "name"]).filter(polars_is_risk_warning_name(pl.col("name")))
+            syms = frozenset(s.upper() for s in st["symbol"].to_list())
+    except Exception as e:
+        logger.warning("load risk-warning symbols failed: %s", e)
+    _ST_SYMBOLS_CACHE = (now, route, syms)
     return syms
 
 
