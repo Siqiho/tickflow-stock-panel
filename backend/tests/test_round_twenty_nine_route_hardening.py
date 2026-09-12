@@ -9,11 +9,9 @@ entitled minute call-failure fallback and instruments-follow-daily:
 - HTTP ext leftover-part-only (extras-blind)
 - fund-flow snapshot leftover part hiding extras
 
-Keeps remaining TickFlow leftover contracts:
-- leftover TickFlow single-symbol minute view may still use public / TDX
+Keeps remaining TickFlow leftover contracts that round 30 later closed or kept:
 - leftover TickFlow + free realtime stays mode=none
 - leftover TickFlow still sees untagged-only partitions
-- unreadable leftover TickFlow date markers stay fail-loud
 - after-hours default clock times / .env / auth stay out of scope
 """
 from __future__ import annotations

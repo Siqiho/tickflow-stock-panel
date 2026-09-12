@@ -171,6 +171,9 @@ class MinuteRefreshService:
             logger.warning("full_minute prefs unreadable, fail-closed (不降级 TickFlow)")
             return (None, "unresolved")
         if name == "tickflow":
+            if not kline_sync.leftover_tickflow_follow_daily():
+                logger.info("leftover TickFlow full_minute skipped after custom/unresolved daily")
+                return (None, "unresolved")
             return (None, "tickflow")
         provider, use_tickflow, err = kline_sync._resolve_full_minute_provider(name)
         if err is not None:

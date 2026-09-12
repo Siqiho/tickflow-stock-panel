@@ -368,6 +368,11 @@ class DepthService:
             return self._call_public_depth_l1(symbols)
         if provider_name != "tickflow":
             return self._call_routed_depth_batch(provider_name, symbols, fallback_public=False)
+        from app.services.kline_sync import leftover_tickflow_follow_daily
+
+        if not leftover_tickflow_follow_daily():
+            logger.info("leftover TickFlow depth skipped after custom/unresolved daily")
+            return {}
         data = self._call_routed_depth_batch("tickflow", symbols, fallback_public=False)
         if data:
             return data

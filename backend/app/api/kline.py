@@ -340,18 +340,23 @@ def _positive_or_close(value, close: float) -> float:
 
 
 def _quote_overlay_allowed() -> bool:
-    """Overlay snapshots onto leftover TickFlow / public daily only.
+    """Overlay snapshots only when daily and realtime routes match.
 
     Custom / unresolved daily must not mix leftover TickFlow or public
-    snapshots onto HTTP daily. Default leftover TickFlow daily + public
-    realtime still overlays (isolated live asset). Snapshot *files* stay
-    realtime-route gated.
+    snapshots onto HTTP daily. Leftover TickFlow daily + public realtime
+    used to silent-mix a public snapshot onto TickFlow candles. Snapshot
+    *files* stay realtime-route gated.
     """
     try:
+        from app.services.quote_service import realtime_route
+
         daily = kline_sync.daily_route()
+        realtime = realtime_route()
     except Exception:  # noqa: BLE001
         return False
-    return daily in {"tickflow", "public"}
+    if daily not in {"tickflow", "public"}:
+        return False
+    return daily == realtime
 
 
 def _finite_or_none(value, *, divisor: float = 1.0) -> float | None:
@@ -1237,8 +1242,8 @@ def get_minute(
                 {"provider": provider, "persisted": True, "quality": result},
             )
 
-        # Leftover TickFlow may still use TDX then public/TickFlow (old contract).
-        # Declared custom minute / prefs-unreadable / resolve failure must not.
+        # Explicit public minute may still use TDX then public. Leftover
+        # TickFlow / declared custom / prefs-unreadable must not.
         may_use_tdx = False
         try:
             may_use_tdx = kline_sync.minute_may_use_leftover_public()

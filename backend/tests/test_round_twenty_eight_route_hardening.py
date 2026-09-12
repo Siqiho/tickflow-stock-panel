@@ -9,8 +9,7 @@ Closes residual fail-open / silent mix that round 27 left documented:
 - after-hours TickFlow instrument / index jobs skip after custom daily
 - leftover TickFlow prefers tagged extras; unreadable extras stay fail-closed
 
-Keeps remaining TickFlow leftover contracts:
-- leftover TickFlow single-symbol minute view may still use public / TDX
+Keeps remaining TickFlow leftover contracts that round 30 later closed:
 - leftover TickFlow still sees untagged-only partitions
 - after-hours default clock times / .env / auth stay out of scope
 """
@@ -276,7 +275,7 @@ def test_quote_overlay_skips_leftover_on_custom_daily(monkeypatch, tmp_path):
     assert len(overlaid) == 1
 
 
-def test_quote_overlay_keeps_public_realtime_on_leftover_daily(monkeypatch, tmp_path):
+def test_quote_overlay_skips_public_realtime_on_leftover_daily(monkeypatch, tmp_path):
     part = tmp_path / "quote_snapshot" / "asset_type=stock" / "date=2026-07-18"
     part.mkdir(parents=True)
     _quote_df().write_parquet(part / "part.parquet")
@@ -294,8 +293,8 @@ def test_quote_overlay_keeps_public_realtime_on_leftover_daily(monkeypatch, tmp_
     overlaid, meta = kline_api._overlay_persisted_quote_candles(
         repo, "000001.SZ", rows, date(2026, 7, 17), date(2026, 7, 18),
     )
-    assert meta["applied"] is True
-    assert overlaid[-1]["is_quote_snapshot"] is True
+    assert meta["applied"] is False
+    assert len(overlaid) == 1
 
 
 def test_quote_overlay_keeps_matching_leftover_tickflow(monkeypatch, tmp_path):
@@ -372,12 +371,12 @@ def test_leftover_tickflow_still_sees_untagged_only(monkeypatch, tmp_path):
     assert kline_sync.read_usable_daily_partition(part)["close"].to_list() == [10.1]
 
 
-def test_unreadable_extras_still_count_for_leftover_tickflow(monkeypatch, tmp_path):
+def test_unreadable_extras_are_fail_closed_for_leftover_tickflow(monkeypatch, tmp_path):
     part = tmp_path / "kline_daily" / "date=2026-07-17"
     part.mkdir(parents=True)
     (part / "part.parquet").write_bytes(b"")
     monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "tickflow")
-    assert kline_sync.usable_daily_partition_dates(tmp_path) == [date(2026, 7, 17)]
+    assert kline_sync.usable_daily_partition_dates(tmp_path) == []
     _patch_custom_daily(monkeypatch)
     assert kline_sync.usable_daily_partition_dates(tmp_path) == []
 

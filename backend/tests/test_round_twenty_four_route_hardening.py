@@ -339,7 +339,7 @@ def test_kline_overlay_skips_leftover_after_realtime_switch(monkeypatch, tmp_pat
     assert len(overlaid) == 1
 
 
-def test_kline_overlay_keeps_untagged_leftover_public(monkeypatch, tmp_path):
+def test_kline_overlay_skips_untagged_public_on_leftover_daily(monkeypatch, tmp_path):
     _write_snapshot(tmp_path, "2026-07-18", _quote_df(day=date(2026, 7, 18)))
     repo = SimpleNamespace(store=SimpleNamespace(data_dir=tmp_path))
     rows = [{
@@ -357,8 +357,8 @@ def test_kline_overlay_keeps_untagged_leftover_public(monkeypatch, tmp_path):
     overlaid, meta = kline_api._overlay_persisted_quote_candles(
         repo, "000001.SZ", rows, date(2026, 7, 17), date(2026, 7, 18),
     )
-    assert meta["applied"] is True
-    assert overlaid[-1]["is_quote_snapshot"] is True
+    assert meta["applied"] is False
+    assert len(overlaid) == 1
 
 
 def test_corporate_actions_skip_leftover_prior_after_adj_switch(monkeypatch, tmp_path):

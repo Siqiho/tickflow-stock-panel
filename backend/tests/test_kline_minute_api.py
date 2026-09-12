@@ -73,6 +73,7 @@ def test_watchlist_historical_minute_fetches_and_persists_exact_day(monkeypatch,
     calls = []
 
     monkeypatch.setattr("app.services.watchlist.contains", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(kline.kline_sync, "minute_may_use_leftover_public", lambda: True)
     monkeypatch.setattr(
         "app.services.free_sources.tdx_history_minute.fetch_history_minute",
         lambda *_args: rows,

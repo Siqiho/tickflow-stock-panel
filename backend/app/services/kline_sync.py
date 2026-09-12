@@ -156,6 +156,19 @@ def _resolve_daily_provider(
         return (None, False, str(e))
 
 
+def leftover_tickflow_follow_daily() -> bool:
+    """Leftover TickFlow live/jobs only when daily is leftover TickFlow.
+
+    After a custom or unresolved daily switch, leftover TickFlow minute /
+    depth / full-minute jobs must not mix TickFlow bars onto the custom
+    daily surface. After-hours clock times stay ops schedule.
+    """
+    try:
+        return daily_route() == "tickflow"
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def daily_provider_is_custom() -> bool:
     """True when daily_data_provider resolves to a declared custom/plugin source.
 
@@ -278,8 +291,8 @@ def daily_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("daily partition probe failed %s: %s", part, exc)
-        # Leftover TickFlow still sees unreadable date markers; custom does not.
-        return expected in {"tickflow", "public"}
+        # Corrupt leftovers used to mint a TickFlow / public calendar entry.
+        return False
     return daily_cache_usable(df, expected)
 
 
@@ -1087,7 +1100,10 @@ def adj_live_fetch_allowed(capset: CapabilitySet | None) -> bool:
             return True
         if fate == "skip":
             return False
-        # leftover TickFlow: TickFlow only when entitled. No silent sina qfq.
+        # leftover TickFlow: TickFlow only when entitled and daily is still
+        # leftover TickFlow. No silent sina qfq after a custom daily switch.
+        if not leftover_tickflow_follow_daily():
+            return False
         return bool(capset and capset.has(Cap.ADJ_FACTOR))
     except Exception:  # noqa: BLE001
         # Prefs unreadable: do not assume leftover TickFlow / public sina.
@@ -1849,16 +1865,16 @@ def minute_provider_is_custom() -> bool:
 
 
 def minute_may_use_leftover_public() -> bool:
-    """Leftover TickFlow / undeclared minute may use public or TDX single-symbol view.
+    """Explicit public minute may use public or TDX single-symbol view.
 
-    Declared custom (including resolve failure) and unreadable prefs must not.
+    Leftover TickFlow used to silent-mix Tencent/Sina/TDX bars into the
+    TickFlow minute surface. Declared custom, unresolved, leftover
+    TickFlow, and unreadable prefs must not.
     """
     try:
-        name = preferences.get_minute_data_provider()
+        return minute_route() == "public"
     except Exception:  # noqa: BLE001
         return False
-    _, fallback, err = _resolve_minute_provider(name)
-    return bool(fallback) and err is None
 
 
 def minute_route() -> str:
@@ -1952,8 +1968,8 @@ def minute_partition_usable(path, route: str | None = None) -> bool:
         df = pl.read_parquet(part, columns=["route"])
     except Exception as exc:  # noqa: BLE001
         logger.debug("minute partition probe failed %s: %s", part, exc)
-        # Leftover TickFlow still sees unreadable date markers; custom does not.
-        return expected in {"tickflow", "public"}
+        # Corrupt leftovers used to mint a TickFlow / public calendar entry.
+        return False
     return minute_cache_usable(df, expected)
 
 
@@ -2183,7 +2199,9 @@ def minute_sync_allowed(capset: CapabilitySet | None) -> bool:
     """Whether pipeline / HTTP may start a minute pull for the configured source.
 
     Declared custom resolve failure is fail-closed even when TickFlow has
-    minute batch. Leftover TickFlow still requires ``KLINE_MINUTE_BATCH``.
+    minute batch. Leftover TickFlow still requires ``KLINE_MINUTE_BATCH``
+    and a leftover TickFlow daily (no after-hours TickFlow minute mix
+    after a custom daily switch).
     """
     try:
         name = preferences.get_minute_data_provider()
@@ -2194,6 +2212,8 @@ def minute_sync_allowed(capset: CapabilitySet | None) -> bool:
         return False
     if not fallback:
         return True
+    if not leftover_tickflow_follow_daily():
+        return False
     return capset is not None and capset.has(Cap.KLINE_MINUTE_BATCH)
 
 
@@ -2539,11 +2559,21 @@ def fetch_minute_single(
 
     本地签名保持 (symbol, trade_date)；asset_type / capset 为 9a4 增量可选层。
     优先自定义分钟源。已声明自定义源调用失败 fail-closed，不回退 TickFlow。
-    leftover TickFlow 分钟源才在具备 TickFlow 原生单股分钟能力（或未传入 capset）
-    时走 TickFlow；无权限或 TickFlow 失败时仅 leftover 可用公开分时兜底。
+    显式 public 分钟源走公开分时视图。leftover TickFlow 仅在日 K 仍是
+    leftover TickFlow 且具备原生单股分钟能力（或未传入 capset）时走
+    TickFlow；不再静默混入公开 / TDX 分时。
     """
     start_time = datetime(trade_date.year, trade_date.month, trade_date.day, 9, 25, 0, tzinfo=CN_TZ)
     end_time = datetime(trade_date.year, trade_date.month, trade_date.day, 15, 5, 0, tzinfo=CN_TZ)
+
+    try:
+        route = minute_route()
+    except Exception:  # noqa: BLE001
+        return pl.DataFrame()
+    if route == "unresolved":
+        return pl.DataFrame()
+    if route == "public":
+        return _public_minute_fallback(symbol, trade_date)
 
     df, fallback = _try_custom_minute(
         [symbol], start_time=start_time, end_time=end_time,
@@ -2551,6 +2581,9 @@ def fetch_minute_single(
     )
     if not fallback:
         return df if df is not None else pl.DataFrame()
+
+    if not leftover_tickflow_follow_daily():
+        return pl.DataFrame()
 
     allow_tickflow = capset is None or capset.has(Cap.KLINE_MINUTE_BY_SYMBOL)
     if allow_tickflow:
@@ -2572,11 +2605,7 @@ def fetch_minute_single(
         except Exception as e:  # noqa: BLE001
             logger.warning("fetch_minute_single(%s, %s) TickFlow failed: %s", symbol, trade_date, e)
 
-    # Leftover TickFlow / undeclared: single-symbol public view (does not persist).
-    # Declared custom / prefs-unreadable / resolve failure must not mix public bars.
-    if not minute_may_use_leftover_public():
-        return pl.DataFrame()
-    return _public_minute_fallback(symbol, trade_date)
+    return pl.DataFrame()
 
 
 def validate_historical_minute(

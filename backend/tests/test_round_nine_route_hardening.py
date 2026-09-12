@@ -151,29 +151,21 @@ def test_declared_custom_minute_skips_watchlist_tdx(monkeypatch, tmp_path):
     assert resp.json()["rows"] == []
 
 
-def test_leftover_tickflow_watchlist_minute_still_allows_tdx(monkeypatch, tmp_path):
-    rows = pl.DataFrame({
-        "symbol": ["301526.SZ"],
-        "datetime": [datetime(2026, 6, 29, 9, 30)],
-        "open": [50.92], "high": [50.92], "low": [50.92], "close": [50.92],
-        "volume": [89645.0], "amount": [4562723.4],
-    })
-    monkeypatch.setattr(kline_sync, "minute_may_use_leftover_public", lambda: True)
+def test_leftover_tickflow_watchlist_minute_skips_tdx(monkeypatch, tmp_path):
+    monkeypatch.setattr(kline_sync, "minute_may_use_leftover_public", lambda: False)
+    monkeypatch.setattr(kline_sync, "fetch_minute_single", lambda *a, **k: pl.DataFrame())
     monkeypatch.setattr("app.services.watchlist.contains", lambda *a, **k: True)
+
+    def fail_tdx(*_a, **_k):
+        raise AssertionError("leftover TickFlow minute must not TDX-mix")
+
     monkeypatch.setattr(
         "app.services.free_sources.tdx_history_minute.fetch_history_minute",
-        lambda *a, **k: rows,
+        fail_tdx,
     )
-    calls = []
-
-    def fake_persist(candidate, _repo, symbol, trade_date, _daily, *, source, adapter):
-        calls.append((source, adapter))
-        return {"row_count": candidate.height}
-
-    monkeypatch.setattr(kline_sync, "persist_historical_minute", fake_persist)
     repo = SimpleNamespace(
         store=SimpleNamespace(data_dir=tmp_path),
-        get_minute=lambda *a, **k: rows,
+        get_minute=lambda *a, **k: pl.DataFrame(),
         get_daily=lambda *a, **k: pl.DataFrame({"date": [date(2026, 6, 29)]}),
         execute_one=lambda *a, **k: None,
     )
@@ -182,8 +174,8 @@ def test_leftover_tickflow_watchlist_minute_still_allows_tdx(monkeypatch, tmp_pa
     app.state.repo = repo
     resp = TestClient(app).get("/api/kline/minute?symbol=301526.SZ&date=2026-06-29")
     assert resp.status_code == 200
-    assert resp.json()["provider"] == "easy_tdx_1.20.6"
-    assert calls == [("tdx_public", "easy_tdx_1.20.6")]
+    assert resp.json()["source"] == "none"
+    assert resp.json()["rows"] == []
 
 
 def test_watchlist_quotes_prefs_failure_is_fail_closed(monkeypatch):
