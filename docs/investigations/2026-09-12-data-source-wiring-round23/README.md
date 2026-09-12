@@ -23,7 +23,7 @@ English summary: twenty-third-round leftover mix-source / fail-open paths that r
 2. **regime / 主线历史**：读写走 `filter_daily_cache` + `_tag_daily_route`。偏好不可读或 unresolved 拒绝落盘。
 3. **成分种子**：`build_index_membership_from_pools` 跳过 custom / unresolved 下的 leftover CSI；leftover TickFlow 仍可见无标签快照。
 4. **财务 PIT 迁移**：`migrate_existing_financials_to_pit` / `migrate_financial_table_to_v2` 对 stale route skip。
-5. **画像日历**：`compatibility_status` 用可用分区覆盖 leftover scan 日历；财务表走 gated reader。
+5. **画像日历**：rescan 写入 `catalog_route_token`；切源后 `compatibility_status` 热路径只比偏好 token，不读 parquet，leftover 覆盖隐藏到下次 rescan。
 
 未改：盘后默认时刻、已声明分钟源调用失败且具备 TickFlow minute cap 时的回退、leftover TickFlow 单票公开分时 / 自选历史 TDX、实时 leftover TickFlow + free 仍是 `mode=none`、个股/指数/ETF 维表仍固定 TickFlow（无 `instrument_provider`）、quote_snapshot 响应覆盖（带 `is_quote_snapshot`）、显式 `adj=public` / `depth5=public`、`.env`、鉴权。
 

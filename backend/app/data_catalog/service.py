@@ -250,6 +250,7 @@ class CatalogService:
             _run_status(result) == "failed" for result in scan_results.values()
         )
         meta_updates["catalog_stale"] = {"value": any_failed}
+        meta_updates["catalog_route_token"] = {"value": self._catalog_route_token()}
         if retained_failure and not persisted:
             # Nothing new to admit; keep the prior snapshot and mark it stale.
             self.control_db.set_meta("catalog_stale", {"value": True})
@@ -388,38 +389,29 @@ class CatalogService:
 
     def compatibility_status(self) -> dict[str, Any]:
         states = {state.dataset_id: state for state in self.control_db.list_dataset_states()}
+        route_fresh = self._catalog_route_fresh()
         return {
-            "daily": self._overlay_route_calendar(
-                self._table_stats(states.get("stock_daily")), "kline_daily",
+            "daily": self._table_stats(states.get("stock_daily")) if route_fresh else None,
+            "enriched": (
+                self._table_stats(states.get("stock_enriched"), enriched=True)
+                if route_fresh else None
             ),
-            "enriched": self._overlay_route_calendar(
-                self._table_stats(states.get("stock_enriched"), enriched=True),
-                "kline_daily_enriched",
-            ),
-            "index_daily": self._overlay_route_calendar(
-                self._table_stats(states.get("index_daily")), "kline_index_daily",
-            ),
-            "index_enriched": self._overlay_route_calendar(
-                self._table_stats(states.get("index_enriched"), enriched=True),
-                "kline_index_enriched",
+            "index_daily": self._table_stats(states.get("index_daily")) if route_fresh else None,
+            "index_enriched": (
+                self._table_stats(states.get("index_enriched"), enriched=True)
+                if route_fresh else None
             ),
             "index_instruments": self._instrument_stats(states.get("index_instruments")),
-            "etf_daily": self._overlay_route_calendar(
-                self._table_stats(states.get("etf_daily")), "kline_etf_daily",
-            ),
-            "etf_enriched": self._overlay_route_calendar(
-                self._table_stats(states.get("etf_enriched"), enriched=True),
-                "kline_etf_enriched",
+            "etf_daily": self._table_stats(states.get("etf_daily")) if route_fresh else None,
+            "etf_enriched": (
+                self._table_stats(states.get("etf_enriched"), enriched=True)
+                if route_fresh else None
             ),
             "etf_instruments": self._instrument_stats(states.get("etf_instruments")),
-            "minute": self._overlay_route_calendar(
-                self._table_stats(states.get("stock_minute")),
-                "kline_minute",
-                kind="minute",
-            ),
-            "adj_factor": self._overlay_adj_stats(self._table_stats(states.get("stock_adj_factor"))),
+            "minute": self._table_stats(states.get("stock_minute")) if route_fresh else None,
+            "adj_factor": self._table_stats(states.get("stock_adj_factor")) if route_fresh else None,
             "instruments": self._instrument_stats(states.get("stock_instruments")),
-            "financials": self._overlay_financial_stats(self._financial_stats(states)),
+            "financials": self._financial_stats(states) if route_fresh else None,
             "storage": self._legacy_storage(),
             "next_pipeline_run": None,
             "next_instruments_run": None,
@@ -428,79 +420,35 @@ class CatalogService:
             "checked_at": _utc_now(),
         }
 
-    def _overlay_route_calendar(
-        self,
-        stats: dict[str, Any] | None,
-        table: str,
-        *,
-        kind: str = "daily",
-    ) -> dict[str, Any] | None:
-        """Hide leftover TickFlow calendars after a custom switch.
+    @staticmethod
+    def _catalog_route_token() -> str:
+        """Prefs-only token. Must not read parquet (compatibility_status is a hot path)."""
+        try:
+            from app.services.financial_sync import financial_write_route
+            from app.services.kline_sync import daily_route, minute_route
+            from app.tickflow.pools import pool_route
 
-        Catalog control-db state is last-scan inventory. After a provider
-        switch it still describes leftover files until the next rescan.
-        Usable partition dates are the serving source of truth.
+            return "|".join((
+                daily_route() or "unresolved",
+                minute_route() or "unresolved",
+                financial_write_route() or "unresolved",
+                pool_route() or "unresolved",
+            ))
+        except Exception:
+            return "unresolved"
+
+    def _catalog_route_fresh(self) -> bool:
+        """False after a provider switch until the next catalog rescan.
+
+        Last-scan leftover TickFlow coverage must not serve as current
+        status. Missing token (pre-round-23 control DBs) stays visible so
+        existing snapshots keep working until the next rescan.
         """
-        if stats is None:
-            return None
-        try:
-            if kind == "minute":
-                from app.services.kline_sync import safe_usable_minute_partition_dates
-
-                dates = safe_usable_minute_partition_dates(self.data_dir)
-            else:
-                from app.services.kline_sync import safe_usable_daily_partition_dates
-
-                dates = safe_usable_daily_partition_dates(self.data_dir, table=table)
-        except Exception:
-            return None
-        if not dates:
-            return None
-        return {
-            **stats,
-            "earliest_date": dates[0].isoformat(),
-            "latest_date": dates[-1].isoformat(),
-            "trading_days": len(dates),
-        }
-
-    def _overlay_adj_stats(self, stats: dict[str, Any] | None) -> dict[str, Any] | None:
-        if stats is None:
-            return None
-        try:
-            from app.services.kline_sync import get_adj_factor_df
-
-            df = get_adj_factor_df(self.data_dir, asset_type="stock")
-        except Exception:
-            return None
-        if df is None or getattr(df, "is_empty", lambda: True)():
-            return None
-        return stats
-
-    def _overlay_financial_stats(self, stats: dict[str, Any] | None) -> dict[str, Any] | None:
-        if stats is None:
-            return None
-        try:
-            from app.services.financial_sync import FINANCIAL_TABLES, get_financial_df
-        except Exception:
-            return None
-        tables: dict[str, dict[str, int]] = {}
-        total = 0
-        for table in FINANCIAL_TABLES:
-            try:
-                df = get_financial_df(self.data_dir, table)
-            except Exception:
-                df = None
-            rows = 0 if df is None or df.is_empty() else int(df.height)
-            symbols = (
-                0
-                if df is None or df.is_empty() or "symbol" not in df.columns
-                else int(df["symbol"].n_unique())
-            )
-            tables[table] = {"rows": rows, "symbols": symbols}
-            total += rows
-        if total == 0:
-            return None
-        return {"rows": total, "tables": tables}
+        scanned = self.control_db.get_meta("catalog_route_token") or {}
+        stored = scanned.get("value")
+        if not stored:
+            return True
+        return stored == self._catalog_route_token()
 
     def _catalog_entry(
         self,
