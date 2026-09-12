@@ -27,6 +27,75 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
+def _enforce_realtime_integrity_gate(request: Request) -> None:
+    """Block enabling live quotes on snapshot / empty local daily data.
+
+    Settings used to persist the switch and let QuoteService overlay today
+    while yesterday's leftover midday partition stayed canonical. Probe /
+    scan failures stay fail-closed (do not enable). Leftover TickFlow
+    still sees untagged partitions through the integrity happy path.
+    """
+    from app.services import data_integrity
+
+    repo = getattr(getattr(request, "app", None), "state", None)
+    repo = getattr(repo, "repo", None)
+    latest_daily = None
+    latest_enriched = None
+    getter = getattr(repo, "latest_daily_date", None) if repo is not None else None
+    if callable(getter):
+        latest_daily = getter()
+    getter = getattr(repo, "latest_enriched_date", None) if repo is not None else None
+    if callable(getter):
+        latest_enriched = getter()
+    if latest_daily is None and latest_enriched is None:
+        raise HTTPException(
+            status_code=409,
+            detail="本地尚无日K数据，请先完成同步后再开启实时行情",
+        )
+    data_dir = getattr(getattr(repo, "store", None), "data_dir", None)
+    if data_dir is None:
+        raise HTTPException(
+            status_code=409,
+            detail="无法读取本地数据目录，请先完成同步后再开启实时行情",
+        )
+    try:
+        issues = data_integrity.scan_recent_integrity(data_dir)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("realtime integrity gate scan failed: %s", exc)
+        raise HTTPException(
+            status_code=409,
+            detail="无法校验本地日K完整性，请先完成同步后再开启实时行情",
+        ) from exc
+    earliest = data_integrity.earliest_issue_day(issues)
+    if earliest is None or not data_integrity.within_auto_repair_window(earliest):
+        return
+    job_id, _is_new = data_integrity.launch_integrity_repair(
+        getattr(request.app, "state", None),
+        earliest,
+        "realtime_gate",
+    )
+    desc = data_integrity.describe_issues(issues)
+    job_text = f"（任务 {job_id}）" if job_id else ""
+    raise HTTPException(status_code=409, detail=f"{desc}{job_text}，已启动修复。请待完成后重试。")
+
+
+def _refresh_route_surfaces(request: Request | None = None) -> None:
+    """Re-gate DuckDB and drop leftover process caches after a provider switch."""
+    repo = None
+    if request is not None:
+        try:
+            repo = getattr(getattr(request, "app", None), "state", None)
+            repo = getattr(repo, "repo", None)
+        except Exception:  # noqa: BLE001
+            repo = None
+    try:
+        from app.services.kline_sync import refresh_route_surfaces
+
+        refresh_route_surfaces(repo)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("route surface refresh after provider switch failed: %s", exc)
+
+
 def _accept_routed_provider(raw: object, *, default: str) -> str:
     """Persist builtin aliases or a declared custom/plugin name.
 
@@ -782,6 +851,7 @@ def update_adj_factor_provider(req: AdjFactorProviderPrefs) -> dict:
     from app.services import preferences
     val = _accept_routed_provider(req.adj_factor_provider, default="same_as_daily")
     preferences.save_server({"adj_factor_provider": val})
+    _refresh_route_surfaces()
     return {"adj_factor_provider": preferences.get_adj_factor_provider()}
 
 
@@ -797,6 +867,7 @@ def update_financial_provider(req: FinancialProviderPrefs) -> dict:
     from app.services import preferences
     val = _accept_routed_provider(req.financial_provider, default="tickflow")
     preferences.save_server({"financial_provider": val, "financial_data_provider": val})
+    _refresh_route_surfaces()
     return {"financial_provider": preferences.get_financial_provider()}
 
 
@@ -812,6 +883,7 @@ def update_pool_provider(req: PoolProviderPrefs) -> dict:
     from app.services import preferences
     val = _accept_routed_provider(req.pool_provider, default="public")
     preferences.save_server({"pool_provider": val})
+    _refresh_route_surfaces()
     return {"pool_provider": preferences.get_pool_provider()}
 
 
@@ -835,6 +907,8 @@ def update_realtime_quotes(req: RealtimeQuotesPrefs, request: Request) -> dict:
     if req.realtime_quotes_enabled and qs and qs.realtime_mode() == "watchlist" and not preferences.get_realtime_watchlist_symbols():
         preferences.save_server({"realtime_quotes_enabled": False})
         return {"realtime_quotes_enabled": False, "realtime_allowed": True, "mode": "watchlist", "error": "watchlist_empty"}
+    if req.realtime_quotes_enabled:
+        _enforce_realtime_integrity_gate(request)
 
     preferences.save_server({"realtime_quotes_enabled": req.realtime_quotes_enabled})
     if qs:
@@ -1931,6 +2005,7 @@ def update_data_providers(req: DataProvidersIn, request: Request) -> dict:
         request.app.state.capabilities = detect_capabilities()
     except Exception as exc:  # noqa: BLE001
         logger.warning("capability refresh after data-provider change failed: %s", exc)
+    _refresh_route_surfaces(request)
     return {
         "daily_data_provider": preferences.get_daily_data_provider(),
         "adj_factor_provider": preferences.get_adj_factor_provider(),
@@ -2008,6 +2083,8 @@ def delete_data_source(name: str, request: Request) -> dict:
         request.app.state.capabilities = detect_capabilities()
     except Exception as exc:  # noqa: BLE001
         logger.warning("capability refresh after data-source delete failed: %s", exc)
+    if updates:
+        _refresh_route_surfaces(request)
     return list_data_sources()
 
 

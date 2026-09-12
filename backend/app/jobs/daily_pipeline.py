@@ -145,13 +145,27 @@ def _public_financial_income_median_periods(
 
 
 def _partition_row_count(part_dir: Path) -> int | None:
-    files = [p for p in part_dir.glob("*.parquet") if p.is_file()]
+    from app.services.kline_sync import usable_daily_partition_files
+
+    files = usable_daily_partition_files(part_dir)
     if not files:
         return None
     try:
         return int(pl.scan_parquet(files).select(pl.len()).collect().item())
     except Exception:  # noqa: BLE001
         return None
+
+
+def _read_usable_partition(part_dir: Path) -> pl.DataFrame:
+    """Current-route rows in one date directory. Empty on leftover-only / probe."""
+    from app.services.kline_sync import filter_daily_cache, usable_daily_partition_files
+
+    files = usable_daily_partition_files(part_dir)
+    if not files:
+        return pl.DataFrame()
+    return filter_daily_cache(
+        pl.concat([pl.read_parquet(path) for path in files], how="diagonal_relaxed")
+    )
 
 
 def should_use_public_eod_fallback(
@@ -279,7 +293,7 @@ def _prune_stale_price_partitions(daily_dir: Path, enriched_dir: Path) -> list[s
     pruned: list[str] = []
     if not enriched_dir.exists():
         return pruned
-    from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+    from app.services.kline_sync import daily_partition_usable
 
     for part in sorted(p for p in enriched_dir.glob("date=*") if p.is_dir()):
         day = part.name.removeprefix("date=")
@@ -293,9 +307,11 @@ def _prune_stale_price_partitions(daily_dir: Path, enriched_dir: Path) -> list[s
         if enriched_file.exists() and not daily_partition_usable(enriched_file):
             continue
         try:
-            daily = filter_daily_cache(pl.read_parquet(list(daily_part.glob("*.parquet"))))
-            enriched = filter_daily_cache(pl.read_parquet(list(part.glob("*.parquet"))))
+            daily = _read_usable_partition(daily_part)
+            enriched = _read_usable_partition(part)
         except Exception:  # noqa: BLE001
+            continue
+        if daily.is_empty() or enriched.is_empty():
             continue
         if "raw_close" not in enriched.columns or "symbol" not in enriched.columns:
             continue
@@ -487,6 +503,31 @@ def run_now(
     latest_before = latest_daily
     if override_start_date is not None and override_start_date > today:
         override_start_date = today
+
+    integrity_issues: list = []
+    integrity_repair_from: _date | None = None
+    try:
+        from app.market_time import cn_today as _cn_today
+        from app.services import data_integrity as _integrity
+
+        integrity_today = _cn_today()
+        integrity_issues = _integrity.scan_recent_integrity(
+            repo.store.data_dir, today=integrity_today,
+        )
+        earliest = _integrity.earliest_issue_day(integrity_issues)
+        if earliest is not None and _integrity.within_auto_repair_window(
+            earliest, today=integrity_today,
+        ):
+            integrity_repair_from = earliest
+            _integrity.prune_enriched_partitions(repo.store.data_dir, earliest)
+            if override_start_date is None or earliest < override_start_date:
+                override_start_date = earliest
+            logger.warning(
+                "sync_daily: integrity self-heal from %s (%d issues)",
+                earliest, len(integrity_issues),
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("pipeline integrity scan failed: %s", exc)
 
     def _daily_partition_dates() -> list[_date]:
         return _usable_partition_dates(repo.store.data_dir, "kline_daily")
@@ -1175,6 +1216,10 @@ def run_now(
         "quality": quality_report,
         "industry_fund_flow_daily": industry_fund_flow_daily,
         "concept_fund_flow_daily": concept_fund_flow_daily,
+        "integrity_repair_from": (
+            integrity_repair_from.isoformat() if integrity_repair_from else None
+        ),
+        "integrity_issues": len(integrity_issues),
     }
 
 

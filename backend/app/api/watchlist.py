@@ -467,32 +467,13 @@ def _join_local_financial_metrics(df: pl.DataFrame, repo, symbols: list[str]) ->
 
 
 def _read_ext_for_watchlist(config, data_dir, symbols: list[str]) -> pl.DataFrame:
-    """读取扩展表; 稀疏个股时序按每只股票各自的最新记录收口。"""
+    """读取扩展表; 时序只挂最新 date=* , 不 leftover-union 历史分区。"""
     from app.api.ext_data import _read_ext_dataframe
 
-    field_names = {field.name for field in config.fields}
-    if config.mode != "timeseries" or "symbol" not in field_names:
-        ext_df, _ = _read_ext_dataframe(config, data_dir)
-        return ext_df
-
-    base = data_dir / "ext_data" / config.id / "timeseries"
-    parts = sorted(base.glob("date=*/part.parquet")) if base.exists() else []
-    if not parts:
-        return pl.DataFrame()
-    try:
-        ext_df = pl.read_parquet(parts)
-    except Exception as exc:
-        logger.debug("read watchlist ext history failed for %s: %s", config.id, exc)
-        return pl.DataFrame()
+    ext_df, _ = _read_ext_dataframe(config, data_dir)
     if ext_df.is_empty() or "symbol" not in ext_df.columns:
         return ext_df
-    ext_df = ext_df.filter(pl.col("symbol").is_in(symbols))
-    sort_columns = [
-        column for column in ("symbol", "date", "as_of", "snap_time") if column in ext_df.columns
-    ]
-    if sort_columns:
-        ext_df = ext_df.sort(sort_columns)
-    return ext_df.unique(subset=["symbol"], keep="last")
+    return ext_df.filter(pl.col("symbol").is_in(symbols))
 
 
 def _normalize_industry_name(value: object) -> str:

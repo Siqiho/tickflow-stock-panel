@@ -102,12 +102,10 @@ def _read_usable_kline_ohlc(
     """One current-route daily partition, or empty. Leftover TickFlow is skipped."""
     root = data_dir / "kline_daily" / f"date={d.isoformat()}"
     try:
-        from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+        from app.services.kline_sync import filter_daily_cache, usable_daily_partition_files
 
-        files = sorted(root.glob("*.parquet"))
+        files = usable_daily_partition_files(root)
         if not files:
-            return pl.DataFrame()
-        if not any(daily_partition_usable(f) for f in files):
             return pl.DataFrame()
         frames = []
         for f in files:

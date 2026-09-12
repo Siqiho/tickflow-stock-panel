@@ -727,11 +727,15 @@ def load_market_data_matrix_from_parquet(
         pa.schema([("date", pa.date32())]),
         flavor="hive",
     )
-    usable_dirs = [partition for _, partition in _usable_partition_entries(root)]
-    if not usable_dirs:
+    from app.services.kline_sync import usable_daily_partition_files
+
+    usable_files: list[Path] = []
+    for _, partition in _usable_partition_entries(root):
+        usable_files.extend(usable_daily_partition_files(partition))
+    if not usable_files:
         raise ValueError("本地指标数据为空，请先在数据页面同步日K并完成指标计算")
     dataset = pads.dataset(
-        [str(path) for path in usable_dirs],
+        [str(path) for path in usable_files],
         format="parquet",
         partitioning=partitioning,
     )
@@ -1546,7 +1550,7 @@ def _usable_partition_entries(root: Path) -> list[tuple[date, Path]]:
     stays visible.
     """
     try:
-        from app.services.kline_sync import daily_partition_usable
+        from app.services.kline_sync import usable_daily_partition_files
     except Exception:  # noqa: BLE001
         return []
     selected: list[tuple[date, Path]] = []
@@ -1555,14 +1559,11 @@ def _usable_partition_entries(root: Path) -> list[tuple[date, Path]]:
             partition_date = date.fromisoformat(partition.name.removeprefix("date="))
         except ValueError:
             continue
-        files = sorted(partition.rglob("*.parquet"))
-        if not files:
-            continue
-        part = next((path for path in files if path.name == "part.parquet"), files[0])
         try:
-            if not daily_partition_usable(part):
-                continue
+            files = usable_daily_partition_files(partition)
         except Exception:  # noqa: BLE001
+            continue
+        if not files:
             continue
         selected.append((partition_date, partition))
     return selected
@@ -1589,7 +1590,12 @@ def _partition_fingerprints(
     result: dict[str, str] = {}
     for partition_date, partition in sorted(selected):
         digest = hashlib.blake2b(digest_size=20)
-        files = sorted(partition.rglob("*.parquet"))
+        try:
+            from app.services.kline_sync import usable_daily_partition_files
+
+            files = usable_daily_partition_files(partition)
+        except Exception:  # noqa: BLE001
+            continue
         if not files:
             continue
         for path in files:

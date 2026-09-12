@@ -441,6 +441,9 @@ def test_realtime_gate_blocks_on_snapshot_and_launches_repair(tmp_path, monkeypa
     monkeypatch.setattr(
         "app.services.preferences.save", lambda payload: saved.update(payload),
     )
+    monkeypatch.setattr(
+        "app.services.preferences.save_server", lambda payload: saved.update(payload),
+    )
 
     qs = _QuoteServiceStub()
     request = _gate_state(tmp_path, qs, repo=None)
@@ -467,6 +470,9 @@ def test_realtime_gate_blocks_when_no_local_data(tmp_path, monkeypatch):
     saved = {}
     monkeypatch.setattr(
         "app.services.preferences.save", lambda payload: saved.update(payload),
+    )
+    monkeypatch.setattr(
+        "app.services.preferences.save_server", lambda payload: saved.update(payload),
     )
 
     qs = _QuoteServiceStub()
@@ -498,6 +504,9 @@ def test_realtime_gate_allows_clean_data(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "app.services.preferences.save", lambda payload: saved.update(payload),
     )
+    monkeypatch.setattr(
+        "app.services.preferences.save_server", lambda payload: saved.update(payload),
+    )
     qs = _QuoteServiceStub()
     request = _gate_state(tmp_path, qs, repo=None)
     req = settings_api.RealtimeQuotesPrefs(realtime_quotes_enabled=True)
@@ -524,6 +533,9 @@ def test_realtime_gate_ignores_old_issues_beyond_window(tmp_path, monkeypatch):
     saved = {}
     monkeypatch.setattr(
         "app.services.preferences.save", lambda payload: saved.update(payload),
+    )
+    monkeypatch.setattr(
+        "app.services.preferences.save_server", lambda payload: saved.update(payload),
     )
     qs = _QuoteServiceStub()
     request = _gate_state(tmp_path, qs, repo=None)

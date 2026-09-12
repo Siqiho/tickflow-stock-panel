@@ -72,11 +72,9 @@ def _dimension_field(config: ExtConfig, kind: str) -> str | None:
 
 
 def _ext_files(data_dir, config: ExtConfig) -> list[str]:
-    base = data_dir / "ext_data" / config.id
-    if config.mode == "timeseries":
-        root = base / "timeseries"
-        return [str(p) for p in sorted(root.rglob("*.parquet")) if p.is_file()]
-    return [str(p) for p in sorted(base.glob("*.parquet")) if p.is_file()]
+    from app.services.ext_data import latest_ext_parquet_files
+
+    return [str(path) for path in latest_ext_parquet_files(data_dir, config)]
 
 
 def _read_ext_rows(data_dir, config: ExtConfig, dimension_field: str) -> list[dict]:
