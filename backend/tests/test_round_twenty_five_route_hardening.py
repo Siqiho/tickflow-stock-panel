@@ -157,7 +157,11 @@ def test_panel_cache_never_fail_open(monkeypatch):
     leftover = _daily_df(route="tickflow")
 
     def compute(*_a, **_k):
-        return leftover if kline_sync.daily_route() == "tickflow" else leftover.head(0)
+        try:
+            route = kline_sync.daily_route()
+        except Exception:
+            return leftover.head(0)
+        return leftover if route == "tickflow" else leftover.head(0)
 
     monkeypatch.setattr(kline_sync, "daily_route", lambda: "tickflow")
     first = cache.get_or_compute(
@@ -246,9 +250,16 @@ def test_catalog_unresolved_token_never_fail_open(monkeypatch, tmp_path):
     assert listed["stock_daily"].descriptor.availability.serving_ready is False
 
 
+def _passthrough_regime_compute(monkeypatch) -> None:
+    monkeypatch.setattr("app.indicators.pipeline.compute_indicators", lambda df, **_k: df)
+    monkeypatch.setattr("app.indicators.pipeline.compute_limit_signals", lambda df, *_a, **_k: df)
+    monkeypatch.setattr("app.services.market_phase.with_prev_consecutive", lambda df: df)
+
+
 def test_regime_batch_skips_leftover_after_switch(monkeypatch, tmp_path):
     _write_part(tmp_path, "kline_daily_enriched", "2026-07-17", _daily_df(route="tickflow"))
     repo = SimpleNamespace(store=SimpleNamespace(data_dir=tmp_path))
+    _passthrough_regime_compute(monkeypatch)
     monkeypatch.setattr(kline_sync, "daily_route", lambda: "tickflow")
     first = _compute_batch(
         repo, tmp_path / "kline_daily_enriched", None, None,
@@ -266,6 +277,7 @@ def test_regime_batch_skips_leftover_after_switch(monkeypatch, tmp_path):
 def test_regime_batch_keeps_untagged_leftover_tickflow(monkeypatch, tmp_path):
     _write_part(tmp_path, "kline_daily_enriched", "2026-07-17", _daily_df())
     repo = SimpleNamespace(store=SimpleNamespace(data_dir=tmp_path))
+    _passthrough_regime_compute(monkeypatch)
     monkeypatch.setattr(kline_sync, "daily_route", lambda: "tickflow")
     out = _compute_batch(
         repo, tmp_path / "kline_daily_enriched", None, None,
