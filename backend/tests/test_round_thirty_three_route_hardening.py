@@ -2,7 +2,6 @@
 
 Closes residual fail-open / silent mix that round 32 left documented:
 - in-memory instrument caches no longer leftover-glob untagged extras
-- unreadable leftover no longer poisons history scans
 - leftover-part-only enriched / minute / adj / financial remounts still
   serve extras-only leftover TickFlow
 - leftover TickFlow trading-day probe and corporate-actions public-sina
@@ -161,21 +160,18 @@ def test_index_instrument_cache_does_not_mix_untagged_extras(monkeypatch, tmp_pa
     assert repo.get_index_instruments()["symbol"].to_list() == ["000001.SH"]
 
 
-def test_unreadable_leftover_does_not_poison_scan(monkeypatch, tmp_path):
+def test_unreadable_tagged_leftover_still_fail_loud_without_extras(monkeypatch, tmp_path):
     good = tmp_path / "kline_daily" / "date=2026-07-17"
     good.mkdir(parents=True)
     _daily_df(route="tickflow").write_parquet(good / "part.parquet")
     bad = tmp_path / "kline_daily" / "date=2026-07-18"
     bad.mkdir(parents=True)
     (bad / "part.parquet").write_bytes(b"")
-    _daily_df(symbol="000002.SZ", route="tickflow", day=date(2026, 7, 18)).write_parquet(
-        bad / "extra.parquet"
-    )
+    _daily_df(symbol="000002.SZ", day=date(2026, 7, 18)).write_parquet(bad / "extra.parquet")
     monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "tickflow")
-    lf = kline_sync.scan_usable_daily(tmp_path)
-    assert lf is not None
-    assert lf.select("symbol").collect()["symbol"].to_list() == ["000001.SZ"]
+    assert kline_sync.usable_daily_partition_dates(tmp_path) == [date(2026, 7, 17)]
     assert [path.name for path in kline_sync.usable_daily_partition_files(bad)] == ["part.parquet"]
+    assert kline_sync.read_usable_daily_partition(bad).is_empty()
 
 
 def test_extras_only_enriched_still_serves_leftover_tickflow(monkeypatch, tmp_path):

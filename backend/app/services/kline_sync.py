@@ -565,10 +565,6 @@ def scan_usable_daily(
     partitions via :func:`usable_daily_partition_paths`.
     """
     paths = usable_daily_partition_paths(data_dir, route, table=table)
-    # Unreadable leftover files stay on the fail-loud path list for catalog /
-    # get_minute. History scans must not let one bad leftover poison every
-    # readable leftover date (screener / backtest / enriched / mainline).
-    paths = [path for path in paths if _parquet_probe_readable(path)]
     if not paths:
         return None
     return pl.scan_parquet([p.as_posix() for p in paths])
@@ -2219,7 +2215,6 @@ def scan_usable_minute(
     via :func:`usable_minute_partition_paths`.
     """
     paths = usable_minute_partition_paths(data_dir, route, asset_type=asset_type)
-    paths = [path for path in paths if _parquet_probe_readable(path)]
     if not paths:
         return None
     return pl.scan_parquet([p.as_posix() for p in paths])
