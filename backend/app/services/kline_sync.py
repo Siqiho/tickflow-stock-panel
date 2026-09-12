@@ -160,8 +160,8 @@ def leftover_tickflow_follow_daily() -> bool:
     """Leftover TickFlow live/jobs only when daily is leftover TickFlow.
 
     After a custom or unresolved daily switch, leftover TickFlow minute /
-    depth / full-minute jobs must not mix TickFlow bars onto the custom
-    daily surface. After-hours clock times stay ops schedule.
+    depth / full-minute / adj / financial / pool jobs must not mix TickFlow
+    onto the custom daily surface. After-hours clock times stay ops schedule.
     """
     try:
         return daily_route() == "tickflow"
@@ -347,6 +347,62 @@ def prefer_tagged_route_files(files, expected):
     if saw_tagged:
         return unreadable_tagged
     return files
+
+
+def preferred_readable_route_files(files, expected):
+    """Tagged leftover extras only; unreadable tagged leftover does not fall back.
+
+    Untagged-only leftover TickFlow / public files still serve when readable.
+    Same-day untagged extras beside tagged leftover stay out. Unreadable
+    tagged leftovers return no files so remounts / readers cannot mint a
+    mix from the extras.
+    """
+    preferred = prefer_tagged_route_files(files, expected)
+    return [path for path in preferred if _parquet_probe_readable(path)]
+
+
+def preferred_readable_route_files_by_dir(files, expected):
+    """Apply :func:`preferred_readable_route_files` per parent directory."""
+    grouped: dict = {}
+    for path in files:
+        grouped.setdefault(path.parent, []).append(path)
+    out = []
+    for group in grouped.values():
+        out.extend(preferred_readable_route_files(group, expected))
+    return out
+
+
+def latest_preferred_readable_partition_files(root, expected: str = "tickflow"):
+    """Latest ``date=*`` parquet files leftover TickFlow may remount."""
+    from pathlib import Path
+
+    base = Path(root)
+    if not base.is_dir():
+        return []
+    partitions = sorted(
+        child for child in base.iterdir()
+        if child.is_dir() and child.name.startswith("date=")
+    )
+    for child in reversed(partitions):
+        files = [path for path in child.glob("*.parquet") if path.is_file()]
+        readable = preferred_readable_route_files(files, expected)
+        if readable:
+            return readable
+    return []
+
+
+def latest_preferred_readable_partition_glob(root, expected: str = "tickflow"):
+    """Latest leftover TickFlow partition glob/path. Never leftover-unions extras."""
+    files = latest_preferred_readable_partition_files(root, expected)
+    if not files:
+        return None
+    parent = files[0].parent
+    all_files = [path for path in parent.glob("*.parquet") if path.is_file()]
+    if set(files) == set(all_files):
+        return f"{parent.as_posix()}/*.parquet"
+    if len(files) == 1:
+        return files[0].as_posix()
+    return files[0].as_posix()
 
 
 def usable_daily_partition_dates(
@@ -1372,6 +1428,9 @@ def sync_adj_factor(symbols: list[str], repo: KlineRepository,
             return 0, []
         return _persist_adj_factor_df(_normalize_adj_factor(raw), repo, asset_type)
 
+    if not leftover_tickflow_follow_daily():
+        logger.info("leftover TickFlow adj skipped after custom/unresolved daily")
+        return 0, []
     if not capset.has(Cap.ADJ_FACTOR):
         # Leftover TickFlow none/free cannot serve factors. Silent public
         # sina qfq is closed; explicit public/sina* is handled above.
@@ -1637,6 +1696,8 @@ def sync_minute_batch(
             return pl.DataFrame()
         return df
 
+    if not leftover_tickflow_follow_daily():
+        return pl.DataFrame()
     if not _allow_tickflow_minute_batch(capset):
         return pl.DataFrame()
 
@@ -1790,6 +1851,8 @@ def fetch_intraday_monitor_batch(
         out = df if df is not None else pl.DataFrame()
         return filter_minute_trade_date(out, trade_date) if not out.is_empty() else out
 
+    if not leftover_tickflow_follow_daily():
+        return pl.DataFrame()
     allow_intraday = capset is not None and capset.has(Cap.INTRADAY_BATCH)
     allow_minute = capset is None or capset.has(Cap.KLINE_MINUTE_BATCH)
     if not allow_intraday and not allow_minute:
@@ -2335,6 +2398,8 @@ def fetch_intraday_full_market_burst(
     """
     if not symbols:
         return pl.DataFrame(), 0
+    if not leftover_tickflow_follow_daily():
+        return pl.DataFrame(), 0
     if capset is not None and not capset.has(Cap.INTRADAY_BATCH):
         return pl.DataFrame(), 0
 
@@ -2383,6 +2448,8 @@ def fetch_intraday_full_market_burst(
 
 def fetch_intraday_universe_increment(*, count: int = 3) -> tuple[pl.DataFrame, int]:
     """TickFlow universe increment: latest N bars, one request. No public mix."""
+    if not leftover_tickflow_follow_daily():
+        return pl.DataFrame(), 0
     try:
         tf = get_client()
     except Exception as e:  # noqa: BLE001
@@ -2849,6 +2916,12 @@ def fetch_adj_factor_single(
             return pl.DataFrame()
         return _normalize_adj_factor(raw)
 
+    if not leftover_tickflow_follow_daily():
+        logger.info(
+            "fetch_adj_factor_single(%s) leftover TickFlow skipped after custom/unresolved daily",
+            symbol,
+        )
+        return pl.DataFrame()
     if not (capset and capset.has(Cap.ADJ_FACTOR)):
         logger.info(
             "fetch_adj_factor_single(%s) leftover TickFlow without ADJ cap, fail-closed",

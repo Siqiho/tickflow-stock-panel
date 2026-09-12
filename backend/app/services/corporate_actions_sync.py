@@ -908,29 +908,17 @@ def run_corporate_actions_loop(
     universe = symbols
     if universe is None:
         if asset_type == "stock":
-            inst = data_dir / "instruments"
-            files = list(inst.rglob("*.parquet")) if inst.exists() else []
-            if files:
-                from app.services.instrument_sync import filter_instruments, instrument_route
+            from app.services.instrument_sync import read_usable_instruments
 
-                idf = filter_instruments(
-                    pl.concat([pl.read_parquet(f) for f in files], how="diagonal_relaxed"),
-                    instrument_route(),
-                )
-                if "symbol" in idf.columns and not idf.is_empty():
-                    universe = [str(s) for s in idf.get_column("symbol").unique().to_list()]
+            idf = read_usable_instruments(data_dir, kind="instruments")
+            if "symbol" in idf.columns and not idf.is_empty():
+                universe = [str(s) for s in idf.get_column("symbol").unique().to_list()]
         elif asset_type == "etf":
-            inst = data_dir / "instruments_etf"
-            files = list(inst.rglob("*.parquet")) if inst.exists() else []
-            if files:
-                from app.services.instrument_sync import filter_instruments, instrument_route
+            from app.services.instrument_sync import read_usable_instruments
 
-                idf = filter_instruments(
-                    pl.concat([pl.read_parquet(f) for f in files], how="diagonal_relaxed"),
-                    instrument_route(),
-                )
-                if "symbol" in idf.columns and not idf.is_empty():
-                    universe = [str(s) for s in idf.get_column("symbol").unique().to_list()]
+            idf = read_usable_instruments(data_dir, kind="instruments_etf")
+            if "symbol" in idf.columns and not idf.is_empty():
+                universe = [str(s) for s in idf.get_column("symbol").unique().to_list()]
 
     # Cross-check uses all actions (including verification signals and prior rows).
     # Formal publish may drop signals when formal_facts_only=True.

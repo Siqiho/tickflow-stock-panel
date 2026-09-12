@@ -56,20 +56,19 @@ def enriched_dirname(asset_type: str) -> str:
 
 
 def _latest_date_partition_glob(root: Path) -> str | None:
-    """Latest readable ``date=*`` parquet glob. Never leftover-unions history."""
-    if not root.is_dir():
-        return None
-    from app.services.kline_sync import _parquet_probe_readable
+    """Latest leftover TickFlow partition glob. Never leftover-unions extras."""
+    from app.services.kline_sync import latest_preferred_readable_partition_glob
 
-    partitions = sorted(
-        child for child in root.iterdir()
-        if child.is_dir() and child.name.startswith("date=")
-    )
-    for child in reversed(partitions):
-        files = [path for path in child.glob("*.parquet") if path.is_file()]
-        if files and any(_parquet_probe_readable(path) for path in files):
-            return f"{child.as_posix()}/*.parquet"
-    return None
+    return latest_preferred_readable_partition_glob(root, "tickflow")
+
+
+def _duckdb_read_parquet(files) -> str | None:
+    if not files:
+        return None
+    if len(files) == 1:
+        return f"read_parquet('{files[0].as_posix()}', union_by_name=true)"
+    joined = ", ".join(f"'{path.as_posix()}'" for path in files)
+    return f"read_parquet([{joined}], union_by_name=true)"
 
 
 def _route_sql_predicate(route: str, *, leftover_public: bool = False) -> str | None:
@@ -219,14 +218,16 @@ class DataStore:
         if not allowed:
             self._empty_parquet_view("kline_ext", glob)
             return
-        kline_ext_glob = _latest_date_partition_glob(self.data_dir / "kline_ext")
-        if not kline_ext_glob:
+        from app.services.kline_sync import latest_preferred_readable_partition_files
+
+        files = latest_preferred_readable_partition_files(self.data_dir / "kline_ext", "tickflow")
+        source = _duckdb_read_parquet(files)
+        if not source:
             self._empty_parquet_view("kline_ext", glob)
             return
         try:
             self.db.execute(
-                f"""CREATE OR REPLACE VIEW kline_ext AS
-                    SELECT * FROM read_parquet('{kline_ext_glob}', union_by_name=true)"""
+                f"CREATE OR REPLACE VIEW kline_ext AS SELECT * FROM {source}"
             )
         except duckdb.IOException:
             logger.debug("kline_ext view skipped (no parquet yet)")
@@ -442,6 +443,29 @@ class DataStore:
             source = f"read_parquet('{glob}', union_by_name=true)"
             first_glob = glob
         empty_sql = f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {source} WHERE 1=0"
+        expected = (route or "").strip().lower()
+        if expected in {"tickflow", "public"} and not leftover_public:
+            patterns = glob if isinstance(glob, list) else [glob]
+            files: list[Path] = []
+            for pattern in patterns:
+                files.extend(self._iter_parquet_glob(pattern))
+            from app.services.kline_sync import preferred_readable_route_files_by_dir
+
+            preferred = preferred_readable_route_files_by_dir(files, expected)
+            if preferred and set(preferred) == set(files):
+                try:
+                    self.db.execute(f"DROP VIEW IF EXISTS {name}")
+                    self.db.execute(f"DROP TABLE IF EXISTS {name}")
+                    self.db.execute(
+                        f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {source}"
+                    )
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("leftover glob view %s failed, empty: %s", name, exc)
+                    self._empty_parquet_view(name, first_glob)
+                    return
+            self._register_parquet_files_view(name, preferred, first_glob)
+            return
         pred = _route_sql_predicate(route, leftover_public=leftover_public)
         try:
             self.db.execute(f"DROP VIEW IF EXISTS {name}")
@@ -459,12 +483,8 @@ class DataStore:
                 f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {source} WHERE {pred}"
             )
         except Exception:
-            expected = (route or "").strip().lower()
             try:
-                if expected in {"tickflow", "public"}:
-                    # Untagged leftover TickFlow / public parquet has no route
-                    # column, so the SQL predicate cannot be applied. Serve the
-                    # leftover glob only when the current route is leftover.
+                if leftover_public and expected == "tickflow":
                     self.db.execute(
                         f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {source}"
                     )
@@ -474,6 +494,37 @@ class DataStore:
                 logger.debug(
                     "gated view %s fallback skipped (%s): %s", name, first_glob, exc,
                 )
+
+    def _iter_parquet_glob(self, pattern: str) -> list[Path]:
+        if pattern.endswith("/**/*.parquet"):
+            root = Path(pattern[: -len("/**/*.parquet")])
+            if not root.exists():
+                return []
+            return [path for path in root.rglob("*.parquet") if path.is_file()]
+        if pattern.endswith("/*.parquet"):
+            root = Path(pattern[: -len("/*.parquet")])
+            if not root.exists():
+                return []
+            return [path for path in root.glob("*.parquet") if path.is_file()]
+        path = Path(pattern)
+        return [path] if path.is_file() else []
+
+    def _register_parquet_files_view(self, name: str, files, empty_glob: str) -> None:
+        """Mount specific leftover TickFlow / public files. Empty if none readable."""
+        source = _duckdb_read_parquet(files)
+        try:
+            self.db.execute(f"DROP VIEW IF EXISTS {name}")
+            self.db.execute(f"DROP TABLE IF EXISTS {name}")
+        except Exception:  # noqa: BLE001
+            pass
+        if not source:
+            self._empty_parquet_view(name, empty_glob)
+            return
+        try:
+            self.db.execute(f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {source}")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("preferred leftover view %s failed, empty: %s", name, exc)
+            self._empty_parquet_view(name, empty_glob)
 
     def _has_parquet(self, subdir: str) -> bool:
         return any((self.data_dir / subdir).rglob("*.parquet"))

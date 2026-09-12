@@ -578,10 +578,12 @@ class DepthService:
         except Exception:  # noqa: BLE001
             return None
         base = self._repo.store.data_dir
+        from app.services.kline_sync import preferred_readable_route_files
+
         for table in ("depth5", "sealed_l1"):
             part = base / table / f"date={d.isoformat()}"
             extras = sorted(part.glob("*.parquet")) if part.exists() else []
-            for path in extras:
+            for path in preferred_readable_route_files(extras, expected):
                 try:
                     df = pl.read_parquet(path)
                 except Exception:  # noqa: BLE001
@@ -598,10 +600,12 @@ class DepthService:
         except Exception:  # noqa: BLE001
             return None
         base = self._repo.store.data_dir
+        from app.services.kline_sync import preferred_readable_route_files
+
         for table in ("depth5", "sealed_l1"):
             part = base / table / f"date={d.isoformat()}"
             extras = sorted(part.glob("*.parquet")) if part.exists() else []
-            for path in extras:
+            for path in preferred_readable_route_files(extras, expected):
                 try:
                     df = pl.read_parquet(path)
                 except Exception as e:  # noqa: BLE001

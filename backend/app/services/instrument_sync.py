@@ -94,9 +94,12 @@ def read_usable_instruments(
     """Current-route instrument rows. Empty on leftover-only / unresolved.
 
     Named ``instruments.parquet`` plus same-directory extras. Leftover TickFlow
-    still sees untagged files. Custom / unresolved never reuse leftover
-    TickFlow universe as if it belonged to the current daily.
+    still sees untagged files. Same-day untagged extras beside tagged leftover
+    must not concat-mix. Custom / unresolved never reuse leftover TickFlow
+    universe as if it belonged to the current daily.
     """
+    from app.services.kline_sync import preferred_readable_route_files
+
     root = Path(data_dir) / kind
     named = root / f"{kind}.parquet"
     paths: list[Path] = []
@@ -104,6 +107,8 @@ def read_usable_instruments(
         paths.append(named)
     if root.is_dir():
         paths.extend(path for path in sorted(root.glob("*.parquet")) if path not in paths)
+    expected = route if route is not None else instrument_route()
+    paths = preferred_readable_route_files(paths, expected)
     frames: list[pl.DataFrame] = []
     for path in paths:
         try:
