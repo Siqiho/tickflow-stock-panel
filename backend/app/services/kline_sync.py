@@ -352,25 +352,12 @@ def usable_daily_partition_paths(
     """
     from pathlib import Path
 
-    try:
-        expected = route if route is not None else daily_route()
-    except Exception:  # noqa: BLE001
-        return []
-    if not expected or str(expected).strip().lower() == "unresolved":
-        return []
     root = Path(data_dir) / table
-    if not root.exists():
-        return []
     paths = []
-    for child in sorted(root.iterdir()):
-        if not child.is_dir() or not child.name.startswith("date="):
-            continue
-        try:
-            date.fromisoformat(child.name[5:])
-        except ValueError:
-            continue
-        # All current-route extras. Never leftover part.parquet / extras[0].
-        paths.extend(usable_daily_partition_files(child, expected))
+    # Dates stay fail-closed when the calendar probe raises (legacy except-glob).
+    for day in safe_usable_daily_partition_dates(data_dir, route, table=table):
+        part = root / f"date={day.isoformat()}"
+        paths.extend(usable_daily_partition_files(part, route))
     return paths
 
 
@@ -1988,25 +1975,12 @@ def usable_minute_partition_paths(
     """
     from pathlib import Path
 
-    try:
-        expected = route if route is not None else minute_route()
-    except Exception:  # noqa: BLE001
-        return []
-    if not expected or str(expected).strip().lower() == "unresolved":
-        return []
     subdir = "kline_etf_minute" if asset_type == "etf" else "kline_minute"
     root = Path(data_dir) / subdir
-    if not root.exists():
-        return []
     paths = []
-    for child in sorted(root.iterdir()):
-        if not child.is_dir() or not child.name.startswith("date="):
-            continue
-        try:
-            date.fromisoformat(child.name[5:])
-        except ValueError:
-            continue
-        paths.extend(usable_minute_partition_files(child, expected))
+    for day in safe_usable_minute_partition_dates(data_dir, route, asset_type=asset_type):
+        part = root / f"date={day.isoformat()}"
+        paths.extend(usable_minute_partition_files(part, route))
     return paths
 
 

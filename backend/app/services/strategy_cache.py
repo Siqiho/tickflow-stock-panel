@@ -139,6 +139,7 @@ def write_cache(
     old = read_cache(data_dir)
     old_as_of = old.get("as_of") if old else None
     old_ever_rows: dict[str, dict[str, dict]] = old.get("today_ever_rows", {}) if old else {}
+    old_results = old.get("results", {}) if old and old_as_of == as_of else {}
 
     # 当前命中的行数据 → symbol 映射
     current_row_maps: dict[str, dict[str, dict]] = {}
@@ -173,7 +174,7 @@ def write_cache(
 
     payload = {
         "as_of": as_of,
-        "results": results,
+        "results": {**old_results, **results},
         "today_ever_matched": today_ever_matched,
         "today_ever_rows": today_ever_rows,
         "enriched_mtime": enriched_mtime,

@@ -19,6 +19,7 @@ Keeps remaining TickFlow leftover contracts:
 """
 from __future__ import annotations
 
+import os
 from datetime import date, datetime
 from types import SimpleNamespace
 
@@ -152,6 +153,7 @@ def test_screener_loads_current_extras_not_leftover_part(monkeypatch, tmp_path):
     monkeypatch.setattr(kline_sync, "daily_route", lambda: "fuyao")
     repo = SimpleNamespace(
         store=SimpleNamespace(data_dir=tmp_path),
+        get_enriched_latest=lambda: (None, None),
         get_enriched_history=lambda *_a, **_k: None,
         get_instruments=lambda: pl.DataFrame(),
     )
@@ -218,9 +220,9 @@ def test_prune_and_mining_see_current_extras(monkeypatch, tmp_path):
     removed = prune_enriched_partitions(tmp_path, date(2026, 7, 17))
     assert removed == 1
     assert not enr.exists()
-    _daily_df(route="fuyao").write_parquet(
-        (tmp_path / "kline_daily_enriched" / "date=2026-07-17") / "current.parquet"
-    )
+    rebuilt = tmp_path / "kline_daily_enriched" / "date=2026-07-17"
+    rebuilt.mkdir(parents=True)
+    _daily_df(route="fuyao").write_parquet(rebuilt / "current.parquet")
     meta = _enriched_metadata(tmp_path / "kline_daily_enriched")
     assert meta["partition_count"] == 1
     assert meta["last_partition"] == "date=2026-07-17"
@@ -235,7 +237,8 @@ def test_regime_stale_uses_current_extras(monkeypatch, tmp_path):
     regime = tmp_path / "regime_history" / "part.parquet"
     regime.parent.mkdir(parents=True)
     pl.DataFrame({"date": [date(2026, 7, 17)], "phase": ["risk_on"], "route": ["fuyao"]}).write_parquet(regime)
-    current.touch()
+    later = regime.stat().st_mtime + 10
+    os.utime(current, (later, later))
     monkeypatch.setattr(kline_sync, "daily_route", lambda: "fuyao")
     repo = SimpleNamespace(store=SimpleNamespace(data_dir=tmp_path))
     stale = detect_stale_dates(tmp_path, repo)
