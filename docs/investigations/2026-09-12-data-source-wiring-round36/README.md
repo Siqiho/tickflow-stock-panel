@@ -40,4 +40,4 @@ PYTHONDONTWRITEBYTECODE=1 DATA_DIR=/tmp/ot-data-source-wiring-round36 \
     tests/test_leftover_route_hardening.py
 ```
 
-云环境结果见 `evidence/test-results.md`。
+云环境结果：`1129 passed, 47 warnings`（隔离 `DATA_DIR=/tmp/ot-data-source-wiring-round36`）。详见 `evidence/test-results.md`。

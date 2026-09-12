@@ -36,7 +36,7 @@ from app.services.ext_data import ExtConfig, ExtField
 from app.services.free_sources.financials_public import sync_financials_public
 from app.services.free_sources.share_capital_public import sync_share_capital_public
 from app.services.quote_service import QuoteService
-from app.services.sector_monitor import SectorMonitor
+from app.services.sector_monitor import SectorMonitorService
 from app.tickflow.capabilities import Cap, CapabilityLimits, CapabilitySet, feature_availability
 from app.tickflow.repository import DataStore
 
@@ -326,7 +326,7 @@ def test_sector_monitor_stamp_skips_unreadable_extras(tmp_path):
         root / "extra.parquet",
     )
     (root / "part.parquet").write_bytes(b"")
-    monitor = SectorMonitor(SimpleNamespace(store=SimpleNamespace(data_dir=tmp_path)))
+    monitor = SectorMonitorService(SimpleNamespace(store=SimpleNamespace(data_dir=tmp_path)))
     names = [Path(item[0]).name for item in monitor._data_signature()]
     assert "extra.parquet" in names
     assert "part.parquet" not in names
