@@ -161,8 +161,10 @@ def leftover_tickflow_follow_daily() -> bool:
 
     After a custom or unresolved daily switch, leftover TickFlow minute /
     depth / full-minute / adj / financial / pool / trading-day-probe /
-    watchlist-quote / full-market-quote jobs must not mix TickFlow onto
-    the custom daily surface. After-hours clock times stay ops schedule.
+    watchlist-quote / full-market-quote jobs, DepthService / QuoteService
+    leftover loops, and live-TickFlow capability labels must not mix
+    TickFlow onto the custom daily surface. After-hours clock times stay
+    ops schedule.
     """
     try:
         return daily_route() == "tickflow"

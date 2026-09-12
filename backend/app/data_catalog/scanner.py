@@ -115,6 +115,7 @@ _POOL_DATASETS = {"pools"}
 _QUOTE_DATASETS = {"quote_snapshot"}
 _MEMBERSHIP_DATASETS = {"index_membership_history"}
 _CORP_DATASETS = {"corporate_actions"}
+_INSTRUMENT_DATASETS = {"stock_instruments", "etf_instruments", "index_instruments"}
 
 
 def _route_column_usable(path: Path, route: str, usable_fn) -> bool:
@@ -157,6 +158,10 @@ def _catalog_route_token(dataset_id: str) -> str:
             from app.services.quote_service import realtime_route
 
             return realtime_route()
+        if dataset_id in _INSTRUMENT_DATASETS:
+            from app.services.instrument_sync import instrument_route
+
+            return instrument_route()
     except Exception:
         return "unresolved"
     return "tickflow"
@@ -167,7 +172,7 @@ def _catalog_file_usable(dataset_id: str, path: Path) -> bool:
 
     Leftover TickFlow / public still see untagged partitions. Custom /
     unresolved never reuse leftover TickFlow as current coverage after a
-    rescan. Instruments stay leftover TickFlow. Same-directory untagged
+    rescan. Instruments follow the daily route. Same-directory untagged
     extras beside tagged leftover are filtered later by
     :func:`_catalog_material_files`.
     """
@@ -206,6 +211,23 @@ def _catalog_file_usable(dataset_id: str, path: Path) -> bool:
             from app.services.kline_sync import adj_cache_usable, adj_route
 
             return _route_column_usable(path, adj_route(), adj_cache_usable)
+        if dataset_id in _INSTRUMENT_DATASETS:
+            from app.services.instrument_sync import instrument_cache_usable, instrument_route
+            import polars as pl
+
+            expected = instrument_route()
+            if expected == "unresolved":
+                return False
+            try:
+                names = pl.read_parquet_schema(path).names()
+                if "route" not in names:
+                    return expected == "tickflow"
+                return instrument_cache_usable(
+                    pl.read_parquet(path, columns=["route"]), expected,
+                )
+            except Exception:
+                # Leftover TickFlow catalog stays fail-loud on unreadable leftover.
+                return expected == "tickflow"
     except Exception:
         return False
     return True

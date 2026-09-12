@@ -37,6 +37,13 @@ _POOL_NAME_HINTS = {
 def _find_universe_id(hints: list[str]) -> str | None:
     """从 universes.list() 里按 name/id 子串匹配找一个 universe id。"""
     try:
+        from app.services.kline_sync import leftover_tickflow_follow_daily
+
+        if not leftover_tickflow_follow_daily():
+            return None
+    except Exception:
+        return None
+    try:
         tf = get_client()
         unis = tf.universes.list()
     except Exception as e:

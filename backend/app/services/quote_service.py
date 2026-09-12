@@ -402,6 +402,13 @@ class QuoteService:
             return "full_market"
         if provider != "tickflow":
             return "full_market"
+        try:
+            from app.services.kline_sync import leftover_tickflow_follow_daily
+
+            if not leftover_tickflow_follow_daily():
+                return "none"
+        except Exception:
+            return "none"
         tier = cls._current_tier()
         if tier in ("none", "free"):
             return "none"
