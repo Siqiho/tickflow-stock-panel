@@ -63,10 +63,22 @@ def _utc_iso() -> str:
 
 
 def list_partition_dates(data_dir: Path, table: str = "kline_daily") -> list[date]:
-    if table in {"kline_daily", "kline_daily_enriched"}:
+    if table in {
+        "kline_daily",
+        "kline_daily_enriched",
+        "kline_index_daily",
+        "kline_index_enriched",
+        "kline_etf_daily",
+        "kline_etf_enriched",
+    }:
         from app.services.kline_sync import safe_usable_daily_partition_dates
 
         return safe_usable_daily_partition_dates(data_dir, table=table)
+    if table in {"kline_minute", "kline_etf_minute"}:
+        from app.services.kline_sync import safe_usable_minute_partition_dates
+
+        asset_type = "etf" if table == "kline_etf_minute" else "stock"
+        return safe_usable_minute_partition_dates(data_dir, asset_type=asset_type)
     root = Path(data_dir) / table
     if not root.exists():
         return []

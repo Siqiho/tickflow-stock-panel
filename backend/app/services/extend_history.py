@@ -97,26 +97,8 @@ def _resolve_universe(capset: CapabilitySet) -> list[str]:
 
 
 def _refresh_single_view(repo: KlineRepository, name: str) -> None:
-    """刷新单个 DuckDB 视图。"""
-    d = repo.store.data_dir.as_posix()
-    paths = {
-        "kline_daily": f"{d}/kline_daily/**/*.parquet",
-        "kline_enriched": f"{d}/kline_daily_enriched/**/*.parquet",
-        "kline_minute": f"{d}/kline_minute/**/*.parquet",
-        "adj_factor": f"{d}/adj_factor/**/*.parquet",
-        "instruments": f"{d}/instruments/**/*.parquet",
-    }
-    path = paths.get(name)
-    if not path:
-        return
-    try:
-        repo.db.execute(
-            f"CREATE OR REPLACE VIEW {name} AS "
-            f"SELECT * FROM read_parquet('{path}', union_by_name=true)"
-        )
-    except Exception as e:
-        logger.warning("refresh view %s failed: %s", name, e)
-    repo.store.re_gate_catalog_views()
+    """刷新 DuckDB 视图。``name`` 保留给调用方，实际整表重挂门控视图。"""
+    kline_sync.refresh_gated_catalog_views(repo)
 
 
 def compute_offset(value: int, unit: str) -> timedelta:

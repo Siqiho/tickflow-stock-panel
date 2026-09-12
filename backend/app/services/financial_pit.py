@@ -519,12 +519,15 @@ def append_shares_history(
         )
 
         route = financial_write_route()
+        if not route or route == "unresolved":
+            logger.info("append_shares_history: refuse unresolved financial route")
+            return existing.head(0) if not existing.is_empty() else existing
         if not existing.is_empty() and not financial_cache_usable(existing, route):
             logger.info("append_shares_history: skip stale shares for route=%s", route)
             existing = existing.head(0)
     except Exception as exc:  # noqa: BLE001
-        logger.debug("append_shares_history route gate skipped: %s", exc)
-        _tag_financial_route = None
+        logger.debug("append_shares_history route gate failed: %s", exc)
+        return existing.head(0) if not existing.is_empty() else existing
     snap = snapshot
     if snap.is_empty():
         return ensure_pit_columns(existing, table="shares") if not existing.is_empty() else snap

@@ -705,12 +705,13 @@ def _coerce_session_date(value):
         return None
 
 
-def _minute_range_prev_closes(repo, symbol: str, trade_dates: list) -> dict:
+def _minute_range_prev_closes(repo, symbol: str, trade_dates: list, asset_type: str = "stock") -> dict:
     """Previous official daily close per session from the current daily route.
 
     HTTP used to leave prev_close null and let leftover DuckDB daily fill
     names elsewhere. Gated get_daily_asset keeps leftover TickFlow out after
-    a custom switch. Untagged leftover TickFlow daily still serves.
+    a custom switch. ETF sessions read ETF daily, not the stock store.
+    Untagged leftover TickFlow daily still serves.
     """
     days = [_coerce_session_date(d) for d in trade_dates]
     days = [d for d in days if d is not None]
@@ -719,8 +720,9 @@ def _minute_range_prev_closes(repo, symbol: str, trade_dates: list) -> dict:
         return {}
     start = days[0] - timedelta(days=20)
     end = days[-1]
+    table = "etf" if asset_type == "etf" else "stock"
     try:
-        daily = getter("stock", symbol, start, end)
+        daily = getter(table, symbol, start, end)
     except TypeError:
         try:
             daily = getter(symbol, start, end)
@@ -782,7 +784,13 @@ def get_minute_range(
     getter = getattr(repo, "get_minute_range", None)
     if callable(getter):
         try:
-            candidate = getter([symbol], start, end)
+            candidate = getter([symbol], start, end, asset_type=asset_type)
+        except TypeError:
+            try:
+                candidate = getter([symbol], start, end)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("minute-range getter failed: %s", exc)
+                candidate = None
         except Exception as exc:  # noqa: BLE001
             logger.warning("minute-range getter failed: %s", exc)
             candidate = None
@@ -801,7 +809,7 @@ def get_minute_range(
                 pref_key="minute_batch_compress",
             )
         try:
-            lf = kline_sync.scan_usable_minute(data_dir)
+            lf = kline_sync.scan_usable_minute(data_dir, asset_type=asset_type)
             if lf is None:
                 minute = pl.DataFrame()
             else:
@@ -829,7 +837,7 @@ def get_minute_range(
 
     minute = minute.with_columns(pl.col("datetime").dt.date().alias("_trade_date"))
     trade_dates = sorted(minute["_trade_date"].unique().to_list())[-days:]
-    prev_closes = _minute_range_prev_closes(repo, symbol, trade_dates)
+    prev_closes = _minute_range_prev_closes(repo, symbol, trade_dates, asset_type=asset_type)
     row_columns = [
         column
         for column in ("datetime", "open", "high", "low", "close", "volume", "amount")
@@ -1084,6 +1092,8 @@ def get_minute(
     """
     repo = request.app.state.repo
     capset = _http_capset(request)
+    resolver = getattr(repo, "resolve_asset_type", None)
+    asset_type = resolver(symbol) if callable(resolver) else "stock"
     stock_info = _get_stock_info(repo, symbol)
     stock_name = stock_info.get("name")
 
@@ -1097,6 +1107,11 @@ def get_minute(
             body.update(extra)
         return _gzip_payload(request, body, pref_key="minute_batch_compress")
 
+    if asset_type == "index":
+        if trade_date is None:
+            trade_date = cn_today()
+        return _minute_payload([], "none")
+
     if trade_date is None:
         today = cn_today()
         need_fallback = today.weekday() >= 5
@@ -1105,9 +1120,9 @@ def get_minute(
             getter = getattr(repo, "latest_minute_date", None)
             if callable(getter):
                 try:
-                    recent = getter(symbol)
+                    recent = getter(symbol, asset_type=asset_type)
                 except TypeError:
-                    recent = getter(symbol, asset_type="stock")
+                    recent = getter(symbol)
             trade_date = recent if recent is not None else today
         else:
             trade_date = today
@@ -1122,7 +1137,11 @@ def get_minute(
             return _minute_payload(live_df.to_dicts(), "live")
 
     try:
-        df = kline_sync.filter_minute_trade_date(repo.get_minute(symbol, trade_date), trade_date)
+        try:
+            stored_minute = repo.get_minute(symbol, trade_date, asset_type=asset_type)
+        except TypeError:
+            stored_minute = repo.get_minute(symbol, trade_date)
+        df = kline_sync.filter_minute_trade_date(stored_minute, trade_date)
     except KlineReadError as e:
         raise HTTPException(
             status_code=503,
@@ -1159,7 +1178,11 @@ def get_minute(
     data_dir = getattr(getattr(repo, "store", None), "data_dir", None)
     is_watchlist = bool(data_dir) and watchlist.contains(symbol, data_dir=data_dir)
     if trade_date < today and is_watchlist:
-        daily_df = repo.get_daily(symbol, trade_date, trade_date)
+        daily_getter = getattr(repo, "get_daily_asset", None)
+        if callable(daily_getter):
+            daily_df = daily_getter(asset_type, symbol, trade_date, trade_date)
+        else:
+            daily_df = repo.get_daily(symbol, trade_date, trade_date)
 
         def _accept_candidate(provider: str, lineage_source: str, candidate):
             result = kline_sync.persist_historical_minute(
@@ -1180,8 +1203,12 @@ def get_minute(
                     catalog.refresh_after_mutation("stock_minute")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("stock_minute catalog refresh failed: %s", exc)
+            try:
+                stored_after = repo.get_minute(symbol, trade_date, asset_type=asset_type)
+            except TypeError:
+                stored_after = repo.get_minute(symbol, trade_date)
             stored = kline_sync.filter_minute_trade_date(
-                repo.get_minute(symbol, trade_date),
+                stored_after,
                 trade_date,
             )
             return _minute_payload(

@@ -55,7 +55,13 @@ def regime_history(
 ):
     """历史环境时序(含状态/指标)。默认最近 N 天。"""
     global _cache, _cache_ts
-    cache_key = f"hist|{start}|{end}|{limit}"
+    try:
+        from app.services.kline_sync import daily_route
+
+        route_token = daily_route()
+    except Exception:
+        route_token = "unresolved"
+    cache_key = f"hist|{start}|{end}|{limit}|{route_token}"
     with _cache_lock:
         if (
             _cache is not None

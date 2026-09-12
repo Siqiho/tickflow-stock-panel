@@ -103,7 +103,13 @@ def load_official_trend_overlay(data_dir: Path, official_as_of: date) -> dict[st
     global _overlay_cache
     root = Path(data_dir) / "kline_daily_enriched"
     official_path = root / f"date={official_as_of.isoformat()}" / "part.parquet"
-    cache_key = f"{Path(data_dir).resolve()}|{official_as_of.isoformat()}"
+    try:
+        from app.services.kline_sync import daily_route
+
+        route_token = daily_route()
+    except Exception:
+        route_token = "unresolved"
+    cache_key = f"{Path(data_dir).resolve()}|{official_as_of.isoformat()}|{route_token}"
     stamp = _partition_mtime_ns(official_path)
     if _overlay_cache and _overlay_cache[0] == cache_key and _overlay_cache[1] == stamp:
         return _overlay_cache[2]
