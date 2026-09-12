@@ -1155,6 +1155,17 @@ def _usable_daily_paths(data_dir: Path, *, table: str = "kline_daily") -> list[P
     return usable_daily_partition_paths(data_dir, table=table)
 
 
+def _load_usable_instruments(data_dir: Path) -> pl.DataFrame:
+    """Current-route instruments for enriched limit-up / turnover."""
+    try:
+        from app.services.instrument_sync import read_usable_instruments
+
+        return read_usable_instruments(data_dir)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("instruments 读取失败: %s", exc)
+        return pl.DataFrame()
+
+
 def _canonical_enriched_artifact(value: object, data_dir: Path) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -1328,16 +1339,9 @@ def fill_enriched_coverage_gap(
     if not factors.is_empty() and "symbol" in factors.columns:
         factors = factors.filter(pl.col("symbol").is_in(missing))
 
-    instruments = pl.DataFrame()
-    try:
-        instruments = pl.scan_parquet(
-            str(d / "instruments" / "**" / "*.parquet"),
-            cast_options=cast_options,
-        ).collect()
-        if not instruments.is_empty() and "symbol" in instruments.columns:
-            instruments = instruments.filter(pl.col("symbol").is_in(missing))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("instruments 读取失败: %s", exc)
+    instruments = _load_usable_instruments(d)
+    if not instruments.is_empty() and "symbol" in instruments.columns:
+        instruments = instruments.filter(pl.col("symbol").is_in(missing))
 
     enriched = compute_enriched(raw, factors=factors, instruments=instruments)
     if enriched.is_empty() or "date" not in enriched.columns:
@@ -1547,8 +1551,6 @@ def run_pipeline(data_dir: Path | None = None,
     daily_dir = d / "kline_daily"
     enriched_base = d / "kline_daily_enriched"
     factor_path = d / "adj_factor" / "all.parquet"
-    inst_glob = str(d / "instruments" / "**" / "*.parquet")
-
     if not daily_dir.exists() or not any(daily_dir.rglob("*.parquet")):
         logger.info("无日K数据, 跳过管道")
         return 0
@@ -1578,12 +1580,8 @@ def run_pipeline(data_dir: Path | None = None,
         return 0
     daily_glob = [p.as_posix() for p in usable_daily_files]
 
-    # 加载 instruments (涨跌停+换手率需要)
-    instruments = pl.DataFrame()
-    try:
-        instruments = pl.scan_parquet(inst_glob, cast_options=_cast).collect()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("instruments 读取失败: %s", e)
+    # 加载当前 route instruments (涨跌停+换手率需要)
+    instruments = _load_usable_instruments(d)
     historical_shares = load_share_history(d)
 
     if new_dates_only:

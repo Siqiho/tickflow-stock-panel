@@ -23,6 +23,7 @@ from app.services.ext_data import (
     ext_api_key_field,
     fix_symbol_format,
     get_ext_api_key,
+    latest_ext_parquet_files,
     normalize_symbol,
     write_ext_parquet,
     rows_to_parquet,
@@ -235,44 +236,33 @@ def _read_ext_dataframe(
     data_dir: Path,
     snapshot_date: str | None = None,
 ) -> tuple[pl.DataFrame, str | None]:
-    cfg_dir = data_dir / "ext_data" / config.id
-
-    if config.mode == "snapshot":
-        path = cfg_dir / "part.parquet"
-        if not path.exists():
-            return pl.DataFrame(), None
-        return pl.read_parquet(path), _latest_sync_date(config, data_dir)
-
-    base = cfg_dir / "timeseries"
-    if not base.exists():
-        return pl.DataFrame(), None
-
+    files = latest_ext_parquet_files(data_dir, config, snapshot_date=snapshot_date)
+    if not files:
+        return pl.DataFrame(), snapshot_date
+    try:
+        frame = pl.read_parquet(files)
+    except Exception:
+        return pl.DataFrame(), snapshot_date
     if snapshot_date:
-        path = base / f"date={snapshot_date}" / "part.parquet"
-        if not path.exists():
-            return pl.DataFrame(), snapshot_date
-        return pl.read_parquet(path), snapshot_date
-
-    partitions = sorted(
-        d for d in base.iterdir()
-        if d.is_dir() and d.name.startswith("date=") and (d / "part.parquet").exists()
-    )
-    if not partitions:
-        return pl.DataFrame(), None
-
-    latest = partitions[-1]
-    latest_date = latest.name[5:]
-    return pl.read_parquet(latest / "part.parquet"), latest_date
+        return frame, snapshot_date
+    if config.mode == "timeseries":
+        latest_date = None
+        for path in files:
+            parent = path.parent.name
+            if parent.startswith("date="):
+                latest_date = parent[5:]
+                break
+        return frame, latest_date or _latest_sync_date(config, data_dir)
+    return frame, _latest_sync_date(config, data_dir)
 
 
 def _with_instrument_name(df: pl.DataFrame, data_dir: Path) -> pl.DataFrame:
     if df.is_empty() or "symbol" not in df.columns or "name" in df.columns:
         return df
-    path = data_dir / "instruments" / "instruments.parquet"
-    if not path.exists():
-        return df
     try:
-        inst = pl.read_parquet(path)
+        from app.services.instrument_sync import read_usable_instruments
+
+        inst = read_usable_instruments(data_dir)
         if "symbol" in inst.columns and "name" in inst.columns:
             inst = inst.select(["symbol", "name"]).unique(subset=["symbol"], keep="last")
             return df.join(inst, on="symbol", how="left")

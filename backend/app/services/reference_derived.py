@@ -101,10 +101,12 @@ def _read_usable_daily(data_dir: Path, trade_date: date) -> pl.DataFrame:
 
 
 def _read_instruments(data_dir: Path) -> pl.DataFrame:
-    path = data_dir / "instruments" / "instruments.parquet"
-    if not path.exists():
+    try:
+        from app.services.instrument_sync import read_usable_instruments
+
+        return read_usable_instruments(data_dir)
+    except Exception:  # noqa: BLE001
         return pl.DataFrame()
-    return pl.read_parquet(path)
 
 
 def _board_of(symbol: str) -> str:

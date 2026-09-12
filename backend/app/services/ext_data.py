@@ -305,12 +305,13 @@ _POLARS_DTYPE_MAP = {
 
 
 def build_code_lookup(data_dir: Path) -> dict[str, str]:
-    """从 instruments 维表构建 code → symbol 映射。"""
-    path = data_dir / "instruments" / "instruments.parquet"
-    if not path.exists():
-        return {}
+    """从当前 daily route 的 instruments 维表构建 code → symbol 映射。"""
     try:
-        df = pl.read_parquet(path, columns=["code", "symbol"])
+        from app.services.instrument_sync import read_usable_instruments
+
+        df = read_usable_instruments(data_dir)
+        if df.is_empty() or "code" not in df.columns or "symbol" not in df.columns:
+            return {}
         return dict(zip(df["code"].to_list(), df["symbol"].to_list()))
     except Exception:
         return {}
@@ -446,16 +447,28 @@ def _config_dir(config_id: str, data_dir: Path) -> Path:
     return data_dir / "ext_data" / config_id
 
 
-def latest_ext_parquet_files(data_dir: Path, config: ExtConfig) -> list[Path]:
+def latest_ext_parquet_files(
+    data_dir: Path,
+    config: ExtConfig,
+    *,
+    snapshot_date: str | None = None,
+) -> list[Path]:
     """Parquet files for one ext config. Timeseries is latest ``date=*`` only.
 
     Overview / RPS / watchlist used to leftover-union every historical
     timeseries partition. DuckDB / screener already mount the latest
     date. Leftover later partitions must not mix after a refresh.
+    Leftover ``part.parquet`` must not hide a same-date extra, and a
+    later extra-only date must not lose to an older leftover part.
     """
     base = Path(data_dir) / "ext_data" / config.id
     if getattr(config, "mode", "snapshot") == "timeseries":
         root = base / "timeseries"
+        if snapshot_date:
+            part = root / f"date={str(snapshot_date)[:10]}"
+            if not part.is_dir():
+                return []
+            return [path for path in sorted(part.glob("*.parquet")) if path.is_file()]
         if not root.is_dir():
             return []
         partitions = sorted(
@@ -467,6 +480,14 @@ def latest_ext_parquet_files(data_dir: Path, config: ExtConfig) -> list[Path]:
             return []
         return [path for path in sorted(partitions[-1].glob("*.parquet")) if path.is_file()]
     return [path for path in sorted(base.glob("*.parquet")) if path.is_file()]
+
+
+def usable_ext_snapshot_files(data_dir: Path, config_id: str) -> list[Path]:
+    """Snapshot extras for one ext config. Leftover part must not hide extras."""
+    root = Path(data_dir) / "ext_data" / config_id
+    if not root.is_dir():
+        return []
+    return [path for path in sorted(root.glob("*.parquet")) if path.is_file()]
 
 
 def _ext_merge_keys(df: pl.DataFrame, existing: pl.DataFrame | None = None) -> list[str]:

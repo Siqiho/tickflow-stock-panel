@@ -84,6 +84,39 @@ def tag_instruments(df: pl.DataFrame, route: str | None = None) -> pl.DataFrame:
         pl.when(tokens == "").then(pl.lit(token)).otherwise(pl.col("route")).alias("route")
     )
 
+
+def read_usable_instruments(
+    data_dir,
+    route: str | None = None,
+    *,
+    kind: str = "instruments",
+) -> pl.DataFrame:
+    """Current-route instrument rows. Empty on leftover-only / unresolved.
+
+    Named ``instruments.parquet`` plus same-directory extras. Leftover TickFlow
+    still sees untagged files. Custom / unresolved never reuse leftover
+    TickFlow universe as if it belonged to the current daily.
+    """
+    root = Path(data_dir) / kind
+    named = root / f"{kind}.parquet"
+    paths: list[Path] = []
+    if named.exists():
+        paths.append(named)
+    if root.is_dir():
+        paths.extend(path for path in sorted(root.glob("*.parquet")) if path not in paths)
+    frames: list[pl.DataFrame] = []
+    for path in paths:
+        try:
+            frames.append(filter_instruments(pl.read_parquet(path), route))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("read usable instruments failed %s: %s", path, exc)
+    if not frames:
+        return pl.DataFrame()
+    out = pl.concat(frames, how="diagonal_relaxed") if len(frames) > 1 else frames[0]
+    if out.is_empty() or "symbol" not in out.columns or len(frames) == 1:
+        return out
+    return out.unique(subset=["symbol"], keep="last", maintain_order=True)
+
 _EXCHANGES = ("SH", "SZ", "BJ")
 _CHINA = ZoneInfo("Asia/Shanghai")
 

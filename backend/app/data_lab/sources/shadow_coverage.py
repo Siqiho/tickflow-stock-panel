@@ -18,7 +18,12 @@ _SENTINEL_LISTING = date(1970, 1, 1)
 
 
 def _read_instruments(path: Path) -> pl.DataFrame:
-    df = pl.read_parquet(path)
+    try:
+        from app.services.instrument_sync import filter_instruments, instrument_route
+
+        df = filter_instruments(pl.read_parquet(path), instrument_route())
+    except Exception:
+        df = pl.DataFrame()
     need = {"symbol", "name", "exchange", "listing_date"}
     missing = need - set(df.columns)
     if missing:
@@ -112,23 +117,44 @@ def summarize_listing_coverage(
     }
 
 
-def _iter_daily_partitions(kline_root: Path) -> list[tuple[date, Path]]:
-    out: list[tuple[date, Path]] = []
+def _iter_daily_partitions(kline_root: Path) -> list[tuple[date, list[Path]]]:
+    out: list[tuple[date, list[Path]]] = []
     if not kline_root.exists():
         return out
+    try:
+        from app.services.kline_sync import usable_daily_partition_files
+    except Exception:
+        usable_daily_partition_files = None
     for part in sorted(kline_root.glob("date=*")):
         day_s = part.name.removeprefix("date=")
         try:
             d = date.fromisoformat(day_s)
         except ValueError:
             continue
-        files = sorted(part.glob("*.parquet"))
+        if usable_daily_partition_files is not None:
+            try:
+                files = usable_daily_partition_files(part)
+            except Exception:
+                files = []
+        else:
+            files = sorted(part.glob("*.parquet"))
+        files = [path for path in files if path.is_file()]
         if not files:
             continue
-        # prefer part.parquet if present
-        chosen = next((p for p in files if p.name == "part.parquet"), files[0])
-        out.append((d, chosen))
+        out.append((d, files))
     return out
+
+
+def _read_daily_partition(files: list[Path]) -> pl.DataFrame:
+    frames: list[pl.DataFrame] = []
+    for path in files:
+        try:
+            frames.append(pl.read_parquet(path))
+        except Exception:
+            continue
+    if not frames:
+        return pl.DataFrame()
+    return frames[0] if len(frames) == 1 else pl.concat(frames, how="diagonal_relaxed")
 
 
 def build_status_history_shadow(
@@ -166,8 +192,8 @@ def build_status_history_shadow(
         return empty
     chosen = parts[-sample_days:]
     frames: list[pl.DataFrame] = []
-    for d, path in chosen:
-        df = pl.read_parquet(path)
+    for d, files in chosen:
+        df = _read_daily_partition(files)
         if "symbol" not in df.columns:
             continue
         cols = set(df.columns)
@@ -193,8 +219,8 @@ def build_status_history_shadow(
             & pl.col("listing_date").is_not_null()
             & (pl.col("listing_date") > _SENTINEL_LISTING)
         )
-        for d, path in chosen:
-            day_df = pl.read_parquet(path)
+        for d, files in chosen:
+            day_df = _read_daily_partition(files)
             if "symbol" not in day_df.columns:
                 continue
             present = set(day_df.get_column("symbol").cast(pl.Utf8).to_list())

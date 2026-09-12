@@ -211,12 +211,13 @@ def _get_symbols(data_dir: Path) -> list[str]:
             logger.warning("public financial scope resolve failed, fail-closed: %s", e)
             return []
 
-    inst_path = data_dir / "instruments" / "instruments.parquet"
-    if not inst_path.exists():
-        return []
     try:
-        df = pl.read_parquet(inst_path, columns=["symbol"])
-        return df["symbol"].to_list()
+        from app.services.instrument_sync import read_usable_instruments
+
+        df = read_usable_instruments(data_dir)
+        if df.is_empty() or "symbol" not in df.columns:
+            return []
+        return [str(s).strip().upper() for s in df["symbol"].to_list() if s]
     except Exception as e:
         logger.warning("读取 instruments 失败: %s", e)
         return []
