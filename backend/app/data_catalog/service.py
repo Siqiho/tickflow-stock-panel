@@ -389,18 +389,37 @@ class CatalogService:
     def compatibility_status(self) -> dict[str, Any]:
         states = {state.dataset_id: state for state in self.control_db.list_dataset_states()}
         return {
-            "daily": self._table_stats(states.get("stock_daily")),
-            "enriched": self._table_stats(states.get("stock_enriched"), enriched=True),
-            "index_daily": self._table_stats(states.get("index_daily")),
-            "index_enriched": self._table_stats(states.get("index_enriched"), enriched=True),
+            "daily": self._overlay_route_calendar(
+                self._table_stats(states.get("stock_daily")), "kline_daily",
+            ),
+            "enriched": self._overlay_route_calendar(
+                self._table_stats(states.get("stock_enriched"), enriched=True),
+                "kline_daily_enriched",
+            ),
+            "index_daily": self._overlay_route_calendar(
+                self._table_stats(states.get("index_daily")), "kline_index_daily",
+            ),
+            "index_enriched": self._overlay_route_calendar(
+                self._table_stats(states.get("index_enriched"), enriched=True),
+                "kline_index_enriched",
+            ),
             "index_instruments": self._instrument_stats(states.get("index_instruments")),
-            "etf_daily": self._table_stats(states.get("etf_daily")),
-            "etf_enriched": self._table_stats(states.get("etf_enriched"), enriched=True),
+            "etf_daily": self._overlay_route_calendar(
+                self._table_stats(states.get("etf_daily")), "kline_etf_daily",
+            ),
+            "etf_enriched": self._overlay_route_calendar(
+                self._table_stats(states.get("etf_enriched"), enriched=True),
+                "kline_etf_enriched",
+            ),
             "etf_instruments": self._instrument_stats(states.get("etf_instruments")),
-            "minute": self._table_stats(states.get("stock_minute")),
-            "adj_factor": self._table_stats(states.get("stock_adj_factor")),
+            "minute": self._overlay_route_calendar(
+                self._table_stats(states.get("stock_minute")),
+                "kline_minute",
+                kind="minute",
+            ),
+            "adj_factor": self._overlay_adj_stats(self._table_stats(states.get("stock_adj_factor"))),
             "instruments": self._instrument_stats(states.get("stock_instruments")),
-            "financials": self._financial_stats(states),
+            "financials": self._overlay_financial_stats(self._financial_stats(states)),
             "storage": self._legacy_storage(),
             "next_pipeline_run": None,
             "next_instruments_run": None,
@@ -408,6 +427,80 @@ class CatalogService:
             "last_instruments_run": None,
             "checked_at": _utc_now(),
         }
+
+    def _overlay_route_calendar(
+        self,
+        stats: dict[str, Any] | None,
+        table: str,
+        *,
+        kind: str = "daily",
+    ) -> dict[str, Any] | None:
+        """Hide leftover TickFlow calendars after a custom switch.
+
+        Catalog control-db state is last-scan inventory. After a provider
+        switch it still describes leftover files until the next rescan.
+        Usable partition dates are the serving source of truth.
+        """
+        if stats is None:
+            return None
+        try:
+            if kind == "minute":
+                from app.services.kline_sync import safe_usable_minute_partition_dates
+
+                dates = safe_usable_minute_partition_dates(self.data_dir)
+            else:
+                from app.services.kline_sync import safe_usable_daily_partition_dates
+
+                dates = safe_usable_daily_partition_dates(self.data_dir, table=table)
+        except Exception:
+            return None
+        if not dates:
+            return None
+        return {
+            **stats,
+            "earliest_date": dates[0].isoformat(),
+            "latest_date": dates[-1].isoformat(),
+            "trading_days": len(dates),
+        }
+
+    def _overlay_adj_stats(self, stats: dict[str, Any] | None) -> dict[str, Any] | None:
+        if stats is None:
+            return None
+        try:
+            from app.services.kline_sync import get_adj_factor_df
+
+            df = get_adj_factor_df(self.data_dir, asset_type="stock")
+        except Exception:
+            return None
+        if df is None or getattr(df, "is_empty", lambda: True)():
+            return None
+        return stats
+
+    def _overlay_financial_stats(self, stats: dict[str, Any] | None) -> dict[str, Any] | None:
+        if stats is None:
+            return None
+        try:
+            from app.services.financial_sync import FINANCIAL_TABLES, get_financial_df
+        except Exception:
+            return None
+        tables: dict[str, dict[str, int]] = {}
+        total = 0
+        for table in FINANCIAL_TABLES:
+            try:
+                df = get_financial_df(self.data_dir, table)
+            except Exception:
+                df = None
+            rows = 0 if df is None or df.is_empty() else int(df.height)
+            symbols = (
+                0
+                if df is None or df.is_empty() or "symbol" not in df.columns
+                else int(df["symbol"].n_unique())
+            )
+            tables[table] = {"rows": rows, "symbols": symbols}
+            total += rows
+        if total == 0:
+            return None
+        return {"rows": total, "tables": tables}
 
     def _catalog_entry(
         self,

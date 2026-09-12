@@ -98,13 +98,40 @@ def load_risk_warning_symbols(data_dir: Path) -> frozenset[str]:
     return syms
 
 
+def _filter_mainline_by_daily_route(df: pl.DataFrame) -> pl.DataFrame:
+    """Keep current-route mainline rows. Leftover TickFlow untagged still serves."""
+    try:
+        from app.services.kline_sync import filter_daily_cache
+
+        return filter_daily_cache(df)
+    except Exception:
+        return df.head(0) if df is not None else pl.DataFrame()
+
+
+def _persist_mainline_history(data_dir: Path, df: pl.DataFrame) -> None:
+    """Tag and write mainline history. Unresolved daily refuses leftover mix."""
+    from app.services.kline_sync import _tag_daily_route, daily_route
+
+    if df is None or df.is_empty():
+        return
+    try:
+        if daily_route() == "unresolved":
+            logger.info("skip mainline persist for unresolved daily route")
+            return
+        tagged = _tag_daily_route(df)
+    except Exception as exc:
+        logger.info("skip mainline persist: %s", exc)
+        return
+    tagged.write_parquet(mainline_path(data_dir))
+
+
 def load_mainline_history(data_dir: Path, kind: str = "concept") -> pl.DataFrame:
-    """读取主线时序(全部 kind), 不存在返回空 DataFrame。"""
+    """读取当前 daily route 的主线时序; leftover TickFlow 仍可见无标签文件。"""
     p = mainline_path(data_dir)
     if not p.exists():
         return pl.DataFrame()
     try:
-        df = pl.read_parquet(p)
+        df = _filter_mainline_by_daily_route(pl.read_parquet(p))
     except Exception as e:
         logger.warning("load_mainline_history failed: %s", e)
         return pl.DataFrame()
@@ -266,7 +293,7 @@ def upsert_mainline_history(data_dir: Path, new_rows: pl.DataFrame) -> None:
         return
     p = mainline_path(data_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
-    old = pl.read_parquet(p) if p.exists() else pl.DataFrame()
+    old = _filter_mainline_by_daily_route(pl.read_parquet(p)) if p.exists() else pl.DataFrame()
     if old.is_empty():
         combined = new_rows
     else:
@@ -284,7 +311,7 @@ def upsert_mainline_history(data_dir: Path, new_rows: pl.DataFrame) -> None:
         kept = kept.select(keep_exprs)
         combined = pl.concat([kept, new_rows.select(target_cols)], how="vertical_relaxed")
     combined = combined.sort(["date", "kind", "rank"])
-    combined.write_parquet(p)
+    _persist_mainline_history(data_dir, combined)
 
 
 def compute_mainline_incremental(repo, data_dir: Path, *, today: date | None = None,

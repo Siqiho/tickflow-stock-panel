@@ -517,13 +517,40 @@ def regime_path(data_dir: Path) -> Path:
     return data_dir / REGIME_DIR / "part.parquet"
 
 
+def _filter_history_by_daily_route(df: pl.DataFrame) -> pl.DataFrame:
+    """Keep derived daily-route history. Leftover TickFlow untagged still serves."""
+    try:
+        from app.services.kline_sync import filter_daily_cache
+
+        return filter_daily_cache(df)
+    except Exception:  # noqa: BLE001
+        return df.head(0) if df is not None else pl.DataFrame()
+
+
+def _persist_regime_history(data_dir: Path, df: pl.DataFrame) -> None:
+    """Tag and write regime history. Unresolved daily refuses leftover mix."""
+    from app.services.kline_sync import _tag_daily_route, daily_route
+
+    if df is None or df.is_empty():
+        return
+    try:
+        if daily_route() == "unresolved":
+            logger.info("skip regime persist for unresolved daily route")
+            return
+        tagged = _tag_daily_route(df)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("skip regime persist: %s", exc)
+        return
+    tagged.write_parquet(regime_path(data_dir))
+
+
 def load_regime_history(data_dir: Path) -> pl.DataFrame:
-    """读取全部 regime 时序; 不存在返回空 DataFrame。"""
+    """读取当前 daily route 的 regime 时序; leftover TickFlow 仍可见无标签文件。"""
     p = regime_path(data_dir)
     if not p.exists():
         return pl.DataFrame()
     try:
-        return pl.read_parquet(p)
+        return _filter_history_by_daily_route(pl.read_parquet(p))
     except Exception as e:  # noqa: BLE001
         logger.warning("load_regime_history failed: %s", e)
         return pl.DataFrame()
@@ -547,7 +574,7 @@ def refresh_phase_labels(data_dir: Path) -> int:
     except Exception as e:
         logger.warning("refresh_phase_labels failed: %s", e)
         return 0
-    labeled.write_parquet(regime_path(data_dir))
+    _persist_regime_history(data_dir, labeled)
     return labeled.height
 
 
@@ -582,7 +609,7 @@ def upsert_regime_history(data_dir: Path, new_rows: pl.DataFrame) -> None:
         new_rows = new_rows.select(target_cols)
         combined = pl.concat([kept, new_rows], how="vertical_relaxed")
     combined = combined.sort("date").unique(subset=["date"], keep="last")
-    combined.write_parquet(p)
+    _persist_regime_history(data_dir, combined)
 
 
 def get_regime_coverage(data_dir: Path) -> dict:
