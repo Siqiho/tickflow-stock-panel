@@ -82,18 +82,24 @@ def _enforce_realtime_integrity_gate(request: Request) -> None:
 def _refresh_route_surfaces(request: Request | None = None) -> None:
     """Re-gate DuckDB and drop leftover process caches after a provider switch."""
     repo = None
+    app_state = None
+    capset = None
     if request is not None:
         try:
-            repo = getattr(getattr(request, "app", None), "state", None)
-            repo = getattr(repo, "repo", None)
+            app_state = getattr(getattr(request, "app", None), "state", None)
+            repo = getattr(app_state, "repo", None)
+            capset = getattr(app_state, "capabilities", None)
         except Exception:  # noqa: BLE001
             repo = None
+            app_state = None
+            capset = None
     try:
         from app.services.kline_sync import refresh_route_surfaces
 
         refresh_route_surfaces(repo)
     except Exception as exc:  # noqa: BLE001
         logger.warning("route surface refresh after provider switch failed: %s", exc)
+    _sync_financial_scheduler_caps(app_state, capset)
 
 
 def _accept_routed_provider(raw: object, *, default: str) -> str:
@@ -154,14 +160,29 @@ def _sync_financial_scheduler_caps(app_state, capset) -> None:
 
     app.state.capabilities 在此已更新, 但 FinancialScheduler 在启动时捕获的是旧引用,
     需显式刷新, 否则用户升级到 Expert 后点「全部同步」仍会因调度器读旧 capset 而被拒。
+    Daily / financial route switches must also stop leftover TickFlow loops.
     """
-    fs = getattr(app_state, "financial_scheduler", None)
+    fs = getattr(app_state, "financial_scheduler", None) if app_state is not None else None
     if fs is None:
-        return
+        try:
+            from app.services.financial_sync import financial_scheduler as fs
+        except Exception:  # noqa: BLE001
+            return
     try:
-        fs.update_capabilities(capset)
+        if capset is not None:
+            fs.update_capabilities(capset)
+        from app.services.financial_sync import financials_live_allowed
+
+        live_capset = capset if capset is not None else getattr(fs, "_capset", None)
+        if not financials_live_allowed(live_capset) and getattr(fs, "_running", False):
+            fs.stop()
     except Exception as e:
         logging.getLogger(__name__).warning("update financial_scheduler capabilities failed: %s", e)
+        try:
+            if getattr(fs, "_running", False):
+                fs.stop()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 class TickflowKeyIn(BaseModel):

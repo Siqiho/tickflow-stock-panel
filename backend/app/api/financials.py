@@ -94,7 +94,14 @@ def financial_status(request: Request):
     last_sync = fs.last_sync if fs else {}
 
     from app.services import preferences as _prefs
-    if _public_fin() or _custom_fin() or capset.has(Cap.FINANCIAL):
+    from app.services.financial_sync import financials_live_allowed
+
+    live = False
+    try:
+        live = financials_live_allowed(capset)
+    except Exception:
+        live = False
+    if _public_fin() or _custom_fin() or live:
         try:
             provider = _prefs.get_financial_provider()
         except Exception:

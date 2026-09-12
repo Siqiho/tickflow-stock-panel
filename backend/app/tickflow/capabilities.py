@@ -353,9 +353,25 @@ def feature_availability(
         fin_code = "ok" if fin_ok else "no_capability"
         fin_source = fin_provider
     elif capset.has(Cap.FINANCIAL):
-        fin_reason = None
-        fin_code = "ok"
-        fin_source = "tickflow"
+        try:
+            from app.services.kline_sync import leftover_tickflow_follow_daily
+
+            live = leftover_tickflow_follow_daily()
+        except Exception:
+            live = False
+        if live:
+            fin_reason = None
+            fin_code = "ok"
+            fin_source = "tickflow"
+        elif local_fin:
+            fin_reason = None
+            fin_code = "ok"
+            fin_source = "local"
+        else:
+            fin_ok = False
+            fin_reason = "当前档位无财务数据权限,且本地尚未同步财务表"
+            fin_code = "no_capability"
+            fin_source = "none"
     else:
         fin_reason = "当前档位无财务数据权限,且本地尚未同步财务表"
         fin_code = "no_capability"

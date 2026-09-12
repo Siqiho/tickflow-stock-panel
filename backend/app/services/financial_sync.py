@@ -494,6 +494,8 @@ class FinancialScheduler:
         self._data_dir = data_dir
         self._capset = capset
         if not financials_live_allowed(capset):
+            if self._running:
+                self.stop()
             logger.info("FinancialScheduler skipped: no live financial route")
             return
         # 从持久化恢复上次同步时间: 重启后前端仍能显示真实最后同步时间,而非"尚未同步"
@@ -575,6 +577,11 @@ class FinancialScheduler:
             logger.info(
                 "FinancialScheduler capabilities updated: FINANCIAL %s -> %s", had, now
             )
+        # Daily / financial route switches must stop leftover TickFlow loops,
+        # not only refresh the capset. Body gates already skip; lifecycle
+        # used to stay _running after a custom / unresolved daily.
+        if not financials_live_allowed(capset) and self._running:
+            self.stop()
 
     def stop(self) -> None:
         self._running = False
