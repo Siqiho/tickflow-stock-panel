@@ -80,6 +80,31 @@ def quote_snapshot_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
     return True
 
 
+def usable_quote_snapshot_files(part_dir, route: str | None = None):
+    """Current-route quote_snapshot extras in one date directory."""
+    from pathlib import Path
+
+    root = Path(part_dir)
+    if not root.is_dir():
+        return []
+    try:
+        expected = route if route is not None else realtime_route()
+    except Exception:  # noqa: BLE001
+        return []
+    if not expected or str(expected).strip().lower() == "unresolved":
+        return []
+    files = []
+    for path in sorted(root.glob("*.parquet")):
+        if not path.is_file():
+            continue
+        try:
+            if quote_snapshot_partition_usable(path, expected):
+                files.append(path)
+        except Exception:  # noqa: BLE001
+            continue
+    return files
+
+
 def quote_snapshot_partition_usable(path, route: str | None = None) -> bool:
     """Whether one quote_snapshot partition matches the current realtime route."""
     from pathlib import Path

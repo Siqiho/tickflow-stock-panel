@@ -257,17 +257,21 @@ class MinuteRefreshService:
         本轮走全天修复, 不会因探测失败而丢增量。
         """
         with contextlib.suppress(Exception):
-            part = (
-                self._repo.store.data_dir / "kline_minute"
-                / f"date={cn_today().isoformat()}" / "part.parquet"
-            )
-            if not part.exists():
-                return None
             from app.services import kline_sync
-            part_df = pl.read_parquet(part)
-            if not kline_sync.minute_cache_usable(part_df, kline_sync.full_minute_route()):
+
+            expected = kline_sync.full_minute_route()
+            files = kline_sync.usable_minute_partition_files(
+                self._repo.store.data_dir / "kline_minute" / f"date={cn_today().isoformat()}",
+                expected,
+            )
+            if not files:
                 return None
-            if "datetime" not in part_df.columns:
+            frames = [pl.read_parquet(path) for path in files]
+            part_df = kline_sync.filter_minute_cache(
+                pl.concat(frames, how="diagonal_relaxed") if len(frames) > 1 else frames[0],
+                expected,
+            )
+            if part_df.is_empty() or "datetime" not in part_df.columns:
                 return None
             mx = part_df["datetime"].max()
             if mx is None:

@@ -158,14 +158,9 @@ def _partition_row_count(part_dir: Path) -> int | None:
 
 def _read_usable_partition(part_dir: Path) -> pl.DataFrame:
     """Current-route rows in one date directory. Empty on leftover-only / probe."""
-    from app.services.kline_sync import filter_daily_cache, usable_daily_partition_files
+    from app.services.kline_sync import read_usable_daily_partition
 
-    files = usable_daily_partition_files(part_dir)
-    if not files:
-        return pl.DataFrame()
-    return filter_daily_cache(
-        pl.concat([pl.read_parquet(path) for path in files], how="diagonal_relaxed")
-    )
+    return read_usable_daily_partition(part_dir)
 
 
 def should_use_public_eod_fallback(
@@ -265,18 +260,16 @@ def _prune_partial_enriched_partitions(daily_dir: Path, enriched_dir: Path) -> l
     pruned: list[str] = []
     if not enriched_dir.exists():
         return pruned
-    from app.services.kline_sync import daily_partition_usable
+    from app.services.kline_sync import usable_daily_partition_files
 
     for part in sorted(p for p in enriched_dir.glob("date=*") if p.is_dir()):
         day = part.name.removeprefix("date=")
         daily_part = daily_dir / f"date={day}"
         if not daily_part.exists():
             continue
-        daily_file = daily_part / "part.parquet"
-        enriched_file = part / "part.parquet"
-        if daily_file.exists() and not daily_partition_usable(daily_file):
+        if not usable_daily_partition_files(daily_part):
             continue
-        if enriched_file.exists() and not daily_partition_usable(enriched_file):
+        if not usable_daily_partition_files(part):
             continue
         daily_n = _partition_row_count(daily_part)
         enriched_n = _partition_row_count(part)
@@ -293,18 +286,16 @@ def _prune_stale_price_partitions(daily_dir: Path, enriched_dir: Path) -> list[s
     pruned: list[str] = []
     if not enriched_dir.exists():
         return pruned
-    from app.services.kline_sync import daily_partition_usable
+    from app.services.kline_sync import usable_daily_partition_files
 
     for part in sorted(p for p in enriched_dir.glob("date=*") if p.is_dir()):
         day = part.name.removeprefix("date=")
         daily_part = daily_dir / f"date={day}"
         if not daily_part.exists():
             continue
-        daily_file = daily_part / "part.parquet"
-        enriched_file = part / "part.parquet"
-        if daily_file.exists() and not daily_partition_usable(daily_file):
+        if not usable_daily_partition_files(daily_part):
             continue
-        if enriched_file.exists() and not daily_partition_usable(enriched_file):
+        if not usable_daily_partition_files(part):
             continue
         try:
             daily = _read_usable_partition(daily_part)

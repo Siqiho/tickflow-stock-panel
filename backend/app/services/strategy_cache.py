@@ -54,6 +54,28 @@ def _get_enriched_mtime(data_dir: Path, as_of: str) -> float | None:
         return None
 
 
+def _cache_route_token() -> str:
+    """Daily route stamped on strategy cache. Unresolved stays fail-closed."""
+    try:
+        from app.services.kline_sync import daily_route
+
+        token = (daily_route() or "").strip().lower()
+    except Exception:  # noqa: BLE001
+        return "unresolved"
+    return token or "unresolved"
+
+
+def _cache_route_usable(cached: dict) -> bool:
+    current = _cache_route_token()
+    if current == "unresolved":
+        return False
+    stored = str(cached.get("daily_route") or "").strip().lower()
+    if stored:
+        return stored == current
+    # Legacy cache without a stamp: leftover TickFlow still sees it.
+    return current in {"tickflow", "public"}
+
+
 def read_cache(data_dir: Path) -> dict | None:
     """读取策略缓存文件。返回 None 表示无缓存或读取失败。
 
@@ -75,6 +97,8 @@ def read_cache(data_dir: Path) -> dict | None:
         logger.warning("读取策略缓存失败: %s", e)
         return None
 
+    if not _cache_route_usable(cached):
+        return None
     return cached
 
 
@@ -142,6 +166,10 @@ def write_cache(
     # enriched_mtime: 盘后缓存写入时记录 (向后兼容旧字段)。read_cache 已不再用它
     # 做过期校验, 实时新鲜度改由 /cached 端点叠加监控引擎内存结果保证。
     enriched_mtime = _get_enriched_mtime(data_dir, as_of)
+    token = _cache_route_token()
+    if token == "unresolved":
+        logger.warning("跳过策略缓存写入: daily route unresolved")
+        return
 
     payload = {
         "as_of": as_of,
@@ -149,6 +177,7 @@ def write_cache(
         "today_ever_matched": today_ever_matched,
         "today_ever_rows": today_ever_rows,
         "enriched_mtime": enriched_mtime,
+        "daily_route": token,
         "updated_at": int(time.time() * 1000),
     }
     try:

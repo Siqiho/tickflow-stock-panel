@@ -269,7 +269,7 @@ def prune_enriched_partitions(
         return 0
     import shutil
 
-    from app.services.kline_sync import daily_partition_usable
+    from app.services.kline_sync import usable_daily_partition_files
 
     removed = 0
     for part in base.glob("date=*"):
@@ -279,10 +279,9 @@ def prune_enriched_partitions(
             continue
         if d < start:
             continue
-        parquet = part / "part.parquet"
         # A custom-route repair must not wipe leftover TickFlow history.
-        # Unreadable leftover still counts as TickFlow/public only.
-        if parquet.exists() and not daily_partition_usable(parquet):
+        # Current-route extras still count when leftover occupies part.parquet.
+        if not usable_daily_partition_files(part):
             continue
         shutil.rmtree(part, ignore_errors=True)
         removed += 1

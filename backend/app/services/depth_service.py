@@ -574,15 +574,15 @@ class DepthService:
             return None
         base = self._repo.store.data_dir
         for table in ("depth5", "sealed_l1"):
-            path = base / table / f"date={d.isoformat()}" / "part.parquet"
-            if not path.exists():
-                continue
-            try:
-                df = pl.read_parquet(path)
-            except Exception:  # noqa: BLE001
-                continue
-            if depth_cache_usable(df, expected):
-                return path
+            part = base / table / f"date={d.isoformat()}"
+            extras = sorted(part.glob("*.parquet")) if part.exists() else []
+            for path in extras:
+                try:
+                    df = pl.read_parquet(path)
+                except Exception:  # noqa: BLE001
+                    continue
+                if depth_cache_usable(df, expected):
+                    return path
         return None
 
     def _sealed_df_for_read(self, d: date) -> pl.DataFrame | None:
@@ -594,17 +594,17 @@ class DepthService:
             return None
         base = self._repo.store.data_dir
         for table in ("depth5", "sealed_l1"):
-            path = base / table / f"date={d.isoformat()}" / "part.parquet"
-            if not path.exists():
-                continue
-            try:
-                df = pl.read_parquet(path)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("sealed parquet 读取失败: %s", e)
-                continue
-            if depth_cache_usable(df, expected):
-                return df
-            logger.info("skip stale sealed parquet for route=%s path=%s", expected, path)
+            part = base / table / f"date={d.isoformat()}"
+            extras = sorted(part.glob("*.parquet")) if part.exists() else []
+            for path in extras:
+                try:
+                    df = pl.read_parquet(path)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("sealed parquet 读取失败: %s", e)
+                    continue
+                if depth_cache_usable(df, expected):
+                    return df
+                logger.info("skip stale sealed parquet for route=%s path=%s", expected, path)
         return None
 
     def _memory_route_usable(self) -> bool:

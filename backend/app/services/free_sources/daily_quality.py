@@ -231,17 +231,13 @@ def run_daily_quality_check(data_dir: Path | str, date: str | None = None) -> di
                         "guess": "volume_lot_100shares" if 50 < ratio < 150 else "unknown",
                     }
 
-    enriched_part = data_dir / "kline_daily_enriched" / f"date={target}" / "part.parquet"
-    if enriched_part.exists():
-        try:
-            from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+    enriched_part = data_dir / "kline_daily_enriched" / f"date={target}"
+    try:
+        from app.services.kline_sync import read_usable_daily_partition
 
-            if daily_partition_usable(enriched_part):
-                enriched = filter_daily_cache(pl.read_parquet(enriched_part))
-            else:
-                enriched = pl.DataFrame()
-        except Exception:
-            enriched = pl.DataFrame()
+        enriched = read_usable_daily_partition(enriched_part)
+    except Exception:
+        enriched = pl.DataFrame()
         if (
             not enriched.is_empty()
             and "turnover_rate" in enriched.columns

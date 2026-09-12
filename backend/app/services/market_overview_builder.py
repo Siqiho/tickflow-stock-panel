@@ -128,7 +128,7 @@ def latest_quote_snapshot_date(repo) -> date | None:
     if not root.exists():
         return None
     try:
-        from app.services.quote_service import quote_snapshot_partition_usable
+        from app.services.quote_service import usable_quote_snapshot_files
     except Exception:
         return None
     latest: date | None = None
@@ -136,11 +136,10 @@ def latest_quote_snapshot_date(repo) -> date | None:
         if not child.name.startswith('date='):
             continue
         parsed = _as_date(child.name.removeprefix('date='))
-        part = child / 'part.parquet'
-        if parsed is None or not part.exists():
+        if parsed is None:
             continue
         try:
-            if not quote_snapshot_partition_usable(part):
+            if not usable_quote_snapshot_files(child):
                 continue
         except Exception:
             continue
@@ -199,11 +198,11 @@ def resolve_overview_as_of(
 def _has_official_enriched(repo, target: date | None) -> bool:
     if repo is None or target is None:
         return False
-    path = Path(repo.store.data_dir) / 'kline_daily_enriched' / f'date={target.isoformat()}' / 'part.parquet'
+    part = Path(repo.store.data_dir) / 'kline_daily_enriched' / f'date={target.isoformat()}'
     try:
-        from app.services.kline_sync import daily_partition_usable
+        from app.services.kline_sync import usable_daily_partition_files
 
-        return daily_partition_usable(path)
+        return bool(usable_daily_partition_files(part))
     except Exception:
         # Probe / prefs failure must not treat leftover TickFlow as official.
         return False
@@ -242,15 +241,14 @@ def _derive_snapshot_turnover(row: dict, instrument: dict[str, float | str | Non
 
 
 def _snapshot_rows_for_date(repo, target: date) -> list[dict]:
-    path = Path(repo.store.data_dir) / 'quote_snapshot' / 'asset_type=stock' / f'date={target.isoformat()}' / 'part.parquet'
-    if not path.exists():
-        return []
+    part = Path(repo.store.data_dir) / 'quote_snapshot' / 'asset_type=stock' / f'date={target.isoformat()}'
     try:
-        from app.services.quote_service import quote_snapshot_partition_usable
+        from app.services.quote_service import usable_quote_snapshot_files
 
-        if not quote_snapshot_partition_usable(path):
+        files = usable_quote_snapshot_files(part)
+        if not files:
             return []
-        df = pl.read_parquet(path)
+        df = pl.concat([pl.read_parquet(path) for path in files], how="diagonal_relaxed")
     except Exception:
         return []
     if df.is_empty() or 'symbol' not in df.columns:
