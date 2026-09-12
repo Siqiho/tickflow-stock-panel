@@ -340,20 +340,18 @@ def _positive_or_close(value, close: float) -> float:
 
 
 def _quote_overlay_allowed() -> bool:
-    """Overlay snapshots only when daily and realtime routes match.
+    """Overlay snapshots onto leftover TickFlow / public daily only.
 
-    Custom / unresolved daily must not mix leftover TickFlow snapshots onto
-    HTTP daily. Leftover TickFlow daily + explicit public realtime is also
-    a cross-source mix. Matching leftover TickFlow / public still overlays.
+    Custom / unresolved daily must not mix leftover TickFlow or public
+    snapshots onto HTTP daily. Default leftover TickFlow daily + public
+    realtime still overlays (isolated live asset). Snapshot *files* stay
+    realtime-route gated.
     """
     try:
-        from app.services.quote_service import realtime_route
-
         daily = kline_sync.daily_route()
-        realtime = realtime_route()
     except Exception:  # noqa: BLE001
         return False
-    return daily in {"tickflow", "public"} and realtime == daily
+    return daily in {"tickflow", "public"}
 
 
 def _finite_or_none(value, *, divisor: float = 1.0) -> float | None:

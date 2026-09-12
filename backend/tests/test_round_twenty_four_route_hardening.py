@@ -352,7 +352,7 @@ def test_kline_overlay_keeps_untagged_leftover_public(monkeypatch, tmp_path):
     }]
     monkeypatch.setattr(
         "app.services.preferences.get_realtime_data_provider",
-        lambda: "tickflow",
+        lambda: "public",
     )
     overlaid, meta = kline_api._overlay_persisted_quote_candles(
         repo, "000001.SZ", rows, date(2026, 7, 17), date(2026, 7, 18),

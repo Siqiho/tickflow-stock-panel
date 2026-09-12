@@ -276,7 +276,7 @@ def test_quote_overlay_skips_leftover_on_custom_daily(monkeypatch, tmp_path):
     assert len(overlaid) == 1
 
 
-def test_quote_overlay_skips_public_realtime_on_leftover_daily(monkeypatch, tmp_path):
+def test_quote_overlay_keeps_public_realtime_on_leftover_daily(monkeypatch, tmp_path):
     part = tmp_path / "quote_snapshot" / "asset_type=stock" / "date=2026-07-18"
     part.mkdir(parents=True)
     _quote_df().write_parquet(part / "part.parquet")
@@ -294,7 +294,8 @@ def test_quote_overlay_skips_public_realtime_on_leftover_daily(monkeypatch, tmp_
     overlaid, meta = kline_api._overlay_persisted_quote_candles(
         repo, "000001.SZ", rows, date(2026, 7, 17), date(2026, 7, 18),
     )
-    assert meta["applied"] is False
+    assert meta["applied"] is True
+    assert overlaid[-1]["is_quote_snapshot"] is True
 
 
 def test_quote_overlay_keeps_matching_leftover_tickflow(monkeypatch, tmp_path):
@@ -371,13 +372,14 @@ def test_leftover_tickflow_still_sees_untagged_only(monkeypatch, tmp_path):
     assert kline_sync.read_usable_daily_partition(part)["close"].to_list() == [10.1]
 
 
-def test_unreadable_extras_never_mint_leftover_calendar(monkeypatch, tmp_path):
+def test_unreadable_extras_still_count_for_leftover_tickflow(monkeypatch, tmp_path):
     part = tmp_path / "kline_daily" / "date=2026-07-17"
     part.mkdir(parents=True)
     (part / "part.parquet").write_bytes(b"")
-    monkeypatch.setattr(kline_sync, "daily_route", lambda: "tickflow")
+    monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "tickflow")
+    assert kline_sync.usable_daily_partition_dates(tmp_path) == [date(2026, 7, 17)]
+    _patch_custom_daily(monkeypatch)
     assert kline_sync.usable_daily_partition_dates(tmp_path) == []
-    assert kline_sync.usable_daily_partition_files(part) == []
 
 
 def test_minute_prefers_tagged_leftover_extras(monkeypatch, tmp_path):
