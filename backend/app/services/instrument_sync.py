@@ -113,9 +113,9 @@ def read_usable_instruments(
     if not frames:
         return pl.DataFrame()
     out = pl.concat(frames, how="diagonal_relaxed") if len(frames) > 1 else frames[0]
-    if out.is_empty() or "symbol" not in out.columns:
+    if out.is_empty() or "symbol" not in out.columns or len(frames) == 1:
         return out
-    return out.unique(subset=["symbol"], keep="last")
+    return out.unique(subset=["symbol"], keep="last", maintain_order=True)
 
 _EXCHANGES = ("SH", "SZ", "BJ")
 _CHINA = ZoneInfo("Asia/Shanghai")
