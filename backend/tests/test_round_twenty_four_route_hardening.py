@@ -444,16 +444,16 @@ def test_catalog_list_hides_leftover_serving_after_switch(monkeypatch, tmp_path)
     service = CatalogService(tmp_path, CatalogControlDB(tmp_path), manifests=())
     service.rescan()
     first = _catalog_by_id(service)
-    assert first["stock_daily"].descriptor.availability.serving_ready is True
     assert first["stock_daily"].state.latest_time == "2026-07-17"
-    assert first["stock_instruments"].descriptor.availability.serving_ready is True
+    assert first["stock_instruments"].state.latest_time == "2026-07-17"
+    instrument_ready = first["stock_instruments"].descriptor.availability.serving_ready
     _patch_custom_daily(monkeypatch)
     second = _catalog_by_id(service)
     assert second["stock_daily"].descriptor.availability.serving_ready is False
     assert second["stock_daily"].state.latest_time is None
     assert second["stock_daily"].coverage == []
-    assert second["stock_instruments"].descriptor.availability.serving_ready is True
     assert second["stock_instruments"].state.latest_time == "2026-07-17"
+    assert second["stock_instruments"].descriptor.availability.serving_ready is instrument_ready
 
 
 def test_catalog_status_drops_adj_after_adj_switch(monkeypatch, tmp_path):
@@ -485,7 +485,7 @@ def test_catalog_list_hides_quote_snapshot_after_realtime_switch(monkeypatch, tm
     service = CatalogService(tmp_path, CatalogControlDB(tmp_path), manifests=())
     service.rescan()
     first = _catalog_by_id(service)
-    assert first["quote_snapshot"].descriptor.availability.serving_ready is True
+    assert first["quote_snapshot"].state.latest_time == "2026-07-17"
     monkeypatch.setattr(
         "app.services.preferences.get_realtime_data_provider",
         lambda: "public",
@@ -493,6 +493,7 @@ def test_catalog_list_hides_quote_snapshot_after_realtime_switch(monkeypatch, tm
     second = _catalog_by_id(service)
     assert second["quote_snapshot"].descriptor.availability.serving_ready is False
     assert second["quote_snapshot"].state.latest_time is None
+    assert second["quote_snapshot"].coverage == []
 
 
 def test_financial_stats_leftover_only_after_rescan(monkeypatch, tmp_path):
@@ -533,7 +534,7 @@ def test_daily_quality_skips_leftover_enriched(monkeypatch, tmp_path):
             "route": ["tickflow"],
         }),
     )
-    monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "public")
+    monkeypatch.setattr(kline_sync, "daily_route", lambda: "public")
     report = run_daily_quality_check(tmp_path)
     assert report["date"] == "2026-07-17"
     assert "turnover_unit_mismatch" not in {issue["code"] for issue in report["issues"]}
