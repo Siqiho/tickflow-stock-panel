@@ -49,8 +49,14 @@ def run_daily_quality_check(data_dir: Path | str, date: str | None = None) -> di
         return report
 
     part = kline_dir / f"date={target}"
-    files = list(part.glob("*.parquet")) if part.exists() else []
-    if not files:
+    raw_files = list(part.glob("*.parquet")) if part.exists() else []
+    try:
+        from app.services.kline_sync import filter_daily_cache, usable_daily_partition_files
+
+        files = usable_daily_partition_files(part)
+    except Exception:  # noqa: BLE001
+        files = []
+    if not raw_files:
         report = {
             "ok": False,
             "date": target,
@@ -60,24 +66,23 @@ def run_daily_quality_check(data_dir: Path | str, date: str | None = None) -> di
         }
         _write_report(data_dir, report)
         return report
+    if not files:
+        report = {
+            "ok": False,
+            "date": target,
+            "issues": [{"code": "unusable_route", "message": f"partition {target} is not the current daily route"}],
+            "metrics": metrics,
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        _write_report(data_dir, report)
+        return report
 
-    df = pl.concat([pl.read_parquet(f) for f in files], how="diagonal_relaxed")
     try:
-        from app.services.kline_sync import daily_partition_usable, filter_daily_cache
-
-        if files and not any(daily_partition_usable(f) for f in files):
-            report = {
-                "ok": False,
-                "date": target,
-                "issues": [{"code": "unusable_route", "message": f"partition {target} is not the current daily route"}],
-                "metrics": metrics,
-                "checked_at": datetime.now().isoformat(timespec="seconds"),
-            }
-            _write_report(data_dir, report)
-            return report
-        df = filter_daily_cache(df)
+        df = filter_daily_cache(
+            pl.concat([pl.read_parquet(f) for f in files], how="diagonal_relaxed")
+        )
     except Exception:
-        df = df.head(0)
+        df = pl.DataFrame()
     if df.is_empty():
         report = {
             "ok": False,

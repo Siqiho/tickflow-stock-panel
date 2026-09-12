@@ -365,6 +365,38 @@ def usable_daily_partition_paths(
     return paths
 
 
+def usable_daily_partition_files(part_dir, route: str | None = None):
+    """Current-route parquet files in one date directory.
+
+    Integrity / quality / prune used to leftover-glob every ``*.parquet``
+    beside a current ``part.parquet``. Tagged leftover TickFlow extras
+    must not poison quote_ts, row counts, or quality concat. Probe /
+    unresolved stays fail-closed. Leftover TickFlow still sees untagged
+    files through :func:`daily_partition_usable`.
+    """
+    from pathlib import Path
+
+    root = Path(part_dir)
+    if not root.is_dir():
+        return []
+    try:
+        expected = route if route is not None else daily_route()
+    except Exception:  # noqa: BLE001
+        return []
+    if not expected or str(expected).strip().lower() == "unresolved":
+        return []
+    files: list[Path] = []
+    for path in sorted(root.glob("*.parquet")):
+        if not path.is_file():
+            continue
+        try:
+            if daily_partition_usable(path, expected):
+                files.append(path)
+        except Exception:  # noqa: BLE001
+            continue
+    return files
+
+
 def scan_usable_daily(
     data_dir,
     route: str | None = None,
@@ -396,6 +428,72 @@ def live_enriched_overlay_allowed() -> bool:
     realtime source into ``get_enriched_latest`` consumers.
     """
     return live_daily_persist_allowed()
+
+
+def refresh_route_surfaces(repo=None) -> None:
+    """Re-gate DuckDB and drop process caches after a provider switch.
+
+    Settings used to persist the new route and leave leftover TickFlow
+    views / TTL caches serving until the next write or expiry.
+    Failures stay fail-closed: leftover-visible views are emptied.
+    """
+    if repo is not None:
+        store = getattr(repo, "store", None)
+        try:
+            refresh_gated_catalog_views(repo)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("re-gate after provider switch failed: %s", exc)
+            closer = getattr(store, "_fail_closed_route_views", None) if store is not None else None
+            if callable(closer):
+                closer()
+        clearer = getattr(repo, "clear_cache", None)
+        if callable(clearer):
+            try:
+                clearer()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("repo cache clear after provider switch failed: %s", exc)
+    for _mod, _name in (
+        ("app.api.data", "invalidate_data_cache"),
+        ("app.api.overview", "invalidate_overview_cache"),
+        ("app.api.regime", "invalidate_regime_cache"),
+    ):
+        try:
+            import importlib
+
+            fn = getattr(importlib.import_module(_mod), _name)
+            fn() if _name != "invalidate_data_cache" else fn(None)
+        except Exception:  # noqa: BLE001
+            continue
+    try:
+        from app.services.screener import ScreenerService
+
+        ScreenerService.clear_history_cache()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from app.services import rps_rotation
+
+        rps_rotation.invalidate_cache()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from app.services import abnormal_moves
+
+        abnormal_moves._hist_cache.clear()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from app.indicators import pipeline as _pipeline
+
+        _pipeline._benchmark_cache.clear()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from app.services import intraday_overview
+
+        intraday_overview._overlay_cache = None
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def refresh_gated_catalog_views(repo: KlineRepository) -> None:

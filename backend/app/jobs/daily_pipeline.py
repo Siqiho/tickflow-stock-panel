@@ -145,7 +145,9 @@ def _public_financial_income_median_periods(
 
 
 def _partition_row_count(part_dir: Path) -> int | None:
-    files = [p for p in part_dir.glob("*.parquet") if p.is_file()]
+    from app.services.kline_sync import usable_daily_partition_files
+
+    files = usable_daily_partition_files(part_dir)
     if not files:
         return None
     try:

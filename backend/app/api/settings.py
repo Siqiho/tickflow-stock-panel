@@ -27,6 +27,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
+def _refresh_route_surfaces(request: Request | None = None) -> None:
+    """Re-gate DuckDB and drop leftover process caches after a provider switch."""
+    repo = None
+    if request is not None:
+        try:
+            repo = getattr(getattr(request, "app", None), "state", None)
+            repo = getattr(repo, "repo", None)
+        except Exception:  # noqa: BLE001
+            repo = None
+    try:
+        from app.services.kline_sync import refresh_route_surfaces
+
+        refresh_route_surfaces(repo)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("route surface refresh after provider switch failed: %s", exc)
+
+
 def _accept_routed_provider(raw: object, *, default: str) -> str:
     """Persist builtin aliases or a declared custom/plugin name.
 
@@ -782,6 +799,7 @@ def update_adj_factor_provider(req: AdjFactorProviderPrefs) -> dict:
     from app.services import preferences
     val = _accept_routed_provider(req.adj_factor_provider, default="same_as_daily")
     preferences.save_server({"adj_factor_provider": val})
+    _refresh_route_surfaces()
     return {"adj_factor_provider": preferences.get_adj_factor_provider()}
 
 
@@ -797,6 +815,7 @@ def update_financial_provider(req: FinancialProviderPrefs) -> dict:
     from app.services import preferences
     val = _accept_routed_provider(req.financial_provider, default="tickflow")
     preferences.save_server({"financial_provider": val, "financial_data_provider": val})
+    _refresh_route_surfaces()
     return {"financial_provider": preferences.get_financial_provider()}
 
 
@@ -812,6 +831,7 @@ def update_pool_provider(req: PoolProviderPrefs) -> dict:
     from app.services import preferences
     val = _accept_routed_provider(req.pool_provider, default="public")
     preferences.save_server({"pool_provider": val})
+    _refresh_route_surfaces()
     return {"pool_provider": preferences.get_pool_provider()}
 
 
@@ -1931,6 +1951,7 @@ def update_data_providers(req: DataProvidersIn, request: Request) -> dict:
         request.app.state.capabilities = detect_capabilities()
     except Exception as exc:  # noqa: BLE001
         logger.warning("capability refresh after data-provider change failed: %s", exc)
+    _refresh_route_surfaces(request)
     return {
         "daily_data_provider": preferences.get_daily_data_provider(),
         "adj_factor_provider": preferences.get_adj_factor_provider(),
@@ -2008,6 +2029,8 @@ def delete_data_source(name: str, request: Request) -> dict:
         request.app.state.capabilities = detect_capabilities()
     except Exception as exc:  # noqa: BLE001
         logger.warning("capability refresh after data-source delete failed: %s", exc)
+    if updates:
+        _refresh_route_surfaces(request)
     return list_data_sources()
 
 

@@ -446,6 +446,29 @@ def _config_dir(config_id: str, data_dir: Path) -> Path:
     return data_dir / "ext_data" / config_id
 
 
+def latest_ext_parquet_files(data_dir: Path, config: ExtConfig) -> list[Path]:
+    """Parquet files for one ext config. Timeseries is latest ``date=*`` only.
+
+    Overview / RPS / watchlist used to leftover-union every historical
+    timeseries partition. DuckDB / screener already mount the latest
+    date. Leftover later partitions must not mix after a refresh.
+    """
+    base = Path(data_dir) / "ext_data" / config.id
+    if getattr(config, "mode", "snapshot") == "timeseries":
+        root = base / "timeseries"
+        if not root.is_dir():
+            return []
+        partitions = sorted(
+            child for child in root.iterdir()
+            if child.is_dir() and child.name.startswith("date=")
+            and any(child.glob("*.parquet"))
+        )
+        if not partitions:
+            return []
+        return [path for path in sorted(partitions[-1].glob("*.parquet")) if path.is_file()]
+    return [path for path in sorted(base.glob("*.parquet")) if path.is_file()]
+
+
 def _ext_merge_keys(df: pl.DataFrame, existing: pl.DataFrame | None = None) -> list[str]:
     cols = set(df.columns)
     if existing is not None:

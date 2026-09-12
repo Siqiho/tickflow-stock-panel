@@ -67,7 +67,12 @@ def _quote_ts_max_ms(part_dir: Path) -> int | None:
     import pyarrow.parquet as pq
 
     candidates: list[int | None] = []
-    files = sorted(part_dir.glob("*.parquet"))
+    try:
+        from app.services.kline_sync import usable_daily_partition_files
+
+        files = usable_daily_partition_files(part_dir)
+    except Exception:  # noqa: BLE001
+        return None
     if not files:
         return None
     for path in files:
@@ -125,7 +130,16 @@ def _partition_is_snapshot(day: date, part_dir: Path, quote_ts_max_ms: int | Non
     authoritative_rows = 0
     suspicious_rows = 0
 
-    for path in sorted(part_dir.glob("*.parquet")):
+    try:
+        from app.services.kline_sync import usable_daily_partition_files
+
+        files = usable_daily_partition_files(part_dir)
+    except Exception:  # noqa: BLE001
+        return False
+    if not files:
+        return False
+
+    for path in files:
         try:
             schema = pl.read_parquet_schema(path)
             if "quote_ts" not in schema:

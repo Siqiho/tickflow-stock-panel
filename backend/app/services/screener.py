@@ -19,7 +19,7 @@ from app.tickflow.repository import KlineRepository
 logger = logging.getLogger(__name__)
 
 # ── 进程级历史数据缓存 (避免 run_all 每次重新扫描 parquet + 计算指标) ──
-_history_cache: dict[tuple[date, int], tuple[float, pl.DataFrame]] = {}
+_history_cache: dict[tuple[date, int, str], tuple[float, pl.DataFrame]] = {}
 _HISTORY_CACHE_TTL = 120.0  # 秒
 
 
