@@ -454,13 +454,16 @@ class SourceProvenanceModule:
 
     def _extension_materialized(self, config_id: str) -> bool:
         root = self.data_dir / "ext_data" / config_id
-        if (root / "part.parquet").is_file():
-            return True
+        try:
+            if any(path.is_file() for path in root.glob("*.parquet")):
+                return True
+        except OSError:
+            return False
         timeseries = root / "timeseries"
         if not timeseries.is_dir() or timeseries.is_symlink():
             return False
         try:
-            return any(path.name == "part.parquet" and path.is_file() for path in timeseries.rglob("*.parquet"))
+            return any(path.suffix == ".parquet" and path.is_file() for path in timeseries.rglob("*.parquet"))
         except OSError:
             return False
 

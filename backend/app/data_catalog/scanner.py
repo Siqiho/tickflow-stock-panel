@@ -126,12 +126,50 @@ def _route_column_usable(path: Path, route: str, usable_fn) -> bool:
     return usable_fn(pl.read_parquet(path, columns=["route"]), route)
 
 
+def _catalog_route_token(dataset_id: str) -> str:
+    """Route token used to prefer tagged leftover files in one directory."""
+    try:
+        if dataset_id in _DAILY_DATASETS:
+            from app.services.kline_sync import daily_route
+
+            return daily_route()
+        if dataset_id in _MINUTE_DATASETS:
+            from app.services.kline_sync import minute_route
+
+            return minute_route()
+        if dataset_id in _ADJ_DATASETS or dataset_id in _CORP_DATASETS:
+            from app.services.kline_sync import adj_route
+
+            return adj_route()
+        if dataset_id in _FINANCIAL_DATASETS:
+            from app.services.financial_sync import financial_write_route
+
+            return financial_write_route()
+        if dataset_id in _DEPTH_DATASETS:
+            from app.services.depth_service import depth_route
+
+            return depth_route()
+        if dataset_id in _POOL_DATASETS or dataset_id in _MEMBERSHIP_DATASETS:
+            from app.tickflow.pools import pool_route
+
+            return pool_route()
+        if dataset_id in _QUOTE_DATASETS:
+            from app.services.quote_service import realtime_route
+
+            return realtime_route()
+    except Exception:
+        return "unresolved"
+    return "tickflow"
+
+
 def _catalog_file_usable(dataset_id: str, path: Path) -> bool:
     """Current-route parquet only. Storage walks still see leftover files.
 
     Leftover TickFlow / public still see untagged partitions. Custom /
     unresolved never reuse leftover TickFlow as current coverage after a
-    rescan. Instruments stay leftover TickFlow.
+    rescan. Instruments stay leftover TickFlow. Same-directory untagged
+    extras beside tagged leftover are filtered later by
+    :func:`_catalog_material_files`.
     """
     try:
         if dataset_id in _DAILY_DATASETS:
@@ -171,6 +209,38 @@ def _catalog_file_usable(dataset_id: str, path: Path) -> bool:
     except Exception:
         return False
     return True
+
+
+def _catalog_material_files(
+    definition: DatasetDefinition,
+    files: tuple[_FileSnapshot, ...],
+) -> tuple[_FileSnapshot, ...]:
+    """Current-route parquet only. Same-dir untagged extras stay out.
+
+    Per-file :func:`_catalog_file_usable` still treats leftover TickFlow
+    untagged files as current. Same-directory untagged extras beside a
+    tagged leftover used to concat-mix into catalog coverage.
+    Unreadable tagged leftover stays in so catalog / get_minute fail-loud.
+    Untagged-only leftover TickFlow still serves.
+    """
+    parquet = [
+        file
+        for file in sorted(files, key=lambda item: item.relative.as_posix())
+        if file.path.suffix.lower() == ".parquet"
+        and file.path.name not in definition.ignored_parquet_names
+        and _catalog_file_usable(definition.descriptor.dataset_id, file.path)
+    ]
+    route = _catalog_route_token(definition.descriptor.dataset_id)
+    from app.services.kline_sync import prefer_tagged_route_files
+
+    grouped: dict[Path, list[_FileSnapshot]] = {}
+    for file in parquet:
+        grouped.setdefault(file.path.parent, []).append(file)
+    out: list[_FileSnapshot] = []
+    for group in grouped.values():
+        preferred = set(prefer_tagged_route_files([item.path for item in group], route))
+        out.extend(item for item in group if item.path in preferred)
+    return tuple(sorted(out, key=lambda item: item.relative.as_posix()))
 
 
 class CatalogScanner:
@@ -394,13 +464,7 @@ class CatalogScanner:
         fields: set[str] = set()
         named_count = 0
         row_count = 0
-        material_files = tuple(
-            file
-            for file in sorted(files, key=lambda item: item.relative.as_posix())
-            if file.path.suffix.lower() == ".parquet"
-            and file.path.name not in definition.ignored_parquet_names
-            and _catalog_file_usable(definition.descriptor.dataset_id, file.path)
-        )
+        material_files = _catalog_material_files(definition, files)
         fatal_errors: list[str] = []
         for file in material_files:
             facts = self._parquet_facts(file, definition, fact_cache)

@@ -84,6 +84,33 @@ def _artifact_relative(trade_date: date) -> Path:
     return ARTIFACT_ROOT / f"date={trade_date.isoformat()}" / "part.parquet"
 
 
+def _readable_partition_files(part: Path) -> list[Path]:
+    """Readable extras in one date directory. Leftover part must not hide extras."""
+    from app.services.kline_sync import _parquet_probe_readable
+
+    if not Path(part).is_dir():
+        return []
+    return [
+        path for path in sorted(part.glob("*.parquet"))
+        if path.is_file() and _parquet_probe_readable(path)
+    ]
+
+
+def _read_partition_dir(part: Path) -> pl.DataFrame:
+    files = _readable_partition_files(part)
+    if not files:
+        return _empty_frame()
+    frames: list[pl.DataFrame] = []
+    for path in files:
+        try:
+            frames.append(pl.read_parquet(path).select(CANONICAL_COLUMNS))
+        except Exception:
+            continue
+    if not frames:
+        return _empty_frame()
+    return frames[0] if len(frames) == 1 else pl.concat(frames, how="diagonal_relaxed")
+
+
 def _minute_datetime(trade_date: date, minute: int) -> datetime:
     hour, minute_value = divmod(int(minute), 100)
     return datetime(
@@ -328,7 +355,8 @@ def _available_dates(data_dir: Path) -> list[date]:
     if not root.exists():
         return dates
     for partition in root.glob("date=*"):
-        if not (partition / "part.parquet").exists():
+        extras = [path for path in partition.glob("*.parquet") if path.is_file()]
+        if not extras:
             continue
         try:
             dates.append(date.fromisoformat(partition.name.removeprefix("date=")))
@@ -350,20 +378,22 @@ def query_market_pulse(
     """
     data_dir = Path(data_dir)
     if requested_date is not None:
-        artifact = data_dir / _artifact_relative(requested_date)
-        if not artifact.exists():
+        part = data_dir / ARTIFACT_ROOT / f"date={requested_date.isoformat()}"
+        files = _readable_partition_files(part)
+        if not files:
             return requested_date, _empty_frame(), None, []
-        frame = pl.read_parquet(artifact).select(CANONICAL_COLUMNS)
+        frame = _read_partition_dir(part)
         validate_market_pulse(frame, requested_date)
-        updated_at = datetime.fromtimestamp(artifact.stat().st_mtime, tz=SHANGHAI)
+        updated_at = datetime.fromtimestamp(max(path.stat().st_mtime for path in files), tz=SHANGHAI)
         return requested_date, frame, updated_at, []
 
     skipped: list[date] = []
     for candidate in reversed(_available_dates(data_dir)):
-        artifact = data_dir / _artifact_relative(candidate)
-        if not artifact.exists():
+        part = data_dir / ARTIFACT_ROOT / f"date={candidate.isoformat()}"
+        files = _readable_partition_files(part)
+        if not files:
             continue
-        frame = pl.read_parquet(artifact).select(CANONICAL_COLUMNS)
+        frame = _read_partition_dir(part)
         try:
             validate_market_pulse(frame, candidate)
         except MarketPulseQualityError as exc:
@@ -372,6 +402,6 @@ def query_market_pulse(
             )
             skipped.append(candidate)
             continue
-        updated_at = datetime.fromtimestamp(artifact.stat().st_mtime, tz=SHANGHAI)
+        updated_at = datetime.fromtimestamp(max(path.stat().st_mtime for path in files), tz=SHANGHAI)
         return candidate, frame, updated_at, skipped
     return None, _empty_frame(), None, skipped
