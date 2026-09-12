@@ -290,16 +290,25 @@ def _artifact(root: Path, partition_name: str, partition_value: date) -> Path:
     return root / f"{partition_name}={partition_value.isoformat()}" / "part.parquet"
 
 
-def _latest_readable_partition_date(root: Path, prefix: str = "date=") -> date | None:
-    """Newest date whose part.parquet is readable. Unreadable markers do not mint."""
+def _readable_partition_files(part: Path) -> list[Path]:
+    """Readable extras in one date directory. Leftover part must not hide extras."""
     from app.services.kline_sync import _parquet_probe_readable
 
+    if not Path(part).is_dir():
+        return []
+    return [
+        path for path in sorted(part.glob("*.parquet"))
+        if path.is_file() and _parquet_probe_readable(path)
+    ]
+
+
+def _latest_readable_partition_date(root: Path, prefix: str = "date=") -> date | None:
+    """Newest date with a readable extra. Unreadable markers do not mint."""
     latest: date | None = None
     if not Path(root).exists():
         return None
     for path in root.glob(f"{prefix}*"):
-        part = path / "part.parquet"
-        if not (part.is_file() and _parquet_probe_readable(part)):
+        if not _readable_partition_files(path):
             continue
         try:
             day = date.fromisoformat(path.name.removeprefix(prefix))
@@ -902,6 +911,23 @@ def _read_partition(path: Path, schema: dict[str, pl.DataType]) -> pl.DataFrame:
     return pl.read_parquet(path).select(tuple(schema))
 
 
+def _read_partition_dir(part: Path, schema: dict[str, pl.DataType]) -> pl.DataFrame:
+    """Read leftover extras in one date directory. Part-only leftover still serves."""
+    files = _readable_partition_files(part)
+    if not files:
+        return _empty(schema)
+    frames: list[pl.DataFrame] = []
+    for path in files:
+        try:
+            frames.append(pl.read_parquet(path).select(tuple(schema)))
+        except Exception:
+            logger.warning("hithink partition extra unreadable: %s", path, exc_info=True)
+            continue
+    if not frames:
+        return _empty(schema)
+    return frames[0] if len(frames) == 1 else pl.concat(frames, how="diagonal_relaxed")
+
+
 def query_limit_pool(
     data_dir: Path,
     *,
@@ -916,7 +942,7 @@ def query_limit_pool(
         resolved = _latest_readable_partition_date(root)
         if resolved is None:
             return None, _empty(LIMIT_POOL_SCHEMA)
-    frame = _read_partition(root / f"date={resolved.isoformat()}" / "part.parquet", LIMIT_POOL_SCHEMA)
+    frame = _read_partition_dir(root / f"date={resolved.isoformat()}", LIMIT_POOL_SCHEMA)
     if pool_kind:
         frame = frame.filter(pl.col("pool_kind") == pool_kind)
     if symbol:
@@ -926,14 +952,20 @@ def query_limit_pool(
 
 def load_limit_pool_for_date(data_dir: Path | str, trade_date: date) -> pl.DataFrame | None:
     """只读指定交易日官方池。分区不存在或混了别的日期时返回 None，绝不回落到最近一日。"""
-    path = Path(data_dir) / LIMIT_POOL_ROOT / f"date={trade_date.isoformat()}" / "part.parquet"
-    if not path.is_file():
+    part = Path(data_dir) / LIMIT_POOL_ROOT / f"date={trade_date.isoformat()}"
+    files = _readable_partition_files(part)
+    if not files:
         return None
-    try:
-        frame = pl.read_parquet(path)
-    except Exception:
-        logger.warning("hithink limit pool unreadable: %s", path, exc_info=True)
+    frames: list[pl.DataFrame] = []
+    for path in files:
+        try:
+            frames.append(pl.read_parquet(path))
+        except Exception:
+            logger.warning("hithink limit pool unreadable: %s", path, exc_info=True)
+            continue
+    if not frames:
         return None
+    frame = frames[0] if len(frames) == 1 else pl.concat(frames, how="diagonal_relaxed")
     required = {"pool_kind", "symbol", "trade_date"}
     if frame.is_empty():
         return _empty(LIMIT_POOL_SCHEMA)
@@ -988,10 +1020,7 @@ def query_dragon_tiger(
         resolved = _latest_readable_partition_date(root)
         if resolved is None:
             return None, _empty(DRAGON_TIGER_SCHEMA)
-    frame = _read_partition(
-        root / f"date={resolved.isoformat()}" / "part.parquet",
-        DRAGON_TIGER_SCHEMA,
-    )
+    frame = _read_partition_dir(root / f"date={resolved.isoformat()}", DRAGON_TIGER_SCHEMA)
     if symbol:
         frame = frame.filter(pl.col("symbol") == canonical_symbol(symbol))
     return resolved, frame.head(max(1, min(int(limit), 5_000)))
@@ -1010,7 +1039,7 @@ def query_auction_snapshot(
         resolved = _latest_readable_partition_date(root)
         if resolved is None:
             return None, _empty(AUCTION_SCHEMA)
-    frame = _read_partition(root / f"date={resolved.isoformat()}" / "part.parquet", AUCTION_SCHEMA)
+    frame = _read_partition_dir(root / f"date={resolved.isoformat()}", AUCTION_SCHEMA)
     if symbol:
         frame = frame.filter(pl.col("symbol") == canonical_symbol(symbol))
     return resolved, frame.head(max(1, min(int(limit), 5_000)))
@@ -1029,10 +1058,7 @@ def query_valuation_snapshot(
         resolved = _latest_readable_partition_date(root, prefix="as_of=")
         if resolved is None:
             return None, _empty(VALUATION_SCHEMA)
-    frame = _read_partition(
-        root / f"as_of={resolved.isoformat()}" / "part.parquet",
-        VALUATION_SCHEMA,
-    )
+    frame = _read_partition_dir(root / f"as_of={resolved.isoformat()}", VALUATION_SCHEMA)
     if symbol:
         frame = frame.filter(pl.col("symbol") == canonical_symbol(symbol))
     return resolved, frame.head(max(1, min(int(limit), 5_000)))

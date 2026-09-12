@@ -508,20 +508,21 @@ def append_shares_history(
 ) -> pl.DataFrame:
     """Append a shares cross-section as historical points (does not delete prior)."""
     data_dir = Path(data_dir)
-    path = data_dir / "financials" / "shares" / "part.parquet"
-    existing = pl.read_parquet(path) if path.exists() else pl.DataFrame()
+    existing = pl.DataFrame()
     _tag_financial_route = None
     try:
         from app.services.financial_sync import (
             _tag_financial_route,
             financial_cache_usable,
             financial_write_route,
+            get_financial_df,
         )
 
         route = financial_write_route()
         if not route or route == "unresolved":
             logger.info("append_shares_history: refuse unresolved financial route")
-            return existing.head(0) if not existing.is_empty() else existing
+            return existing
+        existing = get_financial_df(data_dir, "shares")
         if not existing.is_empty() and not financial_cache_usable(existing, route):
             logger.info("append_shares_history: skip stale shares for route=%s", route)
             existing = existing.head(0)
@@ -565,13 +566,20 @@ def migrate_existing_financials_to_pit(data_dir: Path, *, tables: Sequence[str] 
     data_dir = Path(data_dir)
     tables = tuple(tables or FINANCIAL_TABLES)
     out: dict[str, Any] = {"tables": {}, "ok": True}
+    from app.services.financial_sync import get_financial_df
+
     for table in tables:
-        path = data_dir / "financials" / table / "part.parquet"
-        if not path.exists():
+        try:
+            df = get_financial_df(data_dir, table)
+        except Exception as exc:  # noqa: BLE001
+            out["ok"] = False
+            out["tables"][table] = {"exists": True, "error": str(exc)}
+            logger.exception("migrate financials/%s failed", table)
+            continue
+        if df is None or df.is_empty():
             out["tables"][table] = {"exists": False}
             continue
         try:
-            df = pl.read_parquet(path)
             if not _financial_migration_usable(df):
                 out["tables"][table] = {
                     "exists": True,
@@ -626,10 +634,11 @@ def migrate_financial_table_to_v2(data_dir: Path, table: str) -> dict[str, objec
     """Rewrite one financial table with v2 PIT columns (RC/candidate safe)."""
     if table not in FINANCIAL_TABLES:
         raise ValueError(table)
-    path = Path(data_dir) / "financials" / table / "part.parquet"
-    if not path.exists():
+    from app.services.financial_sync import get_financial_df
+
+    frame = get_financial_df(Path(data_dir), table)
+    if frame is None or frame.is_empty():
         return {"table": table, "ok": True, "skipped": True, "reason": "missing"}
-    frame = pl.read_parquet(path)
     if not _financial_migration_usable(frame):
         return {
             "table": table,

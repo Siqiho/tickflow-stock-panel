@@ -204,7 +204,12 @@ def _legacy_kline_ext_visible() -> bool:
 
 
 def _latest_date_partition_glob(root: Path) -> str | None:
-    """Latest readable ``date=*`` partition glob. Never leftover-unions history."""
+    """Latest readable ``date=*`` partition glob. Never leftover-unions history.
+
+    Unreadable extras in the latest date must not leftover-union into the
+    remount glob. Multiple readable extras still serve (user-ext extras
+    stay visible).
+    """
     if not root.is_dir():
         return None
     from app.services.kline_sync import _parquet_probe_readable
@@ -222,8 +227,16 @@ def _latest_date_partition_glob(root: Path) -> str | None:
             return f"{child.as_posix()}/*.parquet"
         if len(readable) == 1:
             return readable[0].as_posix()
-        return f"{child.as_posix()}/*.parquet"
+        joined = ", ".join(f"'{path.as_posix()}'" for path in readable)
+        return f"[{joined}]"
     return None
+
+
+def _duckdb_read_parquet_source(glob_or_list: str) -> str:
+    """DuckDB source for a glob path or an explicit readable-file list."""
+    if glob_or_list.startswith("["):
+        return f"read_parquet({glob_or_list}, union_by_name=true)"
+    return f"read_parquet('{glob_or_list}', union_by_name=true)"
 
 
 def _parquet_glob(config: ExtConfig, data_dir: Path) -> str:
@@ -298,11 +311,13 @@ def _latest_sync_date(config: ExtConfig, data_dir: Path) -> str | None:
     from datetime import datetime
 
     if config.mode == "snapshot":
-        # 快照: part.parquet 与 config.json 同级
-        p = data_dir / "ext_data" / config.id / "part.parquet"
-        if p.exists():
-            ts = datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-            return ts
+        # 快照: leftover part.parquet 不得挡住 extras
+        from app.services.ext_data import usable_ext_snapshot_files
+
+        files = usable_ext_snapshot_files(data_dir, config.id)
+        if files:
+            latest = max(path.stat().st_mtime for path in files)
+            return datetime.fromtimestamp(latest).strftime("%Y-%m-%d %H:%M:%S")
         # 兼容旧路径
         old = data_dir / "instruments_ext"
         if old.exists():
@@ -931,7 +946,7 @@ def discover_schema(request: Request, config_id: str):
     try:
         import duckdb
         rows = duckdb.query(
-            f"SELECT column_name, data_type FROM (DESCRIBE SELECT * FROM read_parquet('{glob}', union_by_name=true))"
+            f"SELECT column_name, data_type FROM (DESCRIBE SELECT * FROM {_duckdb_read_parquet_source(glob)})"
         ).fetchall()
         return {"columns": [{"name": r[0], "type": r[1]} for r in rows]}
     except Exception:
@@ -951,7 +966,7 @@ def discover_all_schemas(request: Request):
         try:
             import duckdb
             cols = duckdb.query(
-                f"SELECT column_name, data_type FROM (DESCRIBE SELECT * FROM read_parquet('{glob}', union_by_name=true))"
+                f"SELECT column_name, data_type FROM (DESCRIBE SELECT * FROM {_duckdb_read_parquet_source(glob)})"
             ).fetchall()
             field_labels = {f.name: f.label for f in config.fields}
             columns = [{"name": r[0], "type": r[1], "label": field_labels.get(r[0], r[0])} for r in cols]
@@ -991,7 +1006,7 @@ def _refresh_views(request: Request) -> None:
             if old_glob:
                 sql = (
                     f"CREATE OR REPLACE VIEW kline_ext AS "
-                    f"SELECT * FROM read_parquet('{old_glob}', union_by_name=true)"
+                    f"SELECT * FROM {_duckdb_read_parquet_source(old_glob)}"
                 )
                 try:
                     db.execute(sql)
@@ -1010,11 +1025,11 @@ def _refresh_views(request: Request) -> None:
             try:
                 raw = json.loads(cp.read_text(encoding="utf-8"))
                 cfg_id = raw["id"]
-                # 检查是否有数据文件（snapshot: part.parquet, timeseries: timeseries/ 目录）
-                has_data = (cfg_dir / "part.parquet").exists() or (cfg_dir / "timeseries").exists()
+                # 检查是否有数据文件（snapshot: extras, timeseries: timeseries/ 目录）
+                has_data = any(cfg_dir.glob("*.parquet")) or (cfg_dir / "timeseries").exists()
                 if has_data:
                     view_name = f"ext_{cfg_id}"
-                    # snapshot: part.parquet 在 cfg_dir/ 根下; timeseries: 在 timeseries/ 子目录
+                    # snapshot: extras 在 cfg_dir/ 根下; timeseries: 在 timeseries/ 子目录
                     mode = raw.get("mode", "snapshot")
                     if mode == "snapshot":
                         glob_pattern = f"{cfg_dir.as_posix()}/*.parquet"
@@ -1024,7 +1039,7 @@ def _refresh_views(request: Request) -> None:
                             continue
                     sql = (
                         f"CREATE OR REPLACE VIEW {view_name} AS "
-                        f"SELECT * FROM read_parquet('{glob_pattern}', union_by_name=true)"
+                        f"SELECT * FROM {_duckdb_read_parquet_source(glob_pattern)}"
                     )
                     db.execute(sql)
             except Exception:

@@ -632,21 +632,22 @@ def fix_symbol_format(config: ExtConfig, data_dir: Path) -> int:
     if not cfg_dir.exists():
         return 0
 
-    # 收集需要扫描的 parquet 文件列表
+    # 收集需要扫描的 parquet 文件列表。leftover part 不得挡住 extras。
+    from app.services.kline_sync import _parquet_probe_readable
+
     parquet_files: list[Path] = []
     if config.mode == "snapshot":
-        p = cfg_dir / "part.parquet"
-        if p.exists():
-            parquet_files.append(p)
+        parquet_files.extend(usable_ext_snapshot_files(data_dir, config.id))
     else:
         ts_dir = cfg_dir / "timeseries"
         if ts_dir.exists():
             for part_dir in sorted(ts_dir.iterdir()):
                 if not part_dir.is_dir() or not part_dir.name.startswith("date="):
                     continue
-                p = part_dir / "part.parquet"
-                if p.exists():
-                    parquet_files.append(p)
+                parquet_files.extend(
+                    path for path in sorted(part_dir.glob("*.parquet"))
+                    if path.is_file() and _parquet_probe_readable(path)
+                )
 
     fixed = 0
     lookup = build_code_lookup(data_dir)

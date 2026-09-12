@@ -487,11 +487,18 @@ class FinancialScheduler:
             for table in FINANCIAL_TABLES:
                 if table in restored:
                     continue
-                parquet = data_dir / "financials" / table / "part.parquet"
-                if not parquet.exists():
+                folder = data_dir / "financials" / table
+                if not folder.exists():
+                    continue
+                from app.services.kline_sync import preferred_readable_route_files
+
+                extras = preferred_readable_route_files(
+                    sorted(folder.glob("*.parquet")), financial_write_route(),
+                )
+                if not extras:
                     continue
                 try:
-                    df = pl.read_parquet(parquet)
+                    df = pl.read_parquet(extras[0])
                     if not financial_cache_usable(df, financial_write_route()):
                         logger.info(
                             "FinancialScheduler skip stale last_sync backfill for %s",
@@ -500,7 +507,8 @@ class FinancialScheduler:
                         continue
                 except Exception:  # noqa: BLE001
                     continue
-                mtime = datetime.fromtimestamp(parquet.stat().st_mtime, tz=UTC).isoformat()
+                latest = max(path.stat().st_mtime for path in extras)
+                mtime = datetime.fromtimestamp(latest, tz=UTC).isoformat()
                 restored[table] = mtime
                 preferences.set_financial_sync_time(table, mtime)
                 logger.info("FinancialScheduler backfilled last_sync for %s from parquet mtime", table)

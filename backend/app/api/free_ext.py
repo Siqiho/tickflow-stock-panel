@@ -81,10 +81,14 @@ def _data_dir(request: Request) -> Path:
 
 
 
-def _load_fund_flow_items(path: Path, top: int) -> list[dict]:
+def _load_fund_flow_snapshot(data_dir: Path, config_id: str, top: int) -> list[dict]:
+    from app.services.ext_data import usable_ext_snapshot_files
     import polars as pl
 
-    df = pl.read_parquet(path)
+    files = usable_ext_snapshot_files(data_dir, config_id)
+    if not files:
+        return []
+    df = pl.read_parquet(files)
     if df.is_empty():
         return []
     if "main_net" in df.columns:
@@ -162,10 +166,7 @@ def refresh_boards(request: Request) -> dict:
 
 @router.get("/fund-flow/boards")
 def get_boards(request: Request, top: int = Query(20, ge=1, le=500)) -> dict:
-    path = _data_dir(request) / "ext_data" / "ext_fund_flow_bk" / "part.parquet"
-    if not path.exists():
-        return {"ok": True, "items": [], "count": 0, "cached": True}
-    items = _load_fund_flow_items(path, top)
+    items = _load_fund_flow_snapshot(_data_dir(request), "ext_fund_flow_bk", top)
     return {"ok": True, "items": items, "count": len(items), "cached": True}
 
 
@@ -183,10 +184,7 @@ def refresh_concepts(request: Request) -> dict:
 
 @router.get("/fund-flow/concepts")
 def get_concepts(request: Request, top: int = Query(20, ge=1, le=500)) -> dict:
-    path = _data_dir(request) / "ext_data" / "ext_fund_flow_concept" / "part.parquet"
-    if not path.exists():
-        return {"ok": True, "items": [], "count": 0, "cached": True}
-    items = _load_fund_flow_items(path, top)
+    items = _load_fund_flow_snapshot(_data_dir(request), "ext_fund_flow_concept", top)
     return {"ok": True, "items": items, "count": len(items), "cached": True}
 
 

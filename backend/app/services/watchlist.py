@@ -436,6 +436,17 @@ def fetch_quotes(symbols: list[str], capset: CapabilitySet, timeout_s: float = 8
             "watchlist.fetch_quotes is TickFlow-only; route=%s fail-closed", name,
         )
         return []
+    try:
+        from app.services.kline_sync import leftover_tickflow_follow_daily
+
+        if not leftover_tickflow_follow_daily():
+            logger.info(
+                "watchlist.fetch_quotes leftover TickFlow skipped after custom/unresolved daily",
+            )
+            return []
+    except Exception as e:  # noqa: BLE001
+        logger.warning("watchlist.fetch_quotes leftover TickFlow gate failed: %s", e)
+        return []
 
     tf = get_client()
     quotes: list[dict] = []

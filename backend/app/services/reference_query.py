@@ -70,6 +70,26 @@ def _normalize_symbol(symbol: str | None) -> str | None:
     return text or None
 
 
+def _reference_route_token(dataset_id: str) -> str:
+    """Route token used to prefer tagged leftover files in one directory."""
+    try:
+        if dataset_id in {"valuation_daily", "limit_up_events"}:
+            from app.services.kline_sync import daily_route
+
+            return daily_route()
+        if dataset_id == "index_membership_history":
+            from app.tickflow.pools import pool_route
+
+            return pool_route()
+        if dataset_id == "corporate_actions":
+            from app.services.kline_sync import adj_route
+
+            return adj_route()
+    except Exception:
+        return "unresolved"
+    return "tickflow"
+
+
 def _reference_file_usable(dataset_id: str, path: Path) -> bool:
     """Current-route reference parquet only. Leftover TickFlow still sees untagged."""
     try:
@@ -106,6 +126,11 @@ def _scan_dataset(data_dir: Path, relpath: str, dataset_id: str) -> pl.LazyFrame
             path for path in sorted(target.rglob("*.parquet"))
             if _reference_file_usable(dataset_id, path)
         ]
+        from app.services.kline_sync import preferred_readable_route_files_by_dir
+
+        files = preferred_readable_route_files_by_dir(
+            files, _reference_route_token(dataset_id),
+        )
         if not files:
             return None
         return pl.scan_parquet([str(path) for path in files])
