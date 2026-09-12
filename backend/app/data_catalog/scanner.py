@@ -91,6 +91,88 @@ class _ParquetFacts:
     sha256: str
 
 
+_DAILY_DATASETS = {
+    "stock_daily",
+    "stock_enriched",
+    "index_daily",
+    "index_enriched",
+    "etf_daily",
+    "etf_enriched",
+    "valuation_daily",
+    "limit_up_events",
+}
+_MINUTE_DATASETS = {"stock_minute", "etf_minute"}
+_ADJ_DATASETS = {"stock_adj_factor", "etf_adj_factor"}
+_FINANCIAL_DATASETS = {
+    "financial_metrics",
+    "financial_income",
+    "financial_balance_sheet",
+    "financial_cash_flow",
+    "financial_shares",
+}
+_DEPTH_DATASETS = {"depth5", "sealed_l1"}
+_POOL_DATASETS = {"pools"}
+_QUOTE_DATASETS = {"quote_snapshot"}
+_MEMBERSHIP_DATASETS = {"index_membership_history"}
+_CORP_DATASETS = {"corporate_actions"}
+
+
+def _route_column_usable(path: Path, route: str, usable_fn) -> bool:
+    import polars as pl
+
+    names = pl.read_parquet_schema(path).names()
+    if "route" not in names:
+        return route in {"tickflow", "public"}
+    return usable_fn(pl.read_parquet(path, columns=["route"]), route)
+
+
+def _catalog_file_usable(dataset_id: str, path: Path) -> bool:
+    """Current-route parquet only. Storage walks still see leftover files.
+
+    Leftover TickFlow / public still see untagged partitions. Custom /
+    unresolved never reuse leftover TickFlow as current coverage after a
+    rescan. Instruments stay leftover TickFlow.
+    """
+    try:
+        if dataset_id in _DAILY_DATASETS:
+            from app.services.kline_sync import daily_partition_usable
+
+            return daily_partition_usable(path)
+        if dataset_id in _MINUTE_DATASETS:
+            from app.services.kline_sync import minute_partition_usable
+
+            return minute_partition_usable(path)
+        if dataset_id in _ADJ_DATASETS:
+            from app.services.kline_sync import adj_cache_usable, adj_route
+
+            return _route_column_usable(path, adj_route(), adj_cache_usable)
+        if dataset_id in _FINANCIAL_DATASETS:
+            from app.services.financial_sync import financial_cache_usable, financial_write_route
+
+            return _route_column_usable(path, financial_write_route(), financial_cache_usable)
+        if dataset_id in _DEPTH_DATASETS:
+            from app.services.depth_service import depth_cache_usable, depth_route
+
+            return _route_column_usable(path, depth_route(), depth_cache_usable)
+        if dataset_id in _POOL_DATASETS or dataset_id in _MEMBERSHIP_DATASETS:
+            from app.services.reference_derived import _pool_snapshot_usable
+            from app.tickflow.pools import pool_route
+            import polars as pl
+
+            return _pool_snapshot_usable(pl.read_parquet(path), pool_route())
+        if dataset_id in _QUOTE_DATASETS:
+            from app.services.quote_service import quote_snapshot_partition_usable
+
+            return quote_snapshot_partition_usable(path)
+        if dataset_id in _CORP_DATASETS:
+            from app.services.kline_sync import adj_cache_usable, adj_route
+
+            return _route_column_usable(path, adj_route(), adj_cache_usable)
+    except Exception:
+        return False
+    return True
+
+
 class CatalogScanner:
     def __init__(
         self,
@@ -317,6 +399,7 @@ class CatalogScanner:
             for file in sorted(files, key=lambda item: item.relative.as_posix())
             if file.path.suffix.lower() == ".parquet"
             and file.path.name not in definition.ignored_parquet_names
+            and _catalog_file_usable(definition.descriptor.dataset_id, file.path)
         )
         fatal_errors: list[str] = []
         for file in material_files:
@@ -396,7 +479,7 @@ class CatalogScanner:
             expected_symbol_count=expected_total,
             earliest_time=min(times) if times else None,
             latest_time=max(times) if times else None,
-            managed_bytes=sum(file.bytes for file in files),
+            managed_bytes=sum(file.bytes for file in material_files),
             last_run_id=run_id,
             updated_at=refreshed_at,
             payload=payload,

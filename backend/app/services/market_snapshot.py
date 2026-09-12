@@ -65,8 +65,14 @@ def _latest_quote_snapshot(data_dir: Path) -> tuple[date | None, pl.DataFrame]:
         if partition_date is not None:
             candidates.append((partition_date, path))
 
+    try:
+        from app.services.quote_service import quote_snapshot_partition_usable
+    except Exception:
+        return None, pl.DataFrame()
     for partition_date, path in sorted(candidates, reverse=True):
         try:
+            if not quote_snapshot_partition_usable(path):
+                continue
             frame = pl.read_parquet(path)
         except Exception:
             continue
@@ -91,8 +97,14 @@ def _quote_volume_baselines(
 
     totals: dict[str, float] = {}
     counts: dict[str, int] = {}
+    try:
+        from app.services.quote_service import quote_snapshot_partition_usable
+    except Exception:
+        return {}
     for _, path in sorted(candidates, reverse=True)[:lookback]:
         try:
+            if not quote_snapshot_partition_usable(path):
+                continue
             frame = pl.read_parquet(path)
         except Exception:
             continue

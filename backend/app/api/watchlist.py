@@ -362,7 +362,12 @@ def _latest_realtime_snapshot(
     if not parts:
         return pl.DataFrame(), None
     try:
-        snapshot = pl.read_parquet(parts[-1])
+        from app.services.quote_service import quote_snapshot_partition_usable
+
+        usable = [path for path in reversed(parts) if quote_snapshot_partition_usable(path)]
+        if not usable:
+            return pl.DataFrame(), None
+        snapshot = pl.read_parquet(usable[0])
     except Exception as exc:
         logger.debug("read watchlist realtime snapshot failed: %s", exc)
         return pl.DataFrame(), None

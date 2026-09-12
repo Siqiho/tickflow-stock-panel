@@ -639,6 +639,44 @@ def _write_dataset(
             "path": str(target),
             "error": "empty",
         }
+    try:
+        if dataset_id in {"valuation_daily", "limit_up_events"}:
+            from app.services.kline_sync import daily_route
+
+            route = daily_route()
+            if route == "unresolved":
+                return {
+                    "dataset_id": dataset_id,
+                    "ok": False,
+                    "rows": 0,
+                    "path": str(target),
+                    "error": "unresolved",
+                }
+            if "route" not in frame.columns:
+                frame = frame.with_columns(pl.lit(route).alias("route"))
+        elif dataset_id == "index_membership_history":
+            from app.tickflow.pools import pool_route
+
+            route = pool_route()
+            if route == "unresolved":
+                return {
+                    "dataset_id": dataset_id,
+                    "ok": False,
+                    "rows": 0,
+                    "path": str(target),
+                    "error": "unresolved",
+                }
+            if "route" not in frame.columns:
+                frame = frame.with_columns(pl.lit(route).alias("route"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("skip %s write: route resolve failed: %s", dataset_id, exc)
+        return {
+            "dataset_id": dataset_id,
+            "ok": False,
+            "rows": 0,
+            "path": str(target),
+            "error": "unresolved",
+        }
     atomic_write_parquet(frame, target)
     payload: dict[str, Any] = {
         "run_id": run_id,
@@ -770,7 +808,15 @@ def rebuild_reference_derived(
     if "index_membership_history" in want:
         seed = build_index_membership_from_pools(data_dir)
         target = data_dir / "reference" / "index_membership_history" / "members.parquet"
+        try:
+            from app.tickflow.pools import pool_route
+
+            route = pool_route()
+        except Exception:  # noqa: BLE001
+            route = "unresolved"
         existing = pl.read_parquet(target) if target.exists() else pl.DataFrame()
+        if not existing.is_empty() and not _pool_snapshot_usable(existing, route):
+            existing = pl.DataFrame()
         merged = merge_membership_history(existing, seed)
         pools_as_of = str(seed.get_column("as_of").max()) if not seed.is_empty() else None
         if dry_run:

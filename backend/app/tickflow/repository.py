@@ -2018,7 +2018,25 @@ class KlineRepository:
         if asset_type not in {"stock", "index", "etf"}:
             raise ValueError(f"unsupported quote snapshot asset type: {asset_type}")
 
-        snapshot = df
+        try:
+            from app.services.quote_service import realtime_route, tag_quote_snapshot_route
+
+            route = realtime_route()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("skip quote snapshot write: realtime route resolve failed: %s", exc)
+            return
+        if route == "unresolved":
+            logger.warning("skip quote snapshot write for unresolved realtime route")
+            return
+        snapshot = tag_quote_snapshot_route(df)
+        if "route" in snapshot.columns:
+            stored = {str(v or "").strip().lower() for v in snapshot["route"].to_list() if v}
+            if stored and stored != {route}:
+                logger.warning(
+                    "skip quote snapshot write: incoming route %s != current %s",
+                    stored, route,
+                )
+                return
         for key, value in (metadata or {}).items():
             if key not in snapshot.columns:
                 snapshot = snapshot.with_columns(pl.lit(value).alias(key))

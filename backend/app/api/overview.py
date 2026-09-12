@@ -366,7 +366,8 @@ def market_overview(request: Request, as_of: date | None = None):
     now = time.time()
     try:
         from app.services.kline_sync import daily_route
-        route_token = daily_route()
+        from app.services.quote_service import realtime_route
+        route_token = f"{daily_route()}|{realtime_route()}"
     except Exception:  # noqa: BLE001
         route_token = "unresolved"
     cache_key = f"{as_of.isoformat() if as_of else 'latest'}|{route_token}"

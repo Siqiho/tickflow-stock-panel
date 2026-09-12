@@ -37,7 +37,77 @@ from app.market_time import cn_now
 from app.services.index_const import CORE_INDEX_SYMBOLS as AUTHORITY_CORE_INDEX_SYMBOLS
 from app.strategy.monitor import format_alert_quote
 
-# 告警来源 → 中文标签 (webhook 标题 / 系统通知标题共用)
+logger = logging.getLogger(__name__)
+
+
+def realtime_route() -> str:
+    """Effective realtime write/read route: public | tickflow | <custom name> | unresolved.
+
+    Explicit leftover TickFlow / public stay those tokens. Unreadable prefs
+    and empty names are unresolved — never treat leftover TickFlow snapshots
+    as the current live surface after a switch.
+    """
+    try:
+        from app.services import preferences as _prefs
+
+        return (_prefs.get_realtime_data_provider() or "").strip().lower() or "unresolved"
+    except Exception:  # noqa: BLE001
+        return "unresolved"
+
+
+def quote_snapshot_cache_usable(df: pl.DataFrame | None, route: str) -> bool:
+    """Whether on-disk quote snapshots may be served for the current realtime route.
+
+    Custom / unresolved never reuse leftover TickFlow or public files.
+    Tagged files must match. Untagged legacy files stay valid for leftover
+    TickFlow / public only.
+    """
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return False
+    expected = (route or "").strip().lower()
+    if not expected or expected == "unresolved":
+        return False
+    if "route" not in df.columns:
+        return expected in {"tickflow", "public"}
+    stored = [str(v or "").strip().lower() for v in df["route"].to_list()]
+    nonempty = [s for s in stored if s]
+    if not nonempty:
+        return expected in {"tickflow", "public"}
+    if any(s != expected for s in nonempty):
+        return False
+    if len(nonempty) != len(stored):
+        return expected in {"tickflow", "public"}
+    return True
+
+
+def quote_snapshot_partition_usable(path, route: str | None = None) -> bool:
+    """Whether one quote_snapshot partition matches the current realtime route."""
+    from pathlib import Path
+
+    expected = (route if route is not None else realtime_route()).strip().lower()
+    part = Path(path)
+    if not part.is_file():
+        return False
+    try:
+        names = pl.read_parquet_schema(part).names()
+        if "route" not in names:
+            return expected in {"tickflow", "public"}
+        df = pl.read_parquet(part, columns=["route"])
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("quote snapshot probe failed %s: %s", part, exc)
+        return expected in {"tickflow", "public"}
+    return quote_snapshot_cache_usable(df, expected)
+
+
+def tag_quote_snapshot_route(df: pl.DataFrame) -> pl.DataFrame:
+    route = realtime_route()
+    if df is None or getattr(df, "is_empty", lambda: True)():
+        return df
+    if not route or route == "unresolved" or "route" in df.columns:
+        return df
+    return df.with_columns(pl.lit(route).alias("route"))
+
+
 SOURCE_LABELS = {
     "strategy": "策略", "signal": "信号", "price": "价格",
     "market": "异动", "ladder": "连板梯队", "sector": "板块",
@@ -67,8 +137,6 @@ def _body_with_quote(body: str, ev: dict) -> str:
     if not quote_tail or body.endswith(quote_tail):
         return body
     return f"{body} · {quote_tail}"
-
-logger = logging.getLogger(__name__)
 
 
 def _persist_last_fetch(fetched_at: float) -> None:
@@ -362,12 +430,7 @@ class QuoteService:
     @staticmethod
     def _realtime_cache_token() -> str:
         """Current realtime provider token. Unreadable prefs stay unresolved."""
-        try:
-            from app.services import preferences as _prefs
-
-            return (_prefs.get_realtime_data_provider() or "").strip().lower() or "unresolved"
-        except Exception:  # noqa: BLE001
-            return "unresolved"
+        return realtime_route()
 
     def get_index_quotes(self, symbols: list[str] | None = None) -> pl.DataFrame:
         """返回实时指数行情缓存。不会触发 TickFlow 请求。
