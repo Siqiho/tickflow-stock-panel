@@ -102,7 +102,9 @@ def usable_quote_snapshot_files(part_dir, route: str | None = None):
                 files.append(path)
         except Exception:  # noqa: BLE001
             continue
-    return files
+    from app.services.kline_sync import prefer_tagged_route_files
+
+    return prefer_tagged_route_files(files, expected)
 
 
 def quote_snapshot_partition_usable(path, route: str | None = None) -> bool:

@@ -339,6 +339,21 @@ def _positive_or_close(value, close: float) -> float:
     return number if math.isfinite(number) and number > 0 else close
 
 
+def _quote_overlay_allowed() -> bool:
+    """Overlay snapshots onto leftover TickFlow / public daily only.
+
+    Custom / unresolved daily must not mix leftover TickFlow or public
+    snapshots onto HTTP daily. Default leftover TickFlow daily + public
+    realtime still overlays (isolated live asset). Snapshot *files* stay
+    realtime-route gated.
+    """
+    try:
+        daily = kline_sync.daily_route()
+    except Exception:  # noqa: BLE001
+        return False
+    return daily in {"tickflow", "public"}
+
+
 def _finite_or_none(value, *, divisor: float = 1.0) -> float | None:
     try:
         number = float(value)
@@ -366,6 +381,8 @@ def _overlay_persisted_quote_candles(
         "latest_source": None,
         "latest_fetched_at": None,
     }
+    if not _quote_overlay_allowed():
+        return rows, overlay_meta
     data_dir = getattr(getattr(repo, "store", None), "data_dir", None)
     if data_dir is None:
         return rows, overlay_meta

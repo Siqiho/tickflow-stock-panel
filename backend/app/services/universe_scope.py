@@ -88,7 +88,11 @@ def _load_instruments(data_dir: Path) -> list[str]:
     if not path.exists():
         return []
     try:
-        df = pl.read_parquet(path, columns=["symbol"])
+        from app.services.instrument_sync import filter_instruments, instrument_route
+
+        df = filter_instruments(pl.read_parquet(path), instrument_route())
+        if df.is_empty() or "symbol" not in df.columns:
+            return []
         return [str(s).strip().upper() for s in df["symbol"].to_list() if s]
     except Exception as e:
         logger.warning("read instruments failed: %s", e)
@@ -188,21 +192,28 @@ def resolve_symbols(
         out = _load_instruments(data_dir)
         if not out:
             from app.tickflow.pools import pool_route
+            from app.services.kline_sync import daily_provider_is_custom, daily_route
 
-            route = pool_route()
-            if route == "tickflow":
-                try:
-                    out = [
-                        str(s).strip().upper()
-                        for s in (get_pool("CN_Equity_A", refresh=False) or [])
-                        if s
-                    ]
-                except Exception:
-                    out = []
-            # Public leftover may use the offline demo set. Custom / unreadable
-            # prefs must not expand via TickFlow cache or DEMO mix.
-            if not out and route not in {"custom", "unresolved"}:
-                out = list(DEMO_SYMBOLS)
+            try:
+                daily = daily_route()
+                daily_custom = daily_provider_is_custom() or daily == "unresolved"
+            except Exception:
+                daily_custom = True
+            if not daily_custom:
+                route = pool_route()
+                if route == "tickflow":
+                    try:
+                        out = [
+                            str(s).strip().upper()
+                            for s in (get_pool("CN_Equity_A", refresh=False) or [])
+                            if s
+                        ]
+                    except Exception:
+                        out = []
+                # Public leftover may use the offline demo set. Custom / unreadable
+                # daily must not expand via TickFlow cache or DEMO mix.
+                if not out and route not in {"custom", "unresolved"}:
+                    out = list(DEMO_SYMBOLS)
     elif sc == SCOPE_CSI1800:
         a = _ensure_csi_pool(SCOPE_CSI800, data_dir, refresh_if_missing=refresh_pools_if_missing)
         b = _ensure_csi_pool(SCOPE_CSI1000, data_dir, refresh_if_missing=refresh_pools_if_missing)

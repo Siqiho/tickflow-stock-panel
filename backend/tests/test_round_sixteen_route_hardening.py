@@ -333,7 +333,7 @@ def test_lab_financial_refuses_custom_route(monkeypatch):
     assert resp.json()["detail"]["code"] == "lab_public_refused"
 
 
-def test_lab_adj_still_allows_leftover_tickflow(monkeypatch):
+def test_lab_adj_refuses_leftover_tickflow(monkeypatch):
     monkeypatch.setattr(kline_sync.preferences, "get_adj_factor_provider", lambda: "tickflow")
     monkeypatch.setattr(kline_sync.preferences, "is_public_adj_factor_provider", lambda name=None: False)
     monkeypatch.setattr(
@@ -344,9 +344,8 @@ def test_lab_adj_still_allows_leftover_tickflow(monkeypatch):
     app.include_router(free_ext.router)
     client = TestClient(app)
     resp = client.get("/api/free/adj-factor/000001.SZ")
-    assert resp.status_code == 200
-    assert resp.json()["ok"] is True
-    assert resp.json()["source"] == "sina_qfq"
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "lab_public_refused"
 
 
 def test_leftover_tickflow_realtime_stays_none(monkeypatch):

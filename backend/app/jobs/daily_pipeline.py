@@ -442,7 +442,8 @@ def run_now(
     emit = on_progress or _noop
     skipped: list[str] = []
 
-    # Step 0: 先同步个股维表, 再解析标的池 — 确保标的池基于最新 instruments
+    # Step 0: leftover TickFlow daily 才拉 TickFlow 维表。Custom / unresolved
+    # 不把 leftover TickFlow universe 写进当前 daily。
     emit("sync_instruments", 2, "同步个股维表…")
     instruments_result = instrument_sync.sync_instruments_result(repo.store.data_dir)
     inst_rows = (

@@ -89,9 +89,15 @@ def load_risk_warning_symbols(data_dir: Path) -> frozenset[str]:
     inst_dir = data_dir / "instruments"
     if inst_dir.exists():
         try:
-            df = pl.read_parquet(inst_dir / "**" / "*.parquet").select(["symbol", "name"])
-            st = df.filter(polars_is_risk_warning_name(pl.col("name")))
-            syms = frozenset(s.upper() for s in st["symbol"].to_list())
+            from app.services.instrument_sync import filter_instruments, instrument_route
+
+            df = filter_instruments(
+                pl.read_parquet(inst_dir / "**" / "*.parquet"),
+                instrument_route(),
+            )
+            if not df.is_empty() and {"symbol", "name"}.issubset(df.columns):
+                st = df.select(["symbol", "name"]).filter(polars_is_risk_warning_name(pl.col("name")))
+                syms = frozenset(s.upper() for s in st["symbol"].to_list())
         except Exception as e:
             logger.warning("load risk-warning symbols failed: %s", e)
     _ST_SYMBOLS_CACHE = (now, syms)

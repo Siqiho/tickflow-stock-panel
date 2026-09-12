@@ -191,21 +191,12 @@ class DataStore:
     def _register_views(self) -> None:
         """Mount parquet as DuckDB views without a leftover-visible raw glob.
 
-        Route-sensitive kline / adj / financial / depth views are gated
-        immediately. Instruments stay leftover TickFlow (no
+        Route-sensitive kline / adj / financial / depth / instrument views
+        are gated immediately. Instruments follow the daily route (no
         ``instrument_provider``).
         """
         d = self.data_dir.as_posix()
-        statements = [
-            f"""CREATE OR REPLACE VIEW instruments AS
-                SELECT * FROM read_parquet('{d}/instruments/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW instruments_index AS
-                SELECT * FROM read_parquet('{d}/instruments_index/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW instruments_etf AS
-                SELECT * FROM read_parquet('{d}/instruments_etf/**/*.parquet', union_by_name=true)""",
-            f"""CREATE OR REPLACE VIEW instruments_ext AS
-                SELECT * FROM read_parquet('{d}/instruments_ext/**/*.parquet', union_by_name=true)""",
-        ]
+        statements = []
         kline_ext_glob = _latest_date_partition_glob(self.data_dir / "kline_ext")
         if kline_ext_glob:
             statements.append(
@@ -221,12 +212,37 @@ class DataStore:
         self._register_unified_views()
 
     def _register_gated_catalog_views(self) -> None:
-        """Register route-gated kline / adj / financial / depth DuckDB views.
+        """Register route-gated kline / adj / financial / depth / instrument views.
 
         Startup used to ``CREATE VIEW`` from raw ``**/*.parquet`` first and
         only then gate. Concurrent SQL between those statements saw leftover
-        TickFlow after a custom switch. Instruments stay leftover TickFlow.
+        TickFlow after a custom switch. Instruments follow the daily route.
         """
+        d = self.data_dir.as_posix()
+        try:
+            from app.services.instrument_sync import instrument_route
+        except Exception:  # noqa: BLE001
+            instrument_route = None
+        if instrument_route is None:
+            self._empty_named_views(
+                ("instruments", "instruments_index", "instruments_etf", "instruments_ext"),
+            )
+        else:
+            route = instrument_route()
+            for name, subdir in (
+                ("instruments", "instruments"),
+                ("instruments_index", "instruments_index"),
+                ("instruments_etf", "instruments_etf"),
+                ("instruments_ext", "instruments_ext"),
+            ):
+                if not self._has_parquet(subdir):
+                    continue
+                self._register_route_filtered_view(
+                    name,
+                    f"{d}/{subdir}/**/*.parquet",
+                    route,
+                )
+
         try:
             from app.services.financial_sync import FINANCIAL_TABLES, get_financial_df
         except Exception:  # noqa: BLE001
@@ -455,6 +471,10 @@ class DataStore:
             ("financials_balance_sheet", f"{d}/financials/balance_sheet/*.parquet"),
             ("financials_cash_flow", f"{d}/financials/cash_flow/*.parquet"),
             ("financials_shares", f"{d}/financials/shares/*.parquet"),
+            ("instruments", f"{d}/instruments/**/*.parquet"),
+            ("instruments_index", f"{d}/instruments_index/**/*.parquet"),
+            ("instruments_etf", f"{d}/instruments_etf/**/*.parquet"),
+            ("instruments_ext", f"{d}/instruments_ext/**/*.parquet"),
         ]
 
     def _empty_parquet_view(self, name: str, glob: str) -> None:
@@ -605,15 +625,18 @@ class KlineRepository:
         self._live_agg_cache_date: date | None = None
         self._live_agg_check_date: date | None = None          # 上次跨日校验时的 today (快路径节流)
         self._instruments_cache: pl.DataFrame | None = None
+        self._instruments_route: str | None = None
         # 完整 enriched 历史 (含所有指标, 供 filter_history 策略使用)
         self._enriched_history_cache: pl.DataFrame | None = None  # ~100万行
         self._enriched_history_start: date | None = None
         self._index_instruments_cache: pl.DataFrame | None = None
+        self._index_instruments_route: str | None = None
         self._etf_enriched_cache: pl.DataFrame | None = None
         self._etf_enriched_cache_date: date | None = None
         self._etf_live_agg_cache: pl.DataFrame | None = None
         self._etf_live_agg_cache_date: date | None = None
         self._etf_instruments_cache: pl.DataFrame | None = None
+        self._etf_instruments_route: str | None = None
         self._etf_symbol_set_cache: set[str] | None = None
         self._historical_shares_cache: pl.DataFrame | None = None
         self._historical_shares_mtime_ns: int | None = None
@@ -666,13 +689,16 @@ class KlineRepository:
         self._live_agg_cache_date = None
         self._live_agg_check_date = None
         self._instruments_cache = None
+        self._instruments_route = None
         self._index_instruments_cache = None
+        self._index_instruments_route = None
         self._etf_enriched_cache = None
         self._etf_enriched_cache_date = None
         self._etf_enriched_cache_live = False
         self._etf_live_agg_cache = None
         self._etf_live_agg_cache_date = None
         self._etf_instruments_cache = None
+        self._etf_instruments_route = None
         self._etf_symbol_set_cache = None
         self._historical_shares_cache = None
         self._historical_shares_mtime_ns = None
@@ -1065,24 +1091,38 @@ class KlineRepository:
             logger.debug("ETF enriched 缓存刷新跳过: %s", e)
 
     def _refresh_instruments(self) -> None:
-        """加载 instruments 到内存。"""
+        """加载当前 daily route 的 instruments。切源后不复用 leftover TickFlow。"""
         try:
+            from app.services.instrument_sync import filter_instruments, instrument_route
+
+            route = instrument_route()
             df = guarded_collect(pl.scan_parquet(self._inst_glob), priority="background")
-            if not df.is_empty():
-                self._instruments_cache = df
-                logger.info("instruments 缓存已加载: %d 只", len(df))
+            df = filter_instruments(df, route)
+            self._instruments_cache = df if df is not None and not df.is_empty() else pl.DataFrame()
+            self._instruments_route = route
+            if not self._instruments_cache.is_empty():
+                logger.info("instruments 缓存已加载: %d 只", len(self._instruments_cache))
         except Exception as e:  # noqa: BLE001
             logger.warning("instruments 缓存刷新失败: %s", e)
+            self._instruments_cache = pl.DataFrame()
+            self._instruments_route = "unresolved"
 
     def _refresh_index_instruments(self) -> None:
-        """加载指数 instruments 到内存。"""
+        """加载当前 daily route 的指数 instruments。"""
         try:
+            from app.services.instrument_sync import filter_instruments, instrument_route
+
+            route = instrument_route()
             df = guarded_collect(pl.scan_parquet(self._index_inst_glob), priority="background")
-            if not df.is_empty():
-                self._index_instruments_cache = df
-                logger.info("index instruments 缓存已加载: %d 只", len(df))
+            df = filter_instruments(df, route)
+            self._index_instruments_cache = df if df is not None and not df.is_empty() else pl.DataFrame()
+            self._index_instruments_route = route
+            if not self._index_instruments_cache.is_empty():
+                logger.info("index instruments 缓存已加载: %d 只", len(self._index_instruments_cache))
         except Exception as e:  # noqa: BLE001
             logger.debug("index instruments 缓存刷新跳过: %s", e)
+            self._index_instruments_cache = pl.DataFrame()
+            self._index_instruments_route = "unresolved"
 
     def _refresh_etf_instruments(self) -> None:
         """加载 ETF instruments 到内存；兼容旧版 instruments_index 中的 ETF。"""
@@ -1102,10 +1142,21 @@ class KlineRepository:
         except Exception as e:  # noqa: BLE001
             logger.debug("etf instruments legacy fallback skipped: %s", e)
         if parts:
-            df_all = pl.concat(parts, how="diagonal_relaxed").unique(subset=["symbol"], keep="last").sort("symbol")
+            from app.services.instrument_sync import filter_instruments, instrument_route
+
+            route = instrument_route()
+            df_all = filter_instruments(
+                pl.concat(parts, how="diagonal_relaxed").unique(subset=["symbol"], keep="last").sort("symbol"),
+                route,
+            )
             self._etf_instruments_cache = df_all
+            self._etf_instruments_route = route
             self._etf_symbol_set_cache = None
-            logger.info("ETF instruments 缓存已加载: %d 只", len(df_all))
+            if df_all is not None and not df_all.is_empty():
+                logger.info("ETF instruments 缓存已加载: %d 只", len(df_all))
+        else:
+            self._etf_instruments_cache = pl.DataFrame()
+            self._etf_instruments_route = None
 
     def _live_enriched_overlay_allowed(self) -> bool:
         try:
@@ -1303,8 +1354,14 @@ class KlineRepository:
         return self._live_agg_cache
 
     def get_instruments(self) -> pl.DataFrame:
-        """返回缓存的 instruments DataFrame。如无缓存则懒加载。"""
-        if self._instruments_cache is None:
+        """返回当前 daily route 的 instruments。切源后不复用 leftover。"""
+        try:
+            from app.services.instrument_sync import instrument_route
+
+            route = instrument_route()
+        except Exception:  # noqa: BLE001
+            route = "unresolved"
+        if self._instruments_cache is None or self._instruments_route != route:
             self._refresh_instruments()
         if self._instruments_cache is None:
             return pl.DataFrame()
@@ -1340,16 +1397,28 @@ class KlineRepository:
         return self._historical_shares_cache
 
     def get_index_instruments(self) -> pl.DataFrame:
-        """返回缓存的指数 instruments DataFrame。如无缓存则懒加载。"""
-        if self._index_instruments_cache is None:
+        """返回当前 daily route 的指数 instruments。"""
+        try:
+            from app.services.instrument_sync import instrument_route
+
+            route = instrument_route()
+        except Exception:  # noqa: BLE001
+            route = "unresolved"
+        if self._index_instruments_cache is None or self._index_instruments_route != route:
             self._refresh_index_instruments()
         if self._index_instruments_cache is None:
             return pl.DataFrame()
         return self._index_instruments_cache
 
     def get_etf_instruments(self) -> pl.DataFrame:
-        """返回缓存的 ETF instruments DataFrame；兼容旧版 instruments_index 中的 ETF。"""
-        if self._etf_instruments_cache is None:
+        """返回当前 daily route 的 ETF instruments。"""
+        try:
+            from app.services.instrument_sync import instrument_route
+
+            route = instrument_route()
+        except Exception:  # noqa: BLE001
+            route = "unresolved"
+        if self._etf_instruments_cache is None or self._etf_instruments_route != route:
             self._refresh_etf_instruments()
         if self._etf_instruments_cache is None:
             return pl.DataFrame()
@@ -2128,27 +2197,40 @@ class KlineRepository:
             self._etf_enriched_cache_live = True
 
     def save_index_instruments(self, df: pl.DataFrame) -> None:
-        """保存指数标的维表。"""
-        if df.is_empty() or "symbol" not in df.columns:
+        """保存指数标的维表。Custom / unresolved daily 不落 leftover TickFlow。"""
+        from app.services.instrument_sync import instruments_sync_allowed, tag_instruments
+
+        if df.is_empty() or "symbol" not in df.columns or not instruments_sync_allowed():
             return
         out = self.store.data_dir / "instruments_index" / "instruments_index.parquet"
         out.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_parquet(df.unique(subset=["symbol"], keep="last").sort("symbol"), out)
+        atomic_write_parquet(
+            tag_instruments(df.unique(subset=["symbol"], keep="last").sort("symbol")),
+            out,
+        )
         self._index_instruments_cache = None
+        self._index_instruments_route = None
         self._etf_instruments_cache = None
+        self._etf_instruments_route = None
         self._etf_symbol_set_cache = None
         self._refresh_index_instruments()
 
     def save_etf_instruments(self, df: pl.DataFrame) -> None:
-        """保存 ETF 标的维表到独立目录。"""
-        if df.is_empty() or "symbol" not in df.columns:
+        """保存 ETF 标的维表到独立目录。Custom / unresolved daily 不落 leftover TickFlow。"""
+        from app.services.instrument_sync import instruments_sync_allowed, tag_instruments
+
+        if df.is_empty() or "symbol" not in df.columns or not instruments_sync_allowed():
             return
         if "asset_type" not in df.columns:
             df = df.with_columns(pl.lit("etf").alias("asset_type"))
         out = self.store.data_dir / "instruments_etf" / "instruments_etf.parquet"
         out.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_parquet(df.unique(subset=["symbol"], keep="last").sort("symbol"), out)
+        atomic_write_parquet(
+            tag_instruments(df.unique(subset=["symbol"], keep="last").sort("symbol")),
+            out,
+        )
         self._etf_instruments_cache = None
+        self._etf_instruments_route = None
         self._etf_symbol_set_cache = None
         self._refresh_etf_instruments()
 
