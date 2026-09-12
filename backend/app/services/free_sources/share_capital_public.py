@@ -208,8 +208,18 @@ def sync_share_capital_public(
         return stats
 
     new_rows = pl.concat(frames, how="diagonal_relaxed")
-    shares_path = data_dir / "financials" / "shares" / "part.parquet"
-    existing = pl.read_parquet(shares_path) if shares_path.exists() else None
+    existing = None
+    try:
+        from app.services.financial_sync import get_financial_df
+
+        existing = get_financial_df(data_dir, "shares")
+        if existing is not None and existing.is_empty():
+            existing = None
+    except Exception:  # noqa: BLE001
+        existing = None
+    if existing is None:
+        shares_path = data_dir / "financials" / "shares" / "part.parquet"
+        existing = pl.read_parquet(shares_path) if shares_path.exists() else None
     if (
         existing is not None
         and financial_cache_usable is not None

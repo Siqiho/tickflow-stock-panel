@@ -607,10 +607,11 @@ def delete_ext_parquet(config_id: str, data_dir: Path) -> None:
     - timeseries: 删除 ext_data/{id}/timeseries/ 目录
     """
     cfg_dir = _config_dir(config_id, data_dir)
-    # 删除快照文件
-    snap = cfg_dir / "part.parquet"
-    if snap.exists():
-        snap.unlink()
+    # 快照: leftover part.parquet 不得挡住 extras，删除全部根级 parquet
+    if cfg_dir.is_dir():
+        for snap in cfg_dir.glob("*.parquet"):
+            if snap.is_file():
+                snap.unlink()
     # 删除时序目录
     ts_dir = cfg_dir / "timeseries"
     if ts_dir.exists():

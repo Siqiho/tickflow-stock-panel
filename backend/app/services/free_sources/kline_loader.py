@@ -31,19 +31,19 @@ def load_daily_bars_for_symbol(
     if source is None:
         raise FileNotFoundError(f"no current-route daily bars under {data_dir}")
 
-    # Scan all partitions then filter — dataset is ~1 year / manageable for single symbol.
-    files = sorted(source.rglob("*.parquet"))
-    if not files:
-        raise FileNotFoundError(f"no parquet under {source}")
+    # Same-day untagged extras beside tagged leftover must not concat-mix.
+    from app.services.kline_sync import filter_daily_cache, usable_daily_partition_files
 
-    from app.services.kline_sync import daily_partition_usable, filter_daily_cache
+    files: list[Path] = []
+    for child in sorted(p for p in source.iterdir() if p.is_dir() and p.name.startswith("date=")):
+        files.extend(usable_daily_partition_files(child))
+    if not files:
+        raise FileNotFoundError(f"no current-route parquet under {source}")
 
     # Read in batches to avoid huge memory if needed; for one symbol polars filter is fine.
     dfs: list[pl.DataFrame] = []
     for f in files:
         try:
-            if not daily_partition_usable(f):
-                continue
             df = filter_daily_cache(pl.read_parquet(f))
         except Exception:  # noqa: BLE001
             continue
