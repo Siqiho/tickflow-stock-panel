@@ -56,18 +56,20 @@ def enriched_dirname(asset_type: str) -> str:
 
 
 def _latest_date_partition_glob(root: Path) -> str | None:
-    """Latest ``date=*`` parquet glob. Never leftover-unions historical partitions."""
+    """Latest readable ``date=*`` parquet glob. Never leftover-unions history."""
     if not root.is_dir():
         return None
+    from app.services.kline_sync import _parquet_probe_readable
+
     partitions = sorted(
         child for child in root.iterdir()
-        if child.is_dir()
-        and child.name.startswith("date=")
-        and any(child.glob("*.parquet"))
+        if child.is_dir() and child.name.startswith("date=")
     )
-    if not partitions:
-        return None
-    return f"{partitions[-1].as_posix()}/*.parquet"
+    for child in reversed(partitions):
+        files = [path for path in child.glob("*.parquet") if path.is_file()]
+        if files and any(_parquet_probe_readable(path) for path in files):
+            return f"{child.as_posix()}/*.parquet"
+    return None
 
 
 def _route_sql_predicate(route: str, *, leftover_public: bool = False) -> str | None:
@@ -195,21 +197,42 @@ class DataStore:
         are gated immediately. Instruments follow the daily route (no
         ``instrument_provider``).
         """
+        self._register_kline_ext_view()
+        self._register_gated_catalog_views()
+        self._register_unified_views()
+
+    def _register_kline_ext_view(self) -> None:
+        """Mount latest kline_ext only on leftover TickFlow daily.
+
+        After a custom / unresolved daily switch the leftover TickFlow
+        ``kline_ext`` glob used to remount as a current SQL view.
+        Unreadable leftover date markers must not mint that view either.
+        """
         d = self.data_dir.as_posix()
-        statements = []
+        glob = f"{d}/kline_ext/**/*.parquet"
+        try:
+            from app.services.kline_sync import leftover_tickflow_follow_daily
+
+            allowed = leftover_tickflow_follow_daily()
+        except Exception:  # noqa: BLE001
+            allowed = False
+        if not allowed:
+            self._empty_parquet_view("kline_ext", glob)
+            return
         kline_ext_glob = _latest_date_partition_glob(self.data_dir / "kline_ext")
-        if kline_ext_glob:
-            statements.append(
+        if not kline_ext_glob:
+            self._empty_parquet_view("kline_ext", glob)
+            return
+        try:
+            self.db.execute(
                 f"""CREATE OR REPLACE VIEW kline_ext AS
                     SELECT * FROM read_parquet('{kline_ext_glob}', union_by_name=true)"""
             )
-        for sql in statements:
-            try:
-                self.db.execute(sql)
-            except duckdb.IOException:
-                logger.debug("view registration skipped (no parquet yet): %s", sql[:60])
-        self._register_gated_catalog_views()
-        self._register_unified_views()
+        except duckdb.IOException:
+            logger.debug("kline_ext view skipped (no parquet yet)")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("kline_ext view failed, empty: %s", exc)
+            self._empty_parquet_view("kline_ext", glob)
 
     def _register_gated_catalog_views(self) -> None:
         """Register route-gated kline / adj / financial / depth / instrument views.

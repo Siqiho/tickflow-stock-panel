@@ -100,6 +100,14 @@ def get_pool(pool_id: PoolId, refresh: bool = False) -> list[str]:
         return _load_watchlist()
 
     route = pool_route()
+    if route == "tickflow":
+        try:
+            from app.services.kline_sync import leftover_tickflow_follow_daily
+
+            if not leftover_tickflow_follow_daily():
+                return []
+        except Exception:  # noqa: BLE001
+            return []
     cache = _pool_cache_path(pool_id)
     if cache.exists() and not refresh:
         try:
@@ -195,6 +203,13 @@ def _fetch_pool(pool_id: PoolId) -> list[str]:
             "pool_provider route=%s cannot serve %s via TickFlow universes",
             route, pool_id,
         )
+        return []
+    try:
+        from app.services.kline_sync import leftover_tickflow_follow_daily
+
+        if not leftover_tickflow_follow_daily():
+            return []
+    except Exception:  # noqa: BLE001
         return []
 
     tf = get_client()
