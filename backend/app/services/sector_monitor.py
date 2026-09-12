@@ -218,12 +218,9 @@ class SectorMonitorService:
         return tuple(signature)
 
     def _read_ext_dataframe(self, config: ExtConfig) -> pl.DataFrame:
-        base = self._data_dir / "ext_data" / config.id
-        if config.mode == "timeseries":
-            files = sorted((base / "timeseries").rglob("*.parquet"))
-            files = files[-1:] if files else []
-        else:
-            files = sorted(base.glob("*.parquet"))
+        from app.services.ext_data import latest_ext_parquet_files
+
+        files = latest_ext_parquet_files(self._data_dir, config)
         if not files:
             return pl.DataFrame()
         try:

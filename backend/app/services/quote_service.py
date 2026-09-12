@@ -1214,8 +1214,18 @@ class QuoteService:
                 select_exprs.append(pl.col(src).alias(dst))
         if not select_exprs:
             return pl.DataFrame()
+        if "timestamp" in df.columns:
+            select_exprs.append(
+                pl.col("timestamp").cast(pl.Int64, strict=False).alias("quote_ts")
+            )
+        elif "quote_ts" in df.columns:
+            select_exprs.append(
+                pl.col("quote_ts").cast(pl.Int64, strict=False).alias("quote_ts")
+            )
+        from app.market_time import CN_TZ, cn_today
+
         result = df.select(select_exprs).with_columns(
-            pl.lit(date.today()).cast(pl.Date).alias("date"),
+            pl.lit(cn_today()).cast(pl.Date).alias("date"),
         )
         # 停牌股回归: 实时源对停牌标的返回停牌前最后一份快照 — OHLCV 全为旧日
         # 真实值, 仅 timestamp 停在旧日。这类记录不属于当日, 不过滤会把旧日 K 线

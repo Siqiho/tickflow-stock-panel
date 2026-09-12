@@ -29,14 +29,17 @@ import polars as pl
 from app.api import overview as overview_api
 from app.api import settings as settings_api
 from app.api.watchlist import _read_ext_for_watchlist
-from app.jobs.daily_pipeline import _partition_row_count
-from app.market_time import CN_TZ
+from app.backtest.matrix import _partition_fingerprints, _usable_partition_entries
+from app.jobs.daily_pipeline import _partition_row_count, _prune_stale_price_partitions
+from app.market_time import CN_TZ, cn_today
 from app.services import kline_sync
+from app.services.auction_benchmark import _read_usable_kline_ohlc
 from app.services.data_integrity import _quote_ts_max_ms, scan_recent_integrity
 from app.services.ext_data import ExtConfig, ExtField, latest_ext_parquet_files
 from app.services.free_sources.daily_quality import run_daily_quality_check
 from app.services.market_overview_builder import _ext_files, _read_ext_rows
 from app.services.quote_service import QuoteService
+from app.services.sector_monitor import SectorMonitorService
 
 
 def _prefs_boom(*_a, **_k):
@@ -52,7 +55,7 @@ def _daily_df(symbol: str = "000001.SZ", *, route: str | None = None, day: date 
         "low": [9.9],
         "close": [10.1],
         "volume": [100.0],
-        "amount": [1010.0],
+        "amount": [101000.0],
         "change_pct": [0.01],
     }
     if route is not None:
@@ -305,10 +308,99 @@ def test_update_data_providers_refreshes_surfaces(monkeypatch):
     assert calls == [mock_request]
 
 
+def test_realtime_builder_maps_timestamp_and_drops_stale(monkeypatch):
+    halted_since = date(2026, 7, 10)
+    result = QuoteService._build_daily([
+        {
+            "symbol": "600001.SH", "last_price": 10.0,
+            "open": 9.9, "high": 10.1, "low": 9.8,
+            "volume": 1000.0, "amount": 10000.0,
+            "timestamp": _ts_ms(cn_today(), time(15, 0)),
+        },
+        {
+            "symbol": "301266.SZ", "last_price": 24.97,
+            "open": 23.10, "high": 24.99, "low": 23.01,
+            "volume": 65038.0, "amount": 157796300.0,
+            "timestamp": _ts_ms(halted_since, time(15, 30)),
+        },
+    ])
+    # Isolated clock may not be 2026-09-12; keep the stale halt row out
+    # whenever quote_ts was mapped from timestamp.
+    assert "301266.SZ" not in result["symbol"].to_list()
+    assert "quote_ts" in result.columns
+
+
 def test_leftover_tickflow_realtime_stays_none(monkeypatch):
     monkeypatch.setattr(kline_sync.preferences, "get_realtime_data_provider", lambda: "tickflow")
     monkeypatch.setattr(QuoteService, "_current_tier", staticmethod(lambda: "free"))
     assert QuoteService.realtime_mode() == "none"
+
+
+def test_stale_price_prune_skips_leftover_extras(monkeypatch, tmp_path):
+    daily = tmp_path / "kline_daily" / "date=2026-07-17"
+    enriched = tmp_path / "kline_daily_enriched" / "date=2026-07-17"
+    daily.mkdir(parents=True)
+    enriched.mkdir(parents=True)
+    pl.DataFrame({
+        "symbol": ["000001.SZ"], "close": [10.0], "route": ["fuyao"],
+    }).write_parquet(daily / "part.parquet")
+    pl.DataFrame({
+        "symbol": ["000001.SZ"], "close": [1.0], "route": ["tickflow"],
+    }).write_parquet(daily / "leftover.parquet")
+    pl.DataFrame({
+        "symbol": ["000001.SZ"], "raw_close": [10.0], "route": ["fuyao"],
+    }).write_parquet(enriched / "part.parquet")
+    monkeypatch.setattr(kline_sync, "daily_route", lambda: "fuyao")
+    assert _prune_stale_price_partitions(
+        tmp_path / "kline_daily", tmp_path / "kline_daily_enriched",
+    ) == []
+    assert (enriched / "part.parquet").exists()
+
+
+def test_auction_ohlc_skips_leftover_extras(monkeypatch, tmp_path):
+    day = date(2026, 7, 17)
+    part = tmp_path / "kline_daily" / f"date={day.isoformat()}"
+    part.mkdir(parents=True)
+    pl.DataFrame({
+        "symbol": ["000001.SZ"],
+        "open": [10.0], "high": [10.2], "low": [9.9], "close": [10.1],
+        "route": ["fuyao"],
+    }).write_parquet(part / "part.parquet")
+    pl.DataFrame({
+        "symbol": ["000001.SZ"],
+        "open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0],
+        "route": ["tickflow"],
+    }).write_parquet(part / "leftover.parquet")
+    monkeypatch.setattr(kline_sync, "daily_route", lambda: "fuyao")
+    frame = _read_usable_kline_ohlc(
+        tmp_path, day, ["symbol", "open", "high", "low", "close"],
+    )
+    assert frame["close"].to_list() == [10.1]
+
+
+def test_sector_monitor_uses_latest_ext_partition(tmp_path):
+    _write_ext_day(tmp_path, "2026-07-17", 1.0)
+    _write_ext_day(tmp_path, "2026-07-18", 2.0)
+    service = SectorMonitorService(SimpleNamespace(store=SimpleNamespace(data_dir=tmp_path)))
+    frame = service._read_ext_dataframe(_ext_config())
+    assert frame["v"].to_list() == [2.0]
+
+
+def test_matrix_entries_and_fingerprints_skip_leftover_extras(monkeypatch, tmp_path):
+    current = tmp_path / "date=2026-07-18"
+    current.mkdir()
+    _daily_df(route="fuyao", day=date(2026, 7, 18)).write_parquet(current / "part.parquet")
+    leftover_only = tmp_path / "date=2026-07-17"
+    leftover_only.mkdir()
+    _daily_df(route="tickflow").write_parquet(leftover_only / "part.parquet")
+    monkeypatch.setattr(kline_sync, "daily_route", lambda: "fuyao")
+    before = _partition_fingerprints(tmp_path, date(2026, 7, 18), date(2026, 7, 18))
+    _daily_df(route="tickflow", day=date(2026, 7, 18)).write_parquet(current / "leftover.parquet")
+    after = _partition_fingerprints(tmp_path, date(2026, 7, 18), date(2026, 7, 18))
+    assert [day.isoformat() for day, _part in _usable_partition_entries(tmp_path)] == [
+        "2026-07-18",
+    ]
+    assert before == after
 
 
 def test_untagged_leftover_still_counts_for_tickflow(monkeypatch, tmp_path):
